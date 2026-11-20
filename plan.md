@@ -1,6 +1,6 @@
 # System One router — Go daemon (`routerd`) planı
 
-## YAPILACAKLAR — tek kontrol listesi (System One onaylı; G = m00559 hayatta kalma)
+## YAPILACAKLAR — tek kontrol listesi (System One onaylı; G = m00559 hayatta kalma; H = m01041 router kullanımı)
 
 > Bu liste planın tamamının özetidir. Uygulamada **hiçbir madde atlanmaz**; her madde aşağıda bir bölümde ayrıntılı. `SKIP` maddeleri bilinçli olarak yapılmaz — geri gelmez.
 
@@ -44,6 +44,11 @@
 
 **G. Kanıt (§8)**
 27. **Tek şema — ayrı makbuz DOSYASI YOK:** v1 canlı = stderr tek reason-code satırı. 3 gün shadow = stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}`. `seq` boşluğu = drop/restart ayırımı için `pid` (ayrı dosya yok). Negatif kontrol: 3 gün shadow'da kasıtlı bozuk istek → ret gelmeli; ret yoksa tur geçersiz. Satır yoksa = gated edilmemiş. `conf`/`tokens`/`cost` doğrulanamadı (kendi sürecinin iddiası, shadow'da oracle yok) — allowlist dışı.
+
+**H. Router kapsamı / güvenlik / kalibrasyon (§10, m01041 SO 0.937)**
+28. **SO `state` = trust boundary:** sadece kullanıcı isteği girer; MRTR `input_required` nested `systemPrompt`/`message` asla girmez (prompt injection). `secret-clean` birleştirmeden ÖNCE. Capability gating yoksa -32602. Bilinmeyen `resultType` + generic Exception → passthrough; 503 ASLA.
+29. **Kalibrasyon (offline, canlı SO YOK):** saf-Go isotonic PAV + ECE hedefi 0.12→0.03; sabit 0.8 yerine `quantile(1-strong_model_pct)`; parse hatası → strong pin (yokluk ≠ düşük); R_zero baseline yenilemezse 0.8'e dön; `conf-rule` cache key'e bağlı. Rego/CEL YOK → düz `gate(layer0) bool`.
+30. **Dürüst kapsam oranı:** `(model-öncesi ∧ karar yetkili ∧ relay başarılı ∧ opt-in ∧ kalibre geçen) / tüm istekler` — birleşim DEĞİL kesişim. Client×otorite matrisi tutulur; yerel gerçek kapsam sadece OpenCode V2, diğerleri opt-in benimsemeyle büyür.
 
 > Durum: hayatta kalma simülasyonu (m00559, 8 ADHD ajanı) tamam → §8 + G maddeleri eklendi (SO `complete` p=0.627). 17 router dalı + 5 ADHD frame + 2 deepen + router audit tamam. System One mimari oylaması tur 2: **go_routerd_plus_ts_shim 0.939** (prob 0.954, ≥0.8 = geçerli verdict). Tur 1 zayıf seçimi (saf standalone proxy 0.731) override edildi.
 > MCP-global araştırması (m00251): 5 frame + 4 deepen + web kanıt. System One: **koru_ve_mcp_extension_ekle 0.951** (prob 0.963); kullanıcı iddiası **kısmen doğru** (score 1.05, p=0.882). Aşağı §1b.
@@ -356,3 +361,42 @@ Kanıt katmanı madde 27'de: **tek şema** — v1 canlı = stderr tek reason-cod
 **Kanıt (madde 14–16) — İKİ ayrı sayaç (m00894/SO 0.888):** router karar cache hit (`reuse_precision` / `wrong_reuse`) ile provider KV hit (`match_prefix` prefix_len/prompt_len, `BlockStored(block_hashes,parent_block_hash)`) **asla tek sayıya birleştirilmez** — birleştirmek iddiayı yanlışlanamaz kılar. Yüksek provider + düşük karar = ayırt edici özellik eksik; tersi = prefill pahalı. Bélády tavanı replay block-hash dizisinden çevrimdışı hesaplanır; oracle miss etiketi `missed_reuse` (kaçırılabilir) vs `model_changed`/`tools_changed`/geo/TTL (zorunlu) ayrılır. Eşik sweep 0.70–0.75 → hit↑/accuracy↓ eğrisi; 384 kalibrasyon / 1152 test + revision hash (eşik teste sızmaz). Sayım kuralları: `respjson.Field.Valid` ile alan yokluğu 0'dan ayrılır, SSE delta usage **KÜMÜLATİF** (toplanmaz), `stream`/`stream_options` cache-affecting DEĞİL (stream hit bölme gereksiz), kesilen SSE usage = `unknown`. Falsifikasyon: hit↑ ama `wrong_reuse`↑ veya accuracy↓ ise iddia reddedilir. 3 gün shadow: key + hit/miss + margin yan yana, trafik etkilenmez. `conf`/`tokens`/`cost` allowlist dışı.
 
 **SKIP (m00894/SO 0.151):** per-org namespace partition + idle warming/prefetch + kardeş cache süreci (self-spawn yasağı) — şimdi yok, gerekirse 3. gün.
+
+## 11. Checker envanteri — 30 madde, hiç kaçmasın (SO `ekle_ve_say` 0.957)
+
+Her yapılacak maddeye ≥1 doğrulama. `VAR` = mevcut checker, `EKLE` = mevcut 3 test dosyasına eklenecek assert (yeni dosya/modül YOK). 25–26 SKIP → checker yok.
+
+| Madde | Yapılacak | Checker | Durum |
+|---|---|---|---|
+| 1 | tek statik binary | `CGO_ENABLED=0 go build ./...` | VAR |
+| 2 | stdio relay çekirdek | `mcp_relay_test.go` frame round-trip | VAR |
+| 3 | protokol sadakati | `mcp_relay_test.go` id/progressToken/protocolVersion kopya | VAR |
+| 4 | opt-in extension | `mcp_relay_test.go` com.kerem marker'ı | VAR |
+| 5 | route sırası | `route_test.go` Katman0/1/2 ayrı assert | EKLE |
+| 6 | fail-safe | `route_test.go` conf 0.799→pass / 0.801→pin, timeout, HTTP≠200 | EKLE |
+| 7 | kapsam oranı (garanti değil) | shadow stderr dağılım + ret sayısı raporu | VAR |
+| 8 | 9 baked provider | `provider_test.go` (a) | VAR |
+| 9 | providers.txt trust boundary | `provider_test.go` (d) key env gizli, (e) symlink reddi, (g) loopback Host | VAR |
+| 10 | sticky pin + rotation | `provider_test.go` (c) restart pin yok, (f) deterministik rotation | VAR |
+| 11 | SYSTEMONE_ROUTE_URL | `mcp_relay_test.go` env set→özel endpoint / unset→normal | EKLE |
+| 12 | port fallback | `provider_test.go` (g) listen_addr loopback + port>0 | VAR |
+| 13 | karar cache | determinism testi + canary + counterfactual replay (§9) | VAR |
+| 14 | karar kanıtı | counterfactual replay + per-faz sayaç | VAR |
+| 15 | canary + self-heal | 1/N replay → mismatch → cell flush assert | VAR |
+| 16 | 3 gün shadow | benzersizlik ölçümü + key/hit/margin yan yana log | VAR |
+| 17 | SO şeması | `route_test.go` questions obje (array DEĞİL) + choice/score + 1500ms/retry yok | EKLE |
+| 18 | araç seçimi | `route_test.go` allowlist/scope önce + argmax assert | VAR (madde 24) |
+| 19 | stderr allowlist | `route_test.go` secret/args/prompt/context/header/env/ham key YOK, allowlist alanları VAR | EKLE |
+| 20 | sağlık/fallback | `route_test.go` classify() transient/permanent → reason-code | EKLE |
+| 21 | uygulama sırası | `CGO_ENABLED=0 go build ./... && go test ./...` (§6 adım 6) | VAR |
+| 22 | relay testi | `mcp_relay_test.go` (madde 22) | VAR |
+| 23 | provider testi | `provider_test.go` (a–g) | VAR |
+| 24 | self-check zorunluluğu | her non-trivial logic → assert; `go test ./...` | VAR |
+| 25 | SKIP (HITL vb.) | checker yok — bilinçli | — |
+| 26 | SKIP (self-spawn/ağ kapısı vb.) | checker yok — bilinçli | — |
+| 27 | tek şema makbuz | shadow JSON line + negatif kontrol (kasıtlı bozuk istek→ret) | VAR |
+| 28 | state trust boundary | `route_test.go` MRTR nested systemPrompt/message state'e girmez + secret-clean önce | EKLE |
+| 29 | offline kalibrasyon | `route_test.go` PAV öncesi/sonrası ECE assert (`ece_cal<ece_raw`) + R_zero karşılaştırma | EKLE |
+| 30 | dürüst kapsam oranı | `route_test.go` client×otorite matrisi: context-only/post-tool paydaya girmez | EKLE |
+
+**Toplam: 28 checker** (19 VAR + 9 EKLE); 2 SKIP maddesi checker'sız. 9 EKLE dağılımı: `route_test.go` 8, `mcp_relay_test.go` 1 — yeni dosya/modül YOK, 503/fail-safe kuralları korunur.
