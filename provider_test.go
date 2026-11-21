@@ -107,6 +107,24 @@ func TestNonLoopbackRejected(t *testing.T) {
 }
 
 // (f) rotation deterministik + aynı state'de aynı sıra.
+// (11) Evren slot keeps x-api-key + EVREN_API_KEY (plan.md §1e); no URL invented.
+func TestEvrenKeyEnv(t *testing.T) {
+	var evren *provider
+	for i := range bakedProviders {
+		if bakedProviders[i].Name == "Evren System One" {
+			evren = &bakedProviders[i]
+			break
+		}
+	}
+	check(t, evren != nil, "Evren System One baked slot missing")
+	check(t, evren.KeyEnv == "EVREN_API_KEY", "KeyEnv must be EVREN_API_KEY")
+	check(t, evren.Base == "https://evren-llmapi.ssyz.org.tr", "Evren base URL must be kept")
+
+	// x-api-key is the fixed header name, never the key value or env in a URL.
+	check(t, !strings.Contains(evren.Base, "EVREN_API_KEY"), "key env must not leak into URL")
+	check(t, !strings.Contains(evren.Base, "x-api-key"), "header name must not leak into URL")
+}
+
 func TestRotationDeterministic(t *testing.T) {
 	list := bakedRegistry()
 	a := newPin(list)

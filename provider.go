@@ -27,7 +27,7 @@ var bakedProviders = [...]provider{
 	{Name: "Ollama Cloud"},
 	{Name: "OpenCode Free"},
 	{Name: "v1m System One"},
-	{Name: "Evren System One", Base: "https://evren-llmapi.ssyz.org.tr"},
+	{Name: "Evren System One", Base: "https://evren-llmapi.ssyz.org.tr", KeyEnv: "EVREN_API_KEY"},
 	{Name: "Nace Drex"},
 	{Name: "Ollama Local"},
 	{Name: "Cloudflare"},

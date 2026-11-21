@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -130,5 +131,31 @@ func TestUnknownMethodPassthrough(t *testing.T) {
 	}
 	if isInitializeResult(f) {
 		t.Fatal("unknown method classified as initialize result")
+	}
+}
+
+// SYSTEMONE_ROUTE_URL set/unset: relay has no negotiation and no routing layer.
+// Only the routing layer (route.go) reads that env var; relay bytes are identical
+// either way, and the relay source must not reference the env at all.
+func TestSystemOneRouteURLNoRelayLayer(t *testing.T) {
+	raw := []byte(`{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}}}}`)
+
+	unset := addRouteCapability(raw)
+	if v, ok := os.LookupEnv("SYSTEMONE_ROUTE_URL"); ok {
+		t.Fatalf("test env polluted: SYSTEMONE_ROUTE_URL=%q", v)
+	}
+
+	t.Setenv("SYSTEMONE_ROUTE_URL", "http://127.0.0.1:9/custom")
+	set := addRouteCapability(raw)
+	if !bytes.Equal(unset, set) {
+		t.Fatalf("route URL changed relay output:\n unset %s\n set   %s", unset, set)
+	}
+
+	src, err := os.ReadFile("mcp_relay.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(src, []byte("SYSTEMONE_ROUTE_URL")) {
+		t.Fatal("relay layer must not read SYSTEMONE_ROUTE_URL")
 	}
 }

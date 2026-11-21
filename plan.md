@@ -362,6 +362,20 @@ Kanıt katmanı madde 27'de: **tek şema** — v1 canlı = stderr tek reason-cod
 
 **SKIP (m00894/SO 0.151):** per-org namespace partition + idle warming/prefetch + kardeş cache süreci (self-spawn yasağı) — şimdi yok, gerekirse 3. gün.
 
+## 10. Router kapsamı / güvenlik / kalibrasyon (m01041, SO 0.937)
+
+16 dal + 3 deepen; anahtar bulgu: client hook'ları ya spawned process (YASAK) ya da karar yetkisiz → kapsam genişletmesi relay/MCP katmanında kalır.
+
+**Trigger yüzeyleri (Küme A):** model-öncesi VE karar yetkili tek yerel yüzey OpenCode V2 — `ctx.session.hook('experimental.model.resolve', ...)` (event.model mutate, same-provider, kind=primary|compaction|title|generate). Gemini CLI `BeforeModel` (llm_request override / llm_response sentetik / deny) gerçek ama runtime embed gerekir [UNVERIFIED]. Claude Code `UserPromptSubmit` model-öncesi AMA context-only (prompt değişmez, routing yok); `PreToolUse` tool-sonrası; `PermissionRequest` exit2 onurlandırılmaz. Cursor `beforeSubmitPrompt` continue/user_message-only. Cline `beforeModel` SDK/CLI/Kanban-only (VS Code yok), file hook `cancel:true` bloklar param mutasyonu yapmaz; Roo hook API yok (#10834). Windsurf/Devin 8 lifecycle hook, inference olayı yok. VS Code Copilot proposed chatHooks + in-process `registerLanguageModelChatProvider` (command hook = spawn = YASAK). Aider hook/middleware yok (litellm.completion direk). OS genişletme (DYLD_INSERT_LIBRARIES/path_helper/direnv/asdf/git hooks/launchd/systemd) hepsi new-process veya env-only → model çağrısına girmez, RED.
+
+**Güvenlik (Küme B, deepen 0.937):** SO `state` trust boundary — sadece kullanıcı isteği girer. MRTR `InputRequiredResult.resultType=="input_required"` nested `systemPrompt`/`message` sunucu kaynaklıdır → state'e girerse PROMPT INJECTION; relay bunları ayrıştırıp SO yolundan çıkarır, client opak AEAD `requestState` + yeni id üretir. Bilinmeyen `resultType` + generic Exception → passthrough (503 ASLA); gerçek HTTPException blok. secret-clean BİRLEŞTİRMEDEN ÖNCE çalışır (örn. `arguments.code` kaynak kodu maskelenir). Capability gating zorunlu, yoksa -32602. `sampling`/`elicitation` ayrı izole çağrılar, ana yolu değiştirmez. Rego/CEL yasak → düz `gate(layer0) bool` stdlib predikatı, ham prompt/header feature struct'a girmez, log sadece boolean.
+
+**Kalibrasyon (Küme C):** offline log seti (canlı SO YOK), saf-Go isotonic PAV ~30 satır, ECE 0.12→0.03 hedefi, gömülü statik tablo (DB yok). `strong_win_rate.quantile(1-strong_model_pct)` eşik; parse hatası/None → strong pin (yokluk ≠ düşük). R_zero baseline (konveks hull AIQ) yenilemezse 0.8'e dön; conf-rule cache key'e bağlı. KS drift → rekalibrasyon. RouteLLM quantile, UCCE isotonic, FrugalGPT kademeli eşik, RouterBench R_zero referansları kullanıldı.
+
+**Ölçüm (Küme D):** özel sayaç YOK — standart `gen_ai.client.inference` span + `gen_ai.client.inference.usage.input_tokens`. Kapsam = kendi karar kaydının `_count` / tüm istekler; ret = `finish_reasons` content_filter/refusal. `exception.message` PII → log'a YOK. `gen_ai.coverage.ratio` diye standart metrik yok (kendi kaydımız).
+
+**Dürüst kapsam oranı (madde 30):** `(model-öncesi ∧ karar-yetkili ∧ relay-başarılı ∧ opt-in ∧ kalibre-geçen) / tüm istekler` — birleşim DEĞİL kesişim. Client×otorite matrisi tutulur; yerel gerçek kapsam sadece OpenCode V2, diğerleri opt-in benimsemeyle büyür.
+
 ## 11. Checker envanteri — 30 madde, hiç kaçmasın (SO `ekle_ve_say` 0.957)
 
 Her yapılacak maddeye ≥1 doğrulama. `VAR` = mevcut checker, `EKLE` = mevcut 3 test dosyasına eklenecek assert (yeni dosya/modül YOK). 25–26 SKIP → checker yok.
@@ -372,22 +386,22 @@ Her yapılacak maddeye ≥1 doğrulama. `VAR` = mevcut checker, `EKLE` = mevcut 
 | 2 | stdio relay çekirdek | `mcp_relay_test.go` frame round-trip | VAR |
 | 3 | protokol sadakati | `mcp_relay_test.go` id/progressToken/protocolVersion kopya | VAR |
 | 4 | opt-in extension | `mcp_relay_test.go` com.kerem marker'ı | VAR |
-| 5 | route sırası | `route_test.go` Katman0/1/2 ayrı assert | EKLE |
-| 6 | fail-safe | `route_test.go` conf 0.799→pass / 0.801→pin, timeout, HTTP≠200 | EKLE |
+| 5 | route sırası | `route_test.go` Katman0/1/2 ayrı assert | VAR |
+| 6 | fail-safe | `route_test.go` conf 0.799→pass / 0.801→pin, timeout, HTTP≠200 | VAR |
 | 7 | kapsam oranı (garanti değil) | shadow stderr dağılım + ret sayısı raporu | VAR |
 | 8 | 9 baked provider | `provider_test.go` (a) | VAR |
 | 9 | providers.txt trust boundary | `provider_test.go` (d) key env gizli, (e) symlink reddi, (g) loopback Host | VAR |
 | 10 | sticky pin + rotation | `provider_test.go` (c) restart pin yok, (f) deterministik rotation | VAR |
-| 11 | SYSTEMONE_ROUTE_URL | `mcp_relay_test.go` env set→özel endpoint / unset→normal | EKLE |
+| 11 | SYSTEMONE_ROUTE_URL | `mcp_relay_test.go` env set→özel endpoint / unset→normal | KODDA |
 | 12 | port fallback | `provider_test.go` (g) listen_addr loopback + port>0 | VAR |
 | 13 | karar cache | determinism testi + canary + counterfactual replay (§9) | VAR |
 | 14 | karar kanıtı | counterfactual replay + per-faz sayaç | VAR |
 | 15 | canary + self-heal | 1/N replay → mismatch → cell flush assert | VAR |
 | 16 | 3 gün shadow | benzersizlik ölçümü + key/hit/margin yan yana log | VAR |
-| 17 | SO şeması | `route_test.go` questions obje (array DEĞİL) + choice/score + 1500ms/retry yok | EKLE |
+| 17 | SO şeması | `route_test.go` questions obje (array DEĞİL) + choice/score + 1500ms/retry yok | KODDA |
 | 18 | araç seçimi | `route_test.go` allowlist/scope önce + argmax assert | VAR (madde 24) |
-| 19 | stderr allowlist | `route_test.go` secret/args/prompt/context/header/env/ham key YOK, allowlist alanları VAR | EKLE |
-| 20 | sağlık/fallback | `route_test.go` classify() transient/permanent → reason-code | EKLE |
+| 19 | stderr allowlist | `route_test.go` secret/args/prompt/context/header/env/ham key YOK, allowlist alanları VAR | KODDA |
+| 20 | sağlık/fallback | `route_test.go` classify() transient/permanent → reason-code | KODDA |
 | 21 | uygulama sırası | `CGO_ENABLED=0 go build ./... && go test ./...` (§6 adım 6) | VAR |
 | 22 | relay testi | `mcp_relay_test.go` (madde 22) | VAR |
 | 23 | provider testi | `provider_test.go` (a–g) | VAR |
@@ -395,8 +409,10 @@ Her yapılacak maddeye ≥1 doğrulama. `VAR` = mevcut checker, `EKLE` = mevcut 
 | 25 | SKIP (HITL vb.) | checker yok — bilinçli | — |
 | 26 | SKIP (self-spawn/ağ kapısı vb.) | checker yok — bilinçli | — |
 | 27 | tek şema makbuz | shadow JSON line + negatif kontrol (kasıtlı bozuk istek→ret) | VAR |
-| 28 | state trust boundary | `route_test.go` MRTR nested systemPrompt/message state'e girmez + secret-clean önce | EKLE |
-| 29 | offline kalibrasyon | `route_test.go` PAV öncesi/sonrası ECE assert (`ece_cal<ece_raw`) + R_zero karşılaştırma | EKLE |
-| 30 | dürüst kapsam oranı | `route_test.go` client×otorite matrisi: context-only/post-tool paydaya girmez | EKLE |
+| 28 | state trust boundary | `route_test.go` MRTR nested systemPrompt/message state'e girmez + secret-clean önce | KODDA |
+| 29 | offline kalibrasyon | `route_test.go` PAV öncesi/sonrası ECE assert (`ece_cal<ece_raw`) + R_zero karşılaştırma | KODDA |
+| 30 | dürüst kapsam oranı | `route_test.go` client×otorite matrisi: context-only/post-tool paydaya girmez | KODDA |
 
-**Toplam: 28 checker** (19 VAR + 9 EKLE); 2 SKIP maddesi checker'sız. 9 EKLE dağılımı: `route_test.go` 8, `mcp_relay_test.go` 1 — yeni dosya/modül YOK, 503/fail-safe kuralları korunur.
+**Toplam: 28 checker** (19 VAR + 9 EKLE→KODDA); 2 SKIP maddesi checker'sız. 9 EKLE dağılımı: `route_test.go` 8, `mcp_relay_test.go` 1 — yeni dosya/modül YOK, 503/fail-safe kuralları korunur.
+
+**Uygulama durumu (v1+):** Tüm 28 checker kodda karşılandı. `route.go`, `cache.go`, `guard.go`, `calibrate.go`, `transport_unix.go`, `transport_http.go` + ilgili testler eklendi. `CGO_ENABLED=0 go build ./...` temiz. Son doğrulama `CGO_ENABLED=0 go test ./...` (agent-lsp teşhisi sonrası 3 fix: named-return panic recover, quantile epsilon, coalescing barrier).
