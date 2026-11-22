@@ -1,0 +1,24 @@
+# relay56 live transcript
+timestamp: 2026-11-22T10:54:04Z
+harness: scripts/relay56/main.go sha256=3eaf86da0cfa06204049e8c8a18732c81b2e88d509f78d5dbedf1bf0ebaaf9a9
+harness test: scripts/relay56/main_test.go sha256=4a6fe8034adc6482bde7345221d06a55d583d96b9c3682d43ddcf7649f5893fa
+binary: 0131eef637f37303cf37355da8238d96a8fae7e9373492c063518415f902d931  walsy-system1
+--- run
+PASS unread-write   blocked: write to a path this session never touched: /tmp/relay56-a.txt: read it first, or state why it is new
+PASS read-ok        forwarded unchanged (/tmp/relay56-b.txt)
+PASS diff-secret    blocked: keep the secret in the environment or a key store and write a reference instead; the credential-shape
+PASS secret-absent  on disk: absent (open /tmp/relay56-b.txt: no such file or directory)
+PASS wipe-read      forwarded unchanged (/tmp/relay56-w.txt)
+PASS diff-wipe      blocked: this write empties /tmp/relay56-w.txt: delete the file deliberately, or write the content it should h
+PASS wipe-kept     content still on disk
+PASS del-read       forwarded unchanged (/tmp/relay56-d.txt)
+PASS diff-destructive blocked: this diff only removes lines from /tmp/relay56-d.txt: confirm the deletion is intended, or split it i
+PASS del-kept       content still on disk
+PASS generic-no     forwarded unchanged (/tmp/relay56-c.txt)
+PASS budget-2       forwarded unchanged (/tmp/relay56-2.txt)
+PASS budget-3       forwarded unchanged (/tmp/relay56-3.txt)
+PASS budget-4       forwarded unchanged (/tmp/relay56-4.txt)
+PASS budget-stop    blocked: router tool budget spent (3 calls for this session); reset: send initialize for a new session or rais
+PASS budget-refill  forwarded unchanged (/tmp/relay56-7.txt)
+RELAY-OK
+exit=0

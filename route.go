@@ -25,6 +25,12 @@ type routeResult struct {
 	Abstained   bool
 	Passthrough bool
 	ConfBucket  string
+	// Label is the admitted registry label, when one is known. Without it an
+	// admitted decision cannot say what it admitted.
+	Label string
+	// Steer is the next step to tell the agent, when one is known. Registry
+	// items carry it per label; a refusal that says nothing is retried blind.
+	Steer string
 }
 
 // stateEnvelope is buildState's output. All fields are user-sourced;
@@ -154,7 +160,8 @@ func buildState(userRequest string) string {
 	dec := json.NewDecoder(strings.NewReader(userRequest))
 	dec.UseNumber()
 	if err := dec.Decode(&obj); err != nil || obj == nil {
-		b, _ := json.Marshal(stateEnvelope{State: scrubText(userRequest)})
+		text := scrubText(userRequest)
+		b, _ := json.Marshal(stateEnvelope{State: text, Item: inferItem("", "", "", text)})
 		return string(b)
 	}
 
@@ -169,9 +176,8 @@ func buildState(userRequest string) string {
 		Authority:  boolField(obj, "authority", "decision_authority"),
 		Calibrated: boolField(obj, "calibrated"),
 	}
-
 	for _, k := range []string{
-		"state", "request", "need_label", "needLabel", "no_scratch", "noScratch",
+		"state", "request", "item", "need_label", "needLabel", "no_scratch", "noScratch",
 		"safe", "reversible", "opt_in", "enable", "capability", "capabilities",
 		"experimental", "phase", "authority", "decision_authority", "calibrated",
 	} {
@@ -184,6 +190,18 @@ func buildState(userRequest string) string {
 	} else {
 		b, _ := json.Marshal(clean)
 		e.State = string(b)
+	}
+
+	// An explicit item id wins, honoured only when the registry knows it. With
+	// no explicit id, inferItem may name one from the frame's own shape; an
+	// unknown or ambiguous frame keeps the generic path ("").
+	if id, _ := obj["item"].(string); id != "" {
+		if _, known := decisionItemFor(id); known {
+			e.Item = id
+		}
+	} else {
+		e.Item = inferItem(stringField(obj, "method"),
+			stringField(obj, "tool", "name"), e.Phase, e.State)
 	}
 	b, _ := json.Marshal(e)
 	return string(b)
@@ -233,7 +251,17 @@ func routeKey(state string) string {
 
 // route runs Layer 0 -> Layer 1 -> Layer 2. Every failure is a transparent
 // passthrough; no 503, no fail-closed, no raw conf/secret in the result.
+// A non-admit answer always carries the one concrete next step, so a
+// below-0.8 verdict steers instead of sending the caller back to rediscover it.
 func route(state string, p *pin, c *decisionCache) routeResult {
+	r := routeInner(state, p, c)
+	if r.Steer == "" && r.Decision != decPin {
+		r.Steer = SteerText(r.Reason, r.Label)
+	}
+	return r
+}
+
+func routeInner(state string, p *pin, c *decisionCache) routeResult {
 	var e stateEnvelope
 	if json.Unmarshal([]byte(state), &e) != nil {
 		return passResult("no-state", false)
@@ -254,13 +282,39 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 	if staticShortCircuit(e.State) {
 		return passResult("layer0-static", false)
 	}
-	if !isLabelShaped(e.State) {
+	// Layer 1: cache hit or one SO shot.
+	// A registry item brings its own question, label set and proceed list. An
+	// explicit known item is already decision-shaped, so it skips layer0-shape.
+	item, isItem := decisionItemFor(e.Item)
+	// A per-item cut may only lower the global gate (clamp inside threshold).
+	thr := defaultThreshold()
+	if isItem {
+		thr = item.threshold(thr)
+	}
+	if isItem && item.ID == "antishirk.todo_ledger" {
+		// Deterministic: the declared todo list against the done list, no model call.
+		l := todoLedgerFrom(e.State)
+		switch l.Verdict.Choice {
+		case "complete":
+			// Risks named in the same state are part of the done claim.
+			if a := finalAudit(e.State); !a.OK {
+				r := passResult("ledger-open", true)
+				r.Label = "do_more"
+				r.Steer = a.Steer
+				return r
+			}
+			return routeResult{Decision: decPin, Reason: "ledger-complete", Covered: true, ConfBucket: confBucket(l.Verdict.Conf), Label: l.Verdict.Choice, Steer: item.Action[l.Verdict.Choice]}
+		case "":
+			return passResult("no-state", false)
+		}
+		r := passResult("ledger-open", true)
+		r.Label = l.Verdict.Choice
+		r.Steer = "finish or explicitly drop: " + strings.Join(l.Uncovered, "; ")
+		return r
+	}
+	if !isItem && !isLabelShaped(e.State) {
 		return passResult("layer0-shape", false)
 	}
-
-	// Layer 1: cache hit or one SO shot.
-	// A registry item brings its own question, label set and proceed list.
-	item, isItem := decisionItemFor(e.Item)
 	if isItem && !item.Gate {
 		return passResult("registry-local", false) // AGENTS.md:66 - the agent's own call, no model
 	}
@@ -275,13 +329,17 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 			if d.Choice == abstainLabel || !admits(d.Choice) {
 				return passResult("cache-abstain", true)
 			}
-			return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: d.ConfBucket}
+			r := routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: d.ConfBucket}
+			if isItem {
+				r.Label, r.Steer = d.Choice, item.Action[d.Choice]
+			}
+			return r
 		}
 	}
 
 	var d soDecision
 	if isItem {
-		d = askSOQ(e.State, item.question()) // only the cleaned user state crosses this boundary
+		d = askSOQWithThreshold(e.State, item.question(), thr) // only the cleaned user state crosses this boundary
 	} else {
 		d = askSO(e.State)
 	}
@@ -289,19 +347,29 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 	case d.TimedOut:
 		return passResult(classify(0, context.DeadlineExceeded), true)
 	case d.Choice == "":
-		return passResult("so-degraded", true) // HTTP!=200, parse error or conf<0.8
+		return passResult("so-degraded", true) // HTTP!=200, parse error or a label outside the item's set
 	case !admits(d.Choice):
-		// Outside the item's proceed list nothing is admitted; the generic
-		// question keeps its "no" deny path when the typed layer enforces.
-		if soMode() == "enforcing" && d.Conf >= defaultThreshold() && (!isItem || d.Choice == "no") {
-			return routeResult{Decision: decDeny, Reason: "so-deny", Abstained: true, ConfBucket: confBucket(d.Conf)}
-		}
+		// Outside the item's proceed list nothing is admitted. A registry item's
+		// own action is the steer; the generic question's label rides through
+		// unchanged (gate.go treats a non-yes label as "pass through", so a
+		// relay-side deny here would invert the gate).
 		if isItem {
-			return passResult("registry-nonproceed", true)
+			r := passResult("registry-nonproceed", true)
+			r.Label, r.Steer = d.Choice, item.Action[d.Choice]
+			return r
 		}
-		return passResult("so-"+d.Choice, true)
-	case d.Conf < defaultThreshold():
-		return passResult("so-low-conf", true)
+		r := passResult("so-"+d.Choice, true)
+		r.Label = d.Choice
+		return r
+	case d.Conf < thr:
+		r := passResult("so-low-conf", true)
+		r.Label = d.Choice
+		if isItem {
+			// The item's own next step beats the generic "name the evidence"
+			// text: a below-cut label still knows which action it wanted.
+			r.Steer = item.Action[d.Choice]
+		}
+		return r
 	default:
 		bucket := confBucket(d.Conf)
 		if c != nil {
@@ -310,6 +378,10 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 		if p != nil {
 			p.markSuccess(p.current().Name)
 		}
-		return routeResult{Decision: decPin, Reason: "so-admit", Covered: true, ConfBucket: bucket}
+		r := routeResult{Decision: decPin, Reason: "so-admit", Covered: true, ConfBucket: bucket}
+		if isItem {
+			r.Label, r.Steer = d.Choice, item.Action[d.Choice]
+		}
+		return r
 	}
 }

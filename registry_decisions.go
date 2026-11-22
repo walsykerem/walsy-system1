@@ -19,7 +19,9 @@ type decisionItem struct {
 	Gate         bool              `json:"gate"`
 	Irreversible bool              `json:"irreversible"`
 	Provisional  bool              `json:"provisional"`
+	Requirement  string            `json:"requirement"`
 	StateFields  []string          `json:"state_fields"`
+	Threshold    float64           `json:"threshold"` // 0 = use the global gate
 	Q            decisionQ         `json:"q"`
 	Proceed      []string          `json:"proceed"`
 	Action       map[string]string `json:"action"`
@@ -70,8 +72,17 @@ func (it decisionItem) admits(choice string) bool {
 	return false
 }
 
+// threshold clamps the item's own cut to the global gate: a measured per-item
+// value may lower the bar, never raise it above the global rule.
+func (it decisionItem) threshold(global float64) float64 {
+	if it.Threshold > 0 && it.Threshold < global {
+		return it.Threshold
+	}
+	return global
+}
+
 // question is the item's own question: instructions plus its exact label set,
 // so an answer must be one of the item's labels (askSOQ enforces that).
 func (it decisionItem) question() soQuestion {
-	return soQuestion{Type: "choice", Criteria: it.Q.Labels}
+	return soQuestion{Type: "choice", Instructions: it.Q.Instructions, Criteria: it.Q.Labels}
 }

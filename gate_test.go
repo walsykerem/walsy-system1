@@ -68,8 +68,8 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.79}}}`))
 	}))
 	soEndpoint = srv2.URL
-	if d := askSO("x"); d.Choice != "" {
-		t.Fatalf("conf<0.8 should pass through, got %+v", d)
+	if d := askSO("x"); d.Choice != "yes" || d.Conf != 0.79 {
+		t.Fatalf("parser keeps the below-cut label for the caller to steer, got %+v", d)
 	}
 	srv2.Close()
 
@@ -85,6 +85,40 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 		t.Fatalf("timeout should be TimedOut+empty, got %+v", d)
 	}
 	srv3.Close()
+}
+
+func TestPerItemThreshold(t *testing.T) {
+	global := defaultThreshold()
+	var it decisionItem
+	for _, tc := range []struct{ thr, want float64 }{
+		{0, global},
+		{-1, global},
+		{0.7, 0.7},
+		{global, global},
+		{0.95, global},
+	} {
+		it.Threshold = tc.thr
+		if got := it.threshold(global); got != tc.want {
+			t.Fatalf("threshold(%v)=%v want %v", tc.thr, got, tc.want)
+		}
+	}
+}
+
+// The measured 0.768 label the global gate discards is admitted under a
+// below-global item cut, and an above-global cut clamps instead of loosening.
+func TestPerItemThresholdReachesParser(t *testing.T) {
+	q := soQuestion{Type: "choice", Criteria: map[string]string{"yes": "admit", "no": "pass"}}
+	withSO(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.768}}}`))
+	})
+	if d := askSOQWithThreshold("decide: classify this", q, 0.7); d.Choice != "yes" || d.Conf != 0.768 {
+		t.Fatalf("below-global cut must admit 0.768: %+v", d)
+	}
+	// Below the caller's cut the label is still returned, so the refusal can
+	// steer; the cut is applied by route/toolsDecide, not by the parser.
+	if d := askSOQWithThreshold("decide: classify this", q, 0.95); d.Choice != "yes" || d.Conf != 0.768 {
+		t.Fatalf("parser must keep a below-cut label: %+v", d)
+	}
 }
 
 // TestAskSOStoredProviderKey proves the SO key comes from any registry provider

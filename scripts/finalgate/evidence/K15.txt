@@ -1,0 +1,4 @@
+    registry_sweep_test.go:159: points: 3 local, 53 admitted, 50 refused, 53 low-conf steered, 50 low-confidence non-proceed still refused, 3 with no non-proceed label
+--- PASS: TestEveryDecisionPointSteers (0.09s)
+PASS
+ok  	walsy-system1	0.728s

@@ -42,7 +42,7 @@ func toolsReply(id json.RawMessage, method string, params json.RawMessage) map[s
 			"serverInfo":      map[string]any{"name": "walsy-system1", "version": "1.0.0"},
 		}
 	case "tools/list":
-		base["result"] = map[string]any{"tools": []any{toolStatusDef, toolAuditDef}}
+		base["result"] = map[string]any{"tools": []any{toolStatusDef, toolAuditDef, toolDecideDef}}
 	case "tools/call":
 		var call struct {
 			Name      string          `json:"name"`
@@ -81,6 +81,17 @@ var toolAuditDef = map[string]any{
 	}},
 }
 
+var toolDecideDef = map[string]any{
+	"name":        "system1_decide",
+	"description": "Ask the decision engine one registry item (decision_items.json id) with a state text. Returns the typed label, confidence, admission, the item's proceed labels and the action the caller must take. gate:false items answer locally with no model call; irreversible items admit only a proceed label. Never returns key material or the raw state.",
+	"inputSchema": map[string]any{"type": "object", "required": []any{"item", "state"}, "properties": map[string]any{
+		"item":   map[string]any{"type": "string", "description": "decision_items.json item id, e.g. intake.intent"},
+		"state":  map[string]any{"type": "string", "description": "decision state text"},
+		"phase":  map[string]any{"type": "string"},
+		"strict": map[string]any{"type": "boolean", "description": "require confidence strictly above the item threshold (default: at or above)"},
+	}},
+}
+
 func callTool(name string, args json.RawMessage) (string, error) {
 	switch name {
 	case "system1_status":
@@ -96,8 +107,99 @@ func callTool(name string, args json.RawMessage) (string, error) {
 			}
 		}
 		return toolsAudit(a.Limit, a.ErrorsOnly)
+	case "system1_decide":
+		var a struct {
+			Item   string `json:"item"`
+			State  string `json:"state"`
+			Phase  string `json:"phase"`
+			Strict bool   `json:"strict"`
+		}
+		if len(args) > 0 {
+			if err := json.Unmarshal(args, &a); err != nil {
+				return "", err
+			}
+		}
+		if a.Item == "" || a.State == "" {
+			return toolsError("item and state are required"), nil
+		}
+		return toolsDecide(a.Item, a.State, a.Phase, a.Strict), nil
 	}
 	return "", errors.New("unknown tool")
+}
+
+// decideReply is the one reply shape; confidence 0 and empty strings are absent.
+type decideReply struct {
+	Item          string   `json:"item"`
+	Label         string   `json:"label,omitempty"`
+	Confidence    float64  `json:"confidence,omitempty"`
+	Admitted      bool     `json:"admitted"`
+	ProceedLabels []string `json:"proceed_labels,omitempty"`
+	Action        string   `json:"action,omitempty"`
+	Steer         string   `json:"steer,omitempty"`
+	Local         bool     `json:"local,omitempty"`
+}
+
+func toolsError(msg string) string {
+	b, _ := json.Marshal(map[string]string{"error": msg})
+	return string(b)
+}
+
+// toolsDecide runs one registry item through the relay's SO path. route() is
+// not reused because routeResult keeps only a coarse confidence bucket (never
+// the label or confidence this tool must return) and the shared decision cache
+// lives on decisionBridge, which this server does not hold; so the same pieces
+// route() calls - buildStateWithCapability, item.question(), askSOQ,
+// item.admits, defaultThreshold - are composed here with route's admission rule.
+func toolsDecide(item, state, phase string, strict bool) string {
+	it, ok := decisionItemFor(item)
+	if !ok {
+		return toolsError("unknown item")
+	}
+	if !it.Gate {
+		b, _ := json.Marshal(decideReply{Item: item, Local: true, Steer: "decide locally, no model call"})
+		return string(b)
+	}
+	req, _ := json.Marshal(map[string]any{"state": state, "phase": phase, "item": item})
+	thr := it.threshold(defaultThreshold())
+	d := askSOQWithThreshold(buildStateWithCapability(string(req), soCapability()), it.question(), thr)
+	if d.TimedOut {
+		return toolsError("model timeout")
+	}
+	if d.Choice == "" {
+		return toolsError("model unavailable or answer outside the item's label set")
+	}
+	admitted := it.admits(d.Choice) && aboveThreshold(d.Conf, thr, strict)
+	reply := decideReply{
+		Item: item, Label: d.Choice, Confidence: d.Conf, Admitted: admitted,
+		ProceedLabels: it.Proceed, Action: it.Action[d.Choice],
+	}
+	if !admitted {
+		reply.Steer = steerText(it, d.Choice, strict)
+	}
+	b, _ := json.Marshal(reply)
+	return string(b)
+}
+
+// aboveThreshold mirrors route()'s cut; strict turns >= into >.
+func aboveThreshold(conf, threshold float64, strict bool) bool {
+	if strict {
+		return conf > threshold
+	}
+	return conf >= threshold
+}
+
+// steerText is what the caller must do when the label is not admitted.
+func steerText(it decisionItem, label string, strict bool) string {
+	if s := it.Action[label]; s != "" {
+		return s
+	}
+	if !it.admits(label) {
+		return "label outside the proceed list; decide locally or hand to a human"
+	}
+	if strict {
+		return "confidence not strictly above threshold; re-check the state or decide locally"
+	}
+	return "below confidence threshold; re-check the state or decide locally"
 }
 
 func toolsStatus() (string, error) {

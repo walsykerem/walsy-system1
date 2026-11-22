@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -141,12 +142,72 @@ func handleUISetBuildTarget(w http.ResponseWriter, r *http.Request) {
 // refused instead of spawning another 300s toolchain process.
 var buildSlot = make(chan struct{}, 1)
 
+// buildAttempts counts failed fix attempts per failure signature across build
+// runs (single slot = one writer), so the third failure of the same test reverts
+// instead of looping with the same patch.
+var buildAttempts = newAttemptGuard()
+
 // runGoBuild is a var so tests can hold the slot without invoking the toolchain.
 var runGoBuild = func(ctx context.Context, dir, rel, goos, goarch string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-buildvcs=false", "-o", rel, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	return cmd.CombinedOutput()
+}
+
+// Pre-check and post-build check; vars so tests never invoke the toolchain.
+var runGoVet = func(ctx context.Context, dir string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "go", "vet", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	return cmd.CombinedOutput()
+}
+
+var runGoTest = func(ctx context.Context, dir string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "go", "test", "-count=1", "./...")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	return cmd.CombinedOutput()
+}
+
+// installBuild swaps the new binary in, keeping the old one as .prev so a
+// failed test run can put it back. A hardlink keeps the old binary reachable
+// for the whole swap, so rel is never missing between two renames.
+func installBuild(src, tmp, rel string) error {
+	from, to := filepath.Join(src, tmp), filepath.Join(src, rel)
+	if _, err := os.Stat(from); err != nil {
+		return fmt.Errorf("build produced no binary at %s", tmp)
+	}
+	if _, err := os.Stat(to); err == nil {
+		_ = os.Remove(to + ".prev")
+		if err := os.Link(to, to+".prev"); err != nil {
+			if err := os.Rename(to, to+".prev"); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.Rename(from, to); err != nil {
+		_ = os.Remove(from)
+		return err
+	}
+	return nil
+}
+
+// discardFailedBuild leaves no failing binary at rel: it restores .prev when
+// there is one, otherwise it removes the failing build. It returns what it
+// actually did, so the banner never claims a revert that did not happen.
+func discardFailedBuild(src, rel string) string {
+	to := filepath.Join(src, rel)
+	if _, err := os.Stat(to + ".prev"); err == nil {
+		if err := os.Rename(to+".prev", to); err == nil {
+			return "BUILD REVERTED: TESTS FAILED"
+		}
+		return "BUILD FAILED: TESTS FAILED, OLD BINARY NOT RESTORED"
+	}
+	if err := os.Remove(to); err != nil {
+		return "BUILD FAILED: TESTS FAILED, NO PREVIOUS BINARY, FAILING BUILD COULD NOT BE REMOVED"
+	}
+	return "BUILD FAILED: TESTS FAILED, NO PREVIOUS BINARY, FAILING BUILD DISCARDED"
 }
 
 func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
@@ -175,14 +236,39 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
-	out, err := runGoBuild(ctx, sourceDir, rel, goos, goarch)
+	// Cheap static pre-check: a dirty vet result would fail the consumer anyway.
+	if out, err := runGoVet(ctx, sourceDir); err != nil {
+		renderBuildResult(w, "BUILD REFUSED: PRECHECK FAILED\n"+buildOutputTail(out))
+		return
+	}
+	tmp := rel + ".tmp"
+	out, err := runGoBuild(ctx, sourceDir, tmp, goos, goarch)
 	tail := buildOutputTail(out)
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
+		os.Remove(filepath.Join(sourceDir, tmp))
 		renderBuildResult(w, "BUILD TIMED OUT AFTER 300s\n"+tail)
 	case err != nil:
+		os.Remove(filepath.Join(sourceDir, tmp))
 		renderBuildResult(w, "BUILD FAILED\n"+tail)
 	default:
+		if err := installBuild(sourceDir, tmp, rel); err != nil {
+			renderBuildResult(w, "BUILD FAILED: NEW BINARY NOT INSTALLED\n"+tail)
+			return
+		}
+		if out, err := runGoTest(ctx, sourceDir); err != nil {
+			sig := failureSignature(string(out))
+			revert, steer := buildAttempts.fail(sig)
+			msg := discardFailedBuild(sourceDir, rel) + "\n" + buildOutputTail(out)
+			if revert {
+				msg += "\n" + steer
+			} else {
+				msg += "\nfailure class: " + classifyFailure(string(out))
+			}
+			renderBuildResult(w, msg)
+			return
+		}
+		buildAttempts.counts = map[string]int{} // green build clears the failure ledger
 		renderBuildResult(w, "BUILD OK: "+rel+" ("+goos+"/"+goarch+")\n"+tail)
 	}
 }

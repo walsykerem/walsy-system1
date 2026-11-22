@@ -3,21 +3,24 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "== 1/6 gofmt =="
-unformatted="$(gofmt -l *.go)"
+echo "== 1/8 gofmt =="
+unformatted="$(gofmt -l *.go scripts/*/*.go)"
 if [ -n "$unformatted" ]; then
   echo "gofmt needed for:" >&2
   echo "$unformatted" >&2
   exit 1
 fi
 
-echo "== 2/6 go test =="
-CGO_ENABLED=0 go test -count=1 ./...
+echo "== 2/8 go vet =="
+CGO_ENABLED=0 go vet ./...
 
-echo "== 3/6 go build =="
+echo "== 3/8 go test -race =="
+go test -race -count=1 ./...
+
+echo "== 4/8 go build =="
 CGO_ENABLED=0 go build -o walsy-system1 .
 
-echo "== 4/6 lrecon digest =="
+echo "== 5/8 lrecon digest =="
 LRECON=/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon
 RECON=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy_verify_lrecon.json
 "$LRECON" --json ./walsy-system1 > "$RECON"
@@ -34,7 +37,7 @@ print("lrecon digest:", digest)
 print("lrecon kind:", kind)
 PY
 
-echo "== 5/6 non-ascii scan =="
+echo "== 6/8 non-ascii scan =="
 python3 - <<'PY'
 import glob
 import os
@@ -58,5 +61,8 @@ if bad:
 print("ascii clean:", len(files), "files")
 PY
 
-echo "== 6/6 verdict =="
+echo "== 7/8 subpackage vet =="
+CGO_ENABLED=0 go vet ./scripts/...
+
+echo "== 8/8 verdict =="
 echo "PASS"

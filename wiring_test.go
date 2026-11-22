@@ -191,11 +191,30 @@ func enforcingSO(t *testing.T, body string, calls *int32) {
 	t.Cleanup(routerReset)
 }
 
-// Enforcing mode blocks a high-confidence SO deny before upstream, with a
-// valid JSON-RPC error - never an HTTP status or a leaked payload.
-func TestEnforcingDenyBlocksToolCall(t *testing.T) {
+// The generic gate's "no" means "pass through unchanged" (gate.go's label
+// set), so enforcing mode must forward it: blocking there would deny ordinary
+// traffic the typed layer never claimed.
+func TestEnforcingGenericNoPassesThrough(t *testing.T) {
 	enforcingSO(t, `{"answers":{"gate":{"choice":"no","confidence":0.96}}}`, nil)
 	req := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tool-a","arguments":{}}}` + "\n")
+	var toServer, toClient bytes.Buffer
+	bridgeStdio(bytes.NewReader(req), &toClient, &toServer, bytes.NewReader(nil))
+	if toServer.Len() == 0 {
+		t.Fatalf("generic no was blocked: %q", toClient.Bytes())
+	}
+	if bytes.Contains(toClient.Bytes(), []byte(`"error"`)) {
+		t.Fatalf("generic no produced an error: %q", toClient.Bytes())
+	}
+}
+
+// A registry item outside its proceed list still blocks in enforcing mode,
+// with a valid JSON-RPC error - never an HTTP status or a leaked payload.
+func TestEnforcingRegistryRefusalBlocks(t *testing.T) {
+	enforcingSO(t, `{"answers":{"gate":{"choice":"destructive","confidence":0.97}}}`, nil)
+	req := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tool-a","arguments":{},` +
+		`"state":"the delete already ran on prod","item":"intake.destructive","phase":"before-model",` +
+		`"authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,` +
+		`"safe":true,"reversible":true}}` + "\n")
 	var toServer, toClient bytes.Buffer
 	bridgeStdio(bytes.NewReader(req), &toClient, &toServer, bytes.NewReader(nil))
 	if toServer.Len() != 0 {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -42,8 +44,29 @@ func TestToolsServerInitializeListAndCall(t *testing.T) {
 		t.Fatalf("serverInfo = %v", info)
 	}
 	tools := replies[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 2 {
+	if len(tools) != 3 {
 		t.Fatalf("tools = %v", tools)
+	}
+	var decide map[string]any
+	for _, raw := range tools {
+		def := raw.(map[string]any)
+		if def["name"] == "system1_decide" {
+			decide = def
+		}
+	}
+	if decide == nil {
+		t.Fatalf("system1_decide missing from tools/list: %v", tools)
+	}
+	schema := decide["inputSchema"].(map[string]any)
+	props := schema["properties"].(map[string]any)
+	for _, k := range []string{"item", "state", "phase", "strict"} {
+		if _, ok := props[k]; !ok {
+			t.Fatalf("inputSchema missing %q: %v", k, props)
+		}
+	}
+	req := schema["required"].([]any)
+	if len(req) != 2 || req[0] != "item" || req[1] != "state" {
+		t.Fatalf("required = %v", req)
 	}
 	text := replies[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
 	var status map[string]any
@@ -55,6 +78,131 @@ func TestToolsServerInitializeListAndCall(t *testing.T) {
 	}
 	if replies[3]["error"].(map[string]any)["code"] != float64(-32602) {
 		t.Fatalf("unknown tool error = %v", replies[3]["error"])
+	}
+}
+
+func TestToolsDecideTable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("EVREN_API_KEY", "test-key")
+	const defaultBody = `{"answers":{"gate":{"choice":"chat","confidence":0.95}}}`
+	hits := 0
+	status, body := http.StatusOK, defaultBody
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	origEndpoint, origClient := soEndpoint, soClient
+	soEndpoint, soClient = srv.URL, srv.Client()
+	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
+
+	cases := []struct {
+		name     string
+		item     string
+		state    string
+		status   int
+		body     string
+		wantHits int
+		want     map[string]any
+	}{
+		{
+			name: "local item makes no model call", item: "reasoning.priority", state: "decide which item next",
+			want: map[string]any{"item": "reasoning.priority", "admitted": false, "local": true, "steer": "decide locally, no model call"},
+		},
+		{
+			name: "non-proceed label is not admitted", item: "intake.intent", state: "decide intake intent",
+			wantHits: 1,
+			want: map[string]any{"item": "intake.intent", "label": "chat", "admitted": false, "confidence": 0.95,
+				"steer": "hand to main LLM"},
+		},
+		{
+			name: "transport error is an error object", item: "intake.intent", state: "decide intake intent",
+			status: http.StatusInternalServerError, body: `{}`, wantHits: 1,
+			want: map[string]any{"error": "model unavailable or answer outside the item's label set"},
+		},
+		{
+			name: "low confidence is an error object", item: "intake.intent", state: "decide intake intent",
+			body: `{"answers":{"gate":{"choice":"other","confidence":0.5}}}`, wantHits: 1,
+			want: map[string]any{"error": "model unavailable or answer outside the item's label set"},
+		},
+		{
+			name: "unknown item is an error object", item: "no.such.item", state: "anything",
+			want: map[string]any{"error": "unknown item"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			hits, status, body = 0, http.StatusOK, defaultBody
+			if c.status != 0 {
+				status = c.status
+			}
+			if c.body != "" {
+				body = c.body
+			}
+			text := toolsDecide(c.item, c.state, "", false)
+			var got map[string]any
+			if err := json.Unmarshal([]byte(text), &got); err != nil {
+				t.Fatalf("reply not JSON: %q: %v", text, err)
+			}
+			for k, want := range c.want {
+				if got[k] != want {
+					t.Fatalf("%s = %v, want %v (reply %s)", k, got[k], want, text)
+				}
+			}
+			if _, leaked := got["state"]; leaked {
+				t.Fatalf("raw state leaked: %s", text)
+			}
+			if strings.Contains(text, "test-key") {
+				t.Fatalf("key material leaked: %s", text)
+			}
+			if hits != c.wantHits {
+				t.Fatalf("model calls = %d, want %d", hits, c.wantHits)
+			}
+		})
+	}
+}
+
+func TestToolsDecideAdmissionRule(t *testing.T) {
+	// The admission rule is registry proceeds + threshold; strict only moves
+	// the boundary from >= to >.
+	if !aboveThreshold(defaultThreshold(), defaultThreshold(), false) || aboveThreshold(defaultThreshold(), defaultThreshold(), true) {
+		t.Fatalf("threshold boundary wrong: non-strict %v strict %v",
+			aboveThreshold(defaultThreshold(), defaultThreshold(), false), aboveThreshold(defaultThreshold(), defaultThreshold(), true))
+	}
+	if aboveThreshold(defaultThreshold()-0.01, defaultThreshold(), false) {
+		t.Fatal("below-threshold confidence admitted")
+	}
+}
+
+func TestToolsDecideMissingArgs(t *testing.T) {
+	cases := []string{
+		`{"state":"decide intake intent"}`,
+		`{"item":"intake.intent"}`,
+		`{}`,
+	}
+	for _, args := range cases {
+		text, err := callTool("system1_decide", json.RawMessage(args))
+		if err != nil {
+			t.Fatalf("args %s: unexpected transport error: %v", args, err)
+		}
+		if text != `{"error":"item and state are required"}` {
+			t.Fatalf("args %s: reply = %s", args, text)
+		}
+	}
+}
+
+func TestToolsDecideWithoutKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("EVREN_API_KEY", "")
+	got := toolsDecide("intake.intent", "decide intake intent", "", false)
+	if got != `{"error":"model unavailable or answer outside the item's label set"}` {
+		t.Fatalf("no-key reply = %s", got)
+	}
+	local := toolsDecide("tools.pick", "decide which tool", "", false)
+	if !strings.Contains(local, `"local":true`) {
+		t.Fatalf("local item needs no key: %s", local)
 	}
 }
 

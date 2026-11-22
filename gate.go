@@ -74,8 +74,9 @@ type soDecision struct {
 }
 
 type soQuestion struct {
-	Type     string            `json:"type"`
-	Criteria map[string]string `json:"criteria,omitempty"`
+	Type         string            `json:"type"`
+	Instructions string            `json:"instructions,omitempty"`
+	Criteria     map[string]string `json:"criteria,omitempty"`
 }
 
 // soAPIKey resolves the SO provider key generically: a stored key on the
@@ -128,9 +129,35 @@ func askSO(state string) soDecision {
 	}})
 }
 
+// gateQuestion defaults to the generic yes/no/other question so askSO keeps its
+// exact behaviour; a registry item brings its own instructions and labels.
+func gateQuestion(q soQuestion) soQuestion {
+	if len(q.Criteria) > 0 {
+		return q
+	}
+	return soQuestion{Type: "choice", Criteria: map[string]string{
+		"yes":   "admit to the typed decision layer",
+		"no":    "pass through unchanged",
+		"other": "ambiguous; pass through",
+	}}
+}
+
 // askSOQ asks one question whose label set is the caller's. A registry item
 // brings its own instructions and labels, so the answer must be one of them.
 func askSOQ(state string, q soQuestion) soDecision {
+	return askSOQWithThreshold(state, q, defaultThreshold())
+}
+
+// askSOQWithThreshold keeps a below-cut answer instead of discarding it: the
+// label and confidence come back so the caller can steer with them, and the cut
+// itself is applied by the caller (route's so-low-conf branch, toolsDecide's
+// !admitted branch). A per-item value may only lower the global gate: anything
+// <=0 or above defaultThreshold clamps back to the global rule.
+func askSOQWithThreshold(state string, q soQuestion, threshold float64) soDecision {
+	if threshold <= 0 || threshold > defaultThreshold() {
+		threshold = defaultThreshold()
+	}
+	_ = threshold // the parse no longer judges; kept so callers state their cut
 	key := soAPIKey()
 	if key == "" {
 		return soDecision{}
@@ -141,15 +168,9 @@ func askSOQ(state string, q soQuestion) soDecision {
 		State     string                `json:"state"`
 		Questions map[string]soQuestion `json:"questions"` // object, never array
 	}{
-		Model: "clef",
-		State: state,
-		Questions: map[string]soQuestion{
-			"gate": {Type: "choice", Criteria: map[string]string{
-				"yes":   "admit to the typed decision layer",
-				"no":    "pass through unchanged",
-				"other": "ambiguous; pass through",
-			}},
-		},
+		Model:     "clef",
+		State:     state,
+		Questions: map[string]soQuestion{"gate": gateQuestion(q)},
 	})
 	if err != nil {
 		return soDecision{}
@@ -204,11 +225,16 @@ func askSOQ(state string, q soQuestion) soDecision {
 	}
 	usage = out.Usage
 	a, ok := out.Answers["gate"]
-	if !ok || (a.Choice != "yes" && a.Choice != "no" && a.Choice != "other") {
+	if !ok || a.Choice == "" {
 		outcome = "unrouted"
 		return soDecision{}
 	}
-	if math.IsNaN(a.Confidence) || a.Confidence < 0.8 || a.Confidence > 1 {
+	// A label outside the question's own set is a misroute, not an answer.
+	if _, inSet := q.Criteria[a.Choice]; len(q.Criteria) > 0 && !inSet {
+		outcome = "unrouted"
+		return soDecision{}
+	}
+	if math.IsNaN(a.Confidence) || a.Confidence > 1 {
 		outcome = "unrouted"
 		return soDecision{}
 	}

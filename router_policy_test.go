@@ -176,3 +176,38 @@ func TestRouterDiscoveredTools(t *testing.T) {
 		t.Fatalf("discovered = %v", got)
 	}
 }
+
+func TestRouterBudgetSpendTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		budget string
+		max    int
+	}{
+		{"missing uses default", "", routerDefaultBudget},
+		{"malformed uses default", "lots", routerDefaultBudget},
+		{"explicit zero", "0", 0},
+		{"explicit two", "2", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetRouterForTest(t)
+			t.Setenv("WALSY_ROUTER_RETRY_BUDGET", tc.budget)
+			routerReset()
+			for i := 0; i < tc.max; i++ {
+				if _, max, spent := routerBudgetSpend(); !spent || max != tc.max {
+					t.Fatalf("spend %d failed, max=%d want %d", i, max, tc.max)
+				}
+			}
+			if _, max, spent := routerBudgetSpend(); spent || max != tc.max {
+				t.Fatalf("budget not bounded at %d", tc.max)
+			}
+			if tc.max == 0 {
+				return // an explicit zero budget refills to zero
+			}
+			routerBudgetReset()
+			if _, _, spent := routerBudgetSpend(); !spent {
+				t.Fatal("reset must refill the budget")
+			}
+		})
+	}
+}

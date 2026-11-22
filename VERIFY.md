@@ -85,3 +85,13 @@ Placeholders stay unfilled until the parent runs the suite.
   `Location: /ui/providers/sheet?name=Evren+System+One&msg=ENDPOINT+REJECTED`,
   so only the iframe navigates and the parent page never reloads.
 - browse MCP still `paired-offline`; no click-through. No commit/push.
+- Enforcing-mode write guard (`write_guard.go`): live stdio replay blocked a
+  write to a never-touched path with `-32001 blocked: write to a path this
+  session never touched: /tmp/never-read.txt`, forwarded the same call after a
+  `read_file`, and blocked the 9th identical `tools/call` as a repeat. Advisory
+  mode (default) forwarded all three unchanged. `verify.sh` PASS, ascii clean
+  59 files.
+- Every registry item now carries a `requirement` line (41/41), asserted by
+  `TestEveryRegistryItemStatesItsRequirement`. The 24 lines that had no
+  user-message trace are derived from each item's own rubric, not quoted from
+  the user; confirming them is still open.

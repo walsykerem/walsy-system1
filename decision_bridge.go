@@ -26,6 +26,7 @@ type decisionBridge struct {
 	pin    *pin
 	keySet bool
 	marker sync.Once
+	guard  *writeGuard
 }
 
 func newDecisionBridge() *decisionBridge {
@@ -34,21 +35,18 @@ func newDecisionBridge() *decisionBridge {
 	if err != nil {
 		list = bakedRegistry()
 	}
-	return &decisionBridge{cache: newDecisionCache(), pin: newPin(list), keySet: keySet}
+	return &decisionBridge{cache: newDecisionCache(), pin: newPin(list), keySet: keySet,
+		guard: newWriteGuard()}
 }
 
-// gateKey binds a decision to request bytes, capability config and router
-// budget. Distinct frames therefore get distinct decisions: no session latch.
-func gateKey(request []byte, cap capabilityConfig, budgetOK bool) string {
+// gateKey binds a decision to request bytes and capability config. Budget is
+// deliberately absent: spending the budget must block the call, not mint a new
+// cache cell for the same request.
+func gateKey(request []byte, cap capabilityConfig) string {
 	h := sha256.New()
 	_, _ = h.Write(request)
 	b, _ := json.Marshal(cap)
 	_, _ = h.Write(b)
-	if budgetOK {
-		_, _ = h.Write([]byte{1})
-	} else {
-		_, _ = h.Write([]byte{0})
-	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -126,7 +124,7 @@ func cachedResult(c cachedDecision) routeResult {
 	return passResult("cache-"+c.Reason, false)
 }
 
-// decide runs buildState + route per request, keyed by request+capability+budget.
+// decide runs buildState + route per request, keyed by request+capability.
 // No one-shot latch: a second distinct frame gets a fresh decision.
 func (d *decisionBridge) decide(request []byte) routeResult {
 	d.mu.Lock()
@@ -141,15 +139,8 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 		return passResult("no-key", false)
 	}
 	cap := soCapability()
-	// Budget is consumed only in enforcing mode; advisory must fail open
-	// without spending the shared retry token.
-	enforcing := soMode() == "enforcing"
-	budgetOK := true
-	if enforcing {
-		budgetOK = routerBudgetOK()
-	}
 	state := buildStateWithCapability(string(request), cap)
-	key := gateKey(request, cap, budgetOK)
+	key := gateKey(request, cap)
 	if cached, hit := d.cache.lookup(key); hit {
 		return cachedResult(cached)
 	}
@@ -200,23 +191,88 @@ func rpcError(id json.RawMessage, code int, msg string) []byte {
 	return append(b, '\n')
 }
 
-// enforcingGate inspects before forwarding. Only a high-confidence SO deny
-// blocks; router allow/budget are audit-only so a missing policy fails open.
+// enforcingGate inspects before forwarding. A high-confidence SO deny or a
+// spent session budget blocks; a missing router policy still fails open.
 func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 	f, err := decodeFrame(request)
 	if err != nil || (f.Method != "initialize" && f.Method != "tools/call") {
 		return nil, false
 	}
 	tool := toolName(f.Params)
+	if f.Method == "initialize" {
+		// The documented budget boundary: a new MCP session starts a new budget.
+		routerBudgetReset()
+	}
+	if f.Method == "tools/call" {
+		if reason, blocked := d.guard.check(tool, toolArgs(f.Params)); blocked {
+			routerAudit("writeguard", "tool", tool, "reason", reason)
+			return rpcError(f.ID, -32001, "blocked: "+reason), true
+		}
+		if body, ok := writeContent(toolArgs(f.Params)); ok {
+			p := argumentPath(toolArgs(f.Params))
+			// Security precheck over the text this call would add, before it lands.
+			if v := diffSecurityCheck(p, oldContentOnDisk(p), body); v.Refuse {
+				routerAudit("diffguard", "tool", tool, "reason", v.Code)
+				return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
+			}
+		} else if v := argsSecretCheck(toolArgs(f.Params)); v.Refuse {
+			// No file body to diff: a shell redirect or an unknown schema still
+			// cannot carry a credential shape through this hop.
+			routerAudit("diffguard", "tool", tool, "reason", v.Code)
+			return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
+		}
+		if _, max, spent := routerBudgetSpend(); !spent {
+			routerAudit("budget", "tool", tool, "budget", "exhausted",
+				"count", strconv.Itoa(max))
+			return rpcError(f.ID, -32001, budgetSteer(max)), true
+		}
+	}
 	allowed := routerAllow(tool)
 	routerAudit("gate", "method", f.Method, "tool", tool,
 		"allow", strconv.FormatBool(allowed))
 	r := d.decide(unwrapParams(request, f))
 	routerAudit("decision", "method", f.Method, "decision", r.Decision, "reason", r.Reason)
 	if r.Decision == decDeny {
-		return rpcError(f.ID, -32000, "blocked by decision gate"), true
+		return rpcError(f.ID, -32000, withSteer("blocked by decision gate", r.Steer)), true
+	}
+	// Enforcing only, and only when the decision is not an admit: an admitted
+	// item's Steer is its own "continue" action, not a refusal to relay.
+	if soMode() == "enforcing" && steerBlocks(r) {
+		return rpcError(f.ID, -32001, withSteer("blocked", r.Steer)), true
 	}
 	return nil, false
+}
+
+func withSteer(base, steer string) string {
+	if steer == "" {
+		return base
+	}
+	return base + ": " + steer
+}
+
+// budgetSteer is the exhausted-budget refusal body: it names the budget, its
+// refill boundary and the alternative, so the caller is never stalled blind.
+func budgetSteer(max int) string {
+	return withSteer("blocked", "router tool budget spent ("+strconv.Itoa(max)+
+		" calls for this session); reset: send initialize for a new session or raise WALSY_ROUTER_RETRY_BUDGET; alternative: finish with what is in context")
+}
+
+// steerBlocks: an admitted decision's Steer is its own action ("continue"),
+// so only a refusal that names a next step blocks the relay. Transport and
+// scope failures stay fail-open: a Steer there is advice, not a verdict.
+func steerBlocks(r routeResult) bool {
+	return r.Decision != decPin && r.Steer != "" && !steerFailOpen[r.Reason]
+}
+
+// steerFailOpen reasons are advice, not verdicts: the decision model was
+// unreachable or the request was out of scope, so the relay keeps forwarding.
+var steerFailOpen = map[string]bool{
+	"transient": true, "permanent": true, "unknown": true,
+	"no-key": true, "no-state": true, "-32602": true,
+	"layer0-scope": true, "layer0-gate": true, "layer0-static": true,
+	"layer0-shape": true, "registry-local": true,
+	"so-degraded": true, "so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,
+	"ok": true, "ledger-complete": true,
 }
 
 // advisoryHooks record router canary decisions after forwarding and mirror a
@@ -229,6 +285,20 @@ func (d *decisionBridge) advisoryHooks(request []byte) {
 	tool := toolName(f.Params)
 	if tool == "" {
 		return
+	}
+	// Advisory is fail-open: a guard hit is recorded only, so the default mode
+	// still shows which writes enforcing mode would have refused.
+	if f.Method == "tools/call" {
+		if reason, hit := d.guard.check(tool, toolArgs(f.Params)); hit {
+			routerAudit("writeguard", "mode", "advisory",
+				"tool", tool, "reason", guardReasonCode(reason))
+		}
+		if body, ok := writeContent(toolArgs(f.Params)); ok {
+			p := argumentPath(toolArgs(f.Params))
+			if v := diffSecurityCheck(p, oldContentOnDisk(p), body); v.Refuse {
+				routerAudit("diffguard", "mode", "advisory", "tool", tool, "reason", v.Code)
+			}
+		}
 	}
 	allowed := routerAllow(tool)
 	// Advisory is fail-open: no retry token is spent in the default path.

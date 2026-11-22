@@ -1,0 +1,4 @@
+    registry_sweep_test.go:279: live points: 1 admitted, 14 refused, 38 low-conf, 0 degraded, 3 local
+--- PASS: TestEveryDecisionPointLive (19.07s)
+PASS
+ok  	walsy-system1	19.733s

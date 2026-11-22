@@ -291,3 +291,59 @@ func TestSOAutoOnForPlainClientFrame(t *testing.T) {
 		t.Fatalf("auto-on decision: %+v", r)
 	}
 }
+
+// A registry item's own cut reaches the route layer: the same 0.768 answer is
+// discarded at the global gate, admitted below it, and clamped above it.
+func TestRoutePerItemThreshold(t *testing.T) {
+	withSO(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"answers":{"gate":{"choice":"sufficient","confidence":0.768}}}`))
+	})
+	state := func() string {
+		b, _ := json.Marshal(stateEnvelope{
+			State: "decide whether the context is sufficient", NeedLabel: true,
+			NoScratch: true, Safe: true, Reversible: true, OptIn: true,
+			Phase: "before-model", Authority: true, Calibrated: true,
+			Item: "context.sufficient",
+		})
+		return string(b)
+	}
+
+	// Default: no per-item value -> the global 0.8 refuses 0.768, but the label
+	// survives so the refusal names the next step.
+	if r := route(state(), nil, newDecisionCache()); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" || r.Steer == "" {
+		t.Fatalf("default cut: %+v", r)
+	}
+
+	setItemThreshold(t, "context.sufficient", 0.7)
+	if r := route(state(), nil, newDecisionCache()); r.Decision != decPin || r.Label != "sufficient" {
+		t.Fatalf("per-item cut: %+v", r)
+	}
+
+	setItemThreshold(t, "context.sufficient", 0.95)
+	if r := route(state(), nil, newDecisionCache()); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" {
+		t.Fatalf("clamped cut: %+v", r)
+	}
+}
+
+// setItemThreshold patches the loaded registry for one test and restores it.
+func setItemThreshold(t *testing.T, id string, thr float64) {
+	t.Helper()
+	index := loadDecisionItems()
+	it, ok := index[id]
+	if !ok {
+		t.Fatalf("unknown item %q", id)
+	}
+	orig := it
+	it.Threshold = thr
+	index[id] = it
+	t.Cleanup(func() { index[id] = orig })
+}
+
+func TestAdmitSteerDoesNotBlock(t *testing.T) {
+	if steerBlocks(routeResult{Decision: decPin, Steer: "continue"}) {
+		t.Fatal("an admitted item's own action must not block the relay")
+	}
+	if !steerBlocks(routeResult{Decision: decPass, Steer: "STOP and ask human"}) {
+		t.Fatal("a steered refusal must block in enforcing mode")
+	}
+}

@@ -105,8 +105,13 @@ func TestBuildSlotRejectsConcurrentBuild(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	started := make(chan struct{})
 	release := make(chan struct{})
-	orig := runGoBuild
-	runGoBuild = func(context.Context, string, string, string, string) ([]byte, error) {
+	orig, origVet, origTest := runGoBuild, runGoVet, runGoTest
+	runGoVet = func(context.Context, string) ([]byte, error) { return nil, nil }
+	runGoTest = func(context.Context, string) ([]byte, error) { return nil, nil }
+	runGoBuild = func(_ context.Context, dir, rel, _, _ string) ([]byte, error) {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte("bin"), 0755); err != nil {
+			return nil, err
+		}
 		close(started)
 		<-release
 		return nil, nil
@@ -117,7 +122,7 @@ func TestBuildSlotRejectsConcurrentBuild(t *testing.T) {
 		defer close(done)
 		handleUIBuild(httptest.NewRecorder(), dashRequest(http.MethodPost, "/ui/build", nil), dir)
 	}()
-	t.Cleanup(func() { runGoBuild = orig })
+	t.Cleanup(func() { runGoBuild, runGoVet, runGoTest = orig, origVet, origTest })
 	<-started
 	rec := httptest.NewRecorder()
 	handleUIBuild(rec, dashRequest(http.MethodPost, "/ui/build", nil), dir)
@@ -126,4 +131,59 @@ func TestBuildSlotRejectsConcurrentBuild(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+// A failed test run must never leave the untested binary live, and the banner
+// must say what actually happened: restored, or discarded on a first build.
+func TestInstallBuildAndDiscardFailed(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("dist", "app")
+	write := func(name, body string) {
+		if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+
+	// First build: nothing to restore, so the failing binary must be removed.
+	write("dist/app.tmp", "new")
+	if err := installBuild(dir, "dist/app.tmp", rel); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	if got := discardFailedBuild(dir, rel); !strings.Contains(got, "NO PREVIOUS BINARY") {
+		t.Fatalf("first build failure banner = %q", got)
+	}
+	if got := read("dist/app"); got != "" {
+		t.Fatalf("failing first build left %q live", got)
+	}
+
+	// Later build: the previous binary comes back and the banner says so.
+	write("dist/app", "old")
+	write("dist/app.tmp", "new")
+	if err := installBuild(dir, "dist/app.tmp", rel); err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if got := read("dist/app"); got != "new" {
+		t.Fatalf("installed binary = %q", got)
+	}
+	if got := discardFailedBuild(dir, rel); got != "BUILD REVERTED: TESTS FAILED" {
+		t.Fatalf("revert banner = %q", got)
+	}
+	if got := read("dist/app"); got != "old" {
+		t.Fatalf("reverted binary = %q", got)
+	}
+
+	// A build that produced no binary is an error, not a silent success.
+	if err := installBuild(dir, "dist/missing", rel); err == nil {
+		t.Fatal("installBuild accepted a missing build output")
+	}
 }

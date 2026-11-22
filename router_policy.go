@@ -32,14 +32,15 @@ type routerBreaker struct {
 }
 
 type routerPolicy struct {
-	init      bool
-	budget    int
-	deny      map[string]bool
-	mirror    string
-	tools     []string
-	threshold int
-	cooldown  time.Duration
-	breakers  map[string]routerBreaker
+	init       bool
+	budgetMax  int
+	budgetLeft int
+	deny       map[string]bool
+	mirror     string
+	tools      []string
+	threshold  int
+	cooldown   time.Duration
+	breakers   map[string]routerBreaker
 }
 
 var (
@@ -69,7 +70,8 @@ func routerInitLocked() {
 	routerState.init = true
 	routerState.deny = make(map[string]bool)
 	routerState.breakers = make(map[string]routerBreaker)
-	routerState.budget = routerIntConfig("retry_budget", routerDefaultBudget, 0, 64)
+	routerState.budgetMax = routerIntConfig("retry_budget", routerDefaultBudget, 0, 64)
+	routerState.budgetLeft = routerState.budgetMax
 	routerState.threshold = routerIntConfig("breaker_threshold", routerDefaultFailures, 1, 32)
 	routerState.cooldown = routerDurationConfig("breaker_cooldown", routerDefaultCooldown)
 	routerState.mirror = routerMirrorConfig()
@@ -100,17 +102,35 @@ func routerAllow(tool string) bool {
 	return !routerState.deny[name]
 }
 
-// routerBudgetOK spends one retry token. Default budget is 3; advisory mode
-// never calls this automatically, so no retry loop exists in the default path.
-func routerBudgetOK() bool {
+// routerBudgetSpend spends one tool-call token of the current session budget.
+// spent=false means the budget is used up; max is the session budget so the
+// refusal can name it. A missing or malformed retry_budget falls back to the
+// default (3), so bad config never blocks; an explicit retry_budget=0 does.
+func routerBudgetSpend() (left, max int, spent bool) {
 	routerMu.Lock()
 	defer routerMu.Unlock()
 	routerInitLocked()
-	if routerState.budget <= 0 {
-		return false
+	if routerState.budgetLeft <= 0 {
+		return 0, routerState.budgetMax, false
 	}
-	routerState.budget--
-	return true
+	routerState.budgetLeft--
+	return routerState.budgetLeft, routerState.budgetMax, true
+}
+
+// routerBudgetReset refills the budget at its documented boundary: a new MCP
+// session (initialize) or process start. There is no timed/automatic refill.
+func routerBudgetReset() {
+	routerMu.Lock()
+	defer routerMu.Unlock()
+	routerInitLocked()
+	routerState.budgetLeft = routerState.budgetMax
+}
+
+// routerBudgetOK spends one retry token. Default budget is 3; advisory mode
+// never calls this automatically, so no retry loop exists in the default path.
+func routerBudgetOK() bool {
+	_, _, spent := routerBudgetSpend()
+	return spent
 }
 
 // routerRecord feeds the circuit breaker. Success closes the breaker.
