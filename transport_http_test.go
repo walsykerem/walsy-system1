@@ -83,3 +83,91 @@ func TestHTTPGetNoSSE(t *testing.T) {
 		t.Fatalf("GET status = %d", rec.Code)
 	}
 }
+
+// Upstream mode proxies the frame; no upstream preserves legacy echo.
+func TestHTTPUpstreamProxy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WALSY_SO_MODE", "")
+	t.Setenv("EVREN_API_KEY", "")
+	routerReset()
+	defer routerReset()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(b, []byte(`"tools/call"`)) {
+			t.Errorf("upstream got %q", b)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":3,"result":{"upstream":true}}`))
+	}))
+	defer up.Close()
+
+	frame := []byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x"}}`)
+	rec := httptest.NewRecorder()
+	mcpHTTPHandlerUpstream(up.URL).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(frame)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"upstream":true`)) {
+		t.Fatalf("upstream body = %q", rec.Body.String())
+	}
+}
+
+// Browser origin mismatch and SEP-2243 method mismatch are rejected, never 200.
+func TestHTTPHeaderGuards(t *testing.T) {
+	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x"}}`)
+	cases := []struct {
+		name string
+		mut  func(*http.Request)
+	}{
+		{"bad-origin", func(r *http.Request) { r.Header.Set("Origin", "http://evil.example") }},
+		{"bad-method", func(r *http.Request) { r.Header.Set(mcpMethodHeader, "initialize") }},
+		{"bad-name", func(r *http.Request) { r.Header.Set(mcpNameHeader, "other") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(frame))
+			tc.mut(r)
+			mcpHTTPHandler().ServeHTTP(rec, r)
+			if rec.Code == http.StatusOK {
+				t.Fatalf("bad %s accepted with 200", tc.name)
+			}
+		})
+	}
+}
+
+// Matching SEP-2243 headers are mirrored on the response.
+func TestHTTPSEP2243Mirror(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("EVREN_API_KEY", "")
+	routerReset()
+	defer routerReset()
+	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x"}}`)
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(frame))
+	r.Header.Set(mcpMethodHeader, "tools/call")
+	r.Header.Set(mcpNameHeader, "x")
+	rec := httptest.NewRecorder()
+	mcpHTTPHandler().ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if rec.Header().Get(mcpMethodHeader) != "tools/call" || rec.Header().Get(mcpNameHeader) != "x" {
+		t.Fatalf("SEP headers not mirrored: %v", rec.Header())
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+// A body that cannot be read must answer 400, not fall through to an unwritten
+// status (which net/http renders as a 200 with no frame).
+func TestHTTPUnreadableBodyRejected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.Body = io.NopCloser(failingReader{})
+	mcpHTTPHandler().ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unreadable body: status = %d, want 400", rec.Code)
+	}
+}

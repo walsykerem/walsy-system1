@@ -3,12 +3,36 @@ package main
 import (
 	"io"
 	"net"
+	"os"
 )
 
-// listenUnix binds a unix socket. Go unlinks the socket file on Close;
-// no discovery file, no port, no retry.
+// listenUnix binds a unix socket with 0600 permissions. It refuses symlinks
+// and live sockets, and removes only a genuinely stale socket file.
 func listenUnix(path string) (net.Listener, error) {
-	return net.Listen("unix", path)
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			return nil, &os.PathError{Op: "listen", Path: path, Err: os.ErrExist}
+		}
+		// A live listener answers a dial; only a stale socket is removable.
+		if c, err := net.DialTimeout("unix", path, 100_000_000); err == nil {
+			c.Close()
+			return nil, &os.PathError{Op: "listen", Path: path, Err: os.ErrExist}
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		l.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 // serveUnix accepts clients until the listener closes. dial supplies one
@@ -23,7 +47,7 @@ func serveUnix(l net.Listener, dial func() (net.Conn, error)) {
 		go func() {
 			defer c.Close()
 			if dial == nil {
-				io.Copy(io.Discard, c) //nolint:errcheck // no upstream: transparent no-op
+				_, _ = io.Copy(io.Discard, c) // no upstream: transparent no-op
 				return
 			}
 			up, err := dial()
@@ -35,16 +59,16 @@ func serveUnix(l net.Listener, dial func() (net.Conn, error)) {
 	}
 }
 
-// relayConn bridges two byte streams verbatim. First side to end closes both,
-// unblocking the other copy; no frame parsing, no rewriting.
+// relayConn bridges two byte streams verbatim with half-close on each side:
+// when one side ends, only its write half is closed, so the peer can flush.
 func relayConn(a, b io.ReadWriteCloser) {
 	done := make(chan struct{}, 1)
 	go func() {
-		io.Copy(b, a) //nolint:errcheck // passthrough: close ends the session
-		b.Close()
+		_, _ = io.Copy(b, a)
+		halfCloseWriter(b)
 		done <- struct{}{}
 	}()
-	io.Copy(a, b) //nolint:errcheck // passthrough: close ends the session
-	a.Close()
+	_, _ = io.Copy(a, b)
+	halfCloseWriter(a)
 	<-done
 }

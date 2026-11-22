@@ -20,39 +20,89 @@ type provider struct {
 	KeyEnv string
 }
 
-// bakedProviders: compile-time 9-slot registry (plan.md §1e, line 17).
-// Base is empty where plan.md names no endpoint — never invent a URL.
+// bakedProviders: compile-time default registry (plan.md S1e, line 17).
+// Endpoint defaults come from each provider's public API docs; user m04250
+// requires every slot to show a real, editable default.
 var bakedProviders = [...]provider{
-	{Name: "OpenRouter"},
-	{Name: "Ollama Cloud"},
-	{Name: "OpenCode Free"},
-	{Name: "v1m System One"},
-	{Name: "Evren System One", Base: "https://evren-llmapi.ssyz.org.tr", KeyEnv: "EVREN_API_KEY"},
-	{Name: "Nace Drex"},
-	{Name: "Ollama Local"},
-	{Name: "Cloudflare"},
-	{Name: "OpenCode Zen"},
+	{Name: "OpenRouter", Base: "https://openrouter.ai/api/v1/systemone"},
+	{Name: "Ollama Cloud", Base: "https://ollama.com/v1/systemone"},
+	{Name: "v1m System One", Base: "https://v1m.ir/v1/systemone"},
+	{Name: "Evren System One", Base: "https://evren-llmapi.ssyz.org.tr/v1/systemone", KeyEnv: "EVREN_API_KEY"},
+	{Name: "Command Code", Base: "https://api.commandcode.ai/provider/v1/systemone", KeyEnv: "COMMANDCODE_API_KEY"},
+	{Name: "Nace Drex", Base: "https://console.nace.ai/v1/systemone"},
+	{Name: "Ollama Local", Base: "http://localhost:11434/v1/systemone"},
+	{Name: "Cloudflare Clef", Base: "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/run/@cf/cloudflare/clef"},
+	{Name: "OpenCode Zen", Base: "https://opencode.ai/zen/v1/systemone"},
 }
 
 func bakedRegistry() []provider {
 	return append([]provider(nil), bakedProviders[:]...)
 }
 
-// loadRegistry reads the fixed #10 slot path; missing file is not an error.
-func loadRegistry() ([]provider, error) {
+func registryPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return bakedRegistry(), nil // no home ⇒ no file ⇒ config order
+		return "", fmt.Errorf("home unavailable")
 	}
-	return loadRegistryFrom(filepath.Join(home, ".walsy-system1", "providers.txt"))
+	return filepath.Join(home, ".walsy-system1", "providers.txt"), nil
+}
+
+// loadRegistry reads the fixed #10 slot path; missing file is not an error.
+func loadRegistry() ([]provider, error) {
+	list, _, err := loadRegistryWithOverrides()
+	return list, err
+}
+
+// loadRegistryWithOverrides also reports which names own a registry line, so
+// the UI can offer a reset back to the baked default.
+func loadRegistryWithOverrides() ([]provider, map[string]bool, error) {
+	path, err := registryPath()
+	if err != nil {
+		return bakedRegistry(), nil, nil
+	}
+	return loadRegistryFromWithOverrides(path)
 }
 
 // loadRegistryFrom is the parameterizable trust-boundary check used by tests.
 func loadRegistryFrom(path string) ([]provider, error) {
+	list, _, err := loadRegistryFromWithOverrides(path)
+	return list, err
+}
+
+func loadRegistryFromWithOverrides(path string) ([]provider, map[string]bool, error) {
+	data, err := readRegistryData(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	lines, err := parseRegistryLines(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := bakedRegistry()
+	overrides := make(map[string]bool)
+	for _, p := range lines {
+		overrides[p.Name] = true
+		replaced := false
+		for i := range out {
+			if out[i].Name == p.Name {
+				out[i] = p // a later line for the same name wins
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, p)
+		}
+	}
+	return out, overrides, nil
+}
+
+// readRegistryData applies the 0600 regular non-symlink trust boundary.
+func readRegistryData(path string) ([]byte, error) {
 	st, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return bakedRegistry(), nil
+			return nil, nil
 		}
 		return nil, fmt.Errorf("registry stat failed")
 	}
@@ -69,28 +119,173 @@ func loadRegistryFrom(path string) ([]provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("registry read failed")
 	}
-	line := strings.TrimSpace(string(data))
-	if line == "" {
-		return bakedRegistry(), nil
+	if len(data) > maxStateFileBytes {
+		return nil, fmt.Errorf("registry too large")
 	}
-	if strings.ContainsAny(line, "\r\n") {
-		return nil, fmt.Errorf("registry must be one line")
+	return data, nil
+}
+
+// parseRegistryLines validates newline-separated name,base,keyEnv lines.
+func parseRegistryLines(data []byte) ([]provider, error) {
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil, nil
 	}
-	fields := strings.SplitN(line, ",", 3)
-	if len(fields) != 3 {
-		return nil, fmt.Errorf("registry line needs 3 fields")
+	out := make([]provider, 0)
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.Contains(line, "\r") {
+			return nil, fmt.Errorf("registry line has CR")
+		}
+		fields := strings.Split(line, ",")
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("registry line needs 3 fields")
+		}
+		name := strings.TrimSpace(fields[0])
+		base := strings.TrimSpace(fields[1])
+		keyEnv := strings.TrimSpace(fields[2])
+		if name == "" || base == "" || keyEnv == "" {
+			return nil, fmt.Errorf("registry line has empty field")
+		}
+		if isDemoName(name) {
+			return nil, fmt.Errorf("registry name rejected")
+		}
+		if !validProviderBase(base) {
+			return nil, fmt.Errorf("registry endpoint rejected")
+		}
+		out = append(out, provider{Name: name, Base: base, KeyEnv: keyEnv})
 	}
-	name := strings.TrimSpace(fields[0])
-	base := strings.TrimSpace(fields[1])
-	keyEnv := strings.TrimSpace(fields[2])
-	if name == "" || base == "" || keyEnv == "" {
-		return nil, fmt.Errorf("registry line has empty field")
+	return out, nil
+}
+
+// writeRegistryLines promotes a validated 0600 temp file over the registry.
+func writeRegistryLines(lines []provider) error {
+	path, err := registryPath()
+	if err != nil {
+		return err
 	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("registry dir failed")
+	}
+	var b strings.Builder
+	for _, p := range lines {
+		if p.Name == "" || p.Base == "" || p.KeyEnv == "" || isDemoName(p.Name) ||
+			len(p.Name) > maxProviderNameLen ||
+			strings.ContainsRune(p.Name+p.Base+p.KeyEnv, ',') || hasControl(p.Name+p.Base+p.KeyEnv) ||
+			!validProviderBase(p.Base) {
+			return fmt.Errorf("invalid field")
+		}
+		b.WriteString(p.Name)
+		b.WriteByte(',')
+		b.WriteString(p.Base)
+		b.WriteByte(',')
+		b.WriteString(p.KeyEnv)
+		b.WriteByte('\n')
+	}
+	f, err := os.CreateTemp(dir, ".providers-*")
+	if err != nil {
+		return fmt.Errorf("temp file failed")
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return fmt.Errorf("temp mode failed")
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return fmt.Errorf("temp write failed")
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("temp sync failed")
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("temp close failed")
+	}
+	if _, err := loadRegistryFrom(tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("registry replace failed")
+	}
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("registry dir sync failed")
+	}
+	return nil
+}
+
+// removeRegistryEntry drops one registry line; baked defaults then return.
+func removeRegistryEntry(name string) error {
+	if name == "" || isDemoName(name) {
+		return fmt.Errorf("invalid field")
+	}
+	path, err := registryPath()
+	if err != nil {
+		return err
+	}
+	data, err := readRegistryData(path)
+	if err != nil {
+		return err
+	}
+	lines, err := parseRegistryLines(data)
+	if err != nil {
+		return err
+	}
+	out := make([]provider, 0, len(lines))
+	changed := false
+	for _, p := range lines {
+		if p.Name == name {
+			changed = true
+			continue
+		}
+		out = append(out, p)
+	}
+	if !changed {
+		return nil
+	}
+	return writeRegistryLines(out)
+}
+
+func bakedBase(name string) string {
+	if name == "Evren" {
+		return bakedBase("Evren System One")
+	}
+	for _, p := range bakedProviders {
+		if p.Name == name {
+			return p.Base
+		}
+	}
+	return ""
+}
+
+// validProviderBase permits remote HTTPS and loopback HTTP/HTTPS. Client-side
+// listeners stay loopback-only; this is only an outbound provider endpoint.
+func validProviderBase(base string) bool {
+	return baseRejectReason(base) == ""
+}
+
+// baseRejectReason names why a base would leak a key or cannot be called, so
+// the UI can say it instead of silently snapping the field back.
+func baseRejectReason(base string) string {
 	u, err := url.Parse(base)
-	if err != nil || u.Hostname() == "" || !isLoopbackHost(u.Hostname()) {
-		return nil, fmt.Errorf("registry endpoint rejected")
+	switch {
+	case err != nil || u.Hostname() == "":
+		return "NEEDS A FULL URL WITH https:// AND A HOST"
+	case u.User != nil:
+		return "CREDENTIALS BELONG IN THE KEY FIELD, NOT THE URL"
+	case strings.EqualFold(u.Scheme, "https"):
+		return ""
+	case strings.EqualFold(u.Scheme, "http") && isLoopbackHost(u.Hostname()):
+		return ""
+	case strings.EqualFold(u.Scheme, "http"):
+		return "PLAIN HTTP ONLY FOR 127.0.0.1 OR localhost, USE https:// HERE"
 	}
-	return append(bakedRegistry(), provider{Name: name, Base: base, KeyEnv: keyEnv}), nil
+	return "SCHEME MUST BE http OR https"
 }
 
 func isLoopbackHost(host string) bool {
@@ -101,7 +296,7 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// pin is the sticky winner. RAM only: restart ⇒ empty ⇒ config order.
+// pin is the sticky winner. RAM only: restart -> empty -> config order.
 type pin struct {
 	mu   sync.Mutex
 	name string

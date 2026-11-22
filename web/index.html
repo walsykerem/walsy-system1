@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} - Walsy System One</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body{{if .SheetMode}} class="sheet-document"{{end}}>
+  <span id="providers" class="anchor" aria-hidden="true"></span>
+  {{if .RefreshParent}}<script>if (window.parent !== window) window.parent.postMessage('walsy-refresh|{{urlquery .Msg}}', window.location.origin);</script>{{end}}
+  {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if .MsgOK}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms">{{.Msg}}</div></div>{{end}}
+  {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode)}}
+  <header class="topbar">
+    <div class="brand">WALSY<span class="slash">/</span>SYSTEM ONE</div>
+    <a class="topbar-link" href="#logs">LOGS</a>
+  </header>
+  {{end}}
+
+  {{if .SheetMode}}
+  <div class="sheet-body">
+    <h1 class="panel-title">{{.Name}}</h1>
+    {{template "providerKeys" .}}
+
+    <section class="config-block">
+      <h2 class="config-title">SYSTEM ONE CONFIG</h2>
+      <p class="sheet-note">DEFAULT ENDPOINT: {{if .DefaultBase}}{{.DefaultBase}}{{else}}NO DEFAULT ENDPOINT{{end}}</p>
+      <p class="sheet-note">Editable; {{if .CanReset}}RESET restores the default.{{else}}this endpoint has no default to reset to.{{end}} Keys are never shown.</p>
+      <form class="form config-form" method="post" action="/ui/providers/endpoint">
+        <input type="hidden" name="name" value="{{.Name}}">
+        <label>BASE URL
+          <input type="text" name="base" value="{{.Base}}" autocomplete="off">
+        </label>
+        <div class="config-actions">
+          <button class="btn btn-primary" type="submit">SAVE ENDPOINT</button>
+          {{if .CanReset}}<button class="btn btn-small" type="submit" formaction="/ui/providers/reset">RESET</button>{{end}}
+        </div>
+      </form>
+    </section>
+
+    <h2 class="config-title">MODELS</h2>
+    <form class="form" method="post" action="/ui/providers/models">
+      <input type="hidden" name="name" value="{{.Name}}">
+      <input type="hidden" name="action" value="add">
+      <div class="add-model-row">
+        <input type="text" name="model" placeholder="cloudflare/clef" aria-label="Model">
+        <button class="btn btn-primary" type="submit">ADD MODEL</button>
+      </div>
+    </form>
+    <ul class="sheet-models">
+      {{$provider := .Name}}
+      {{range .Models}}<li class="model-pill"><span class="pill-label">{{.}}</span>
+        <form class="pill-remove-form" method="post" action="/ui/providers/models">
+          <input type="hidden" name="name" value="{{$provider}}"><input type="hidden" name="model" value="{{.}}"><input type="hidden" name="action" value="remove">
+          <button class="pill-remove" type="submit" aria-label="Remove {{.}}">x</button>
+        </form>
+      </li>{{end}}
+    </ul>
+  </div>
+
+  {{else if .ComboSheetMode}}
+  <div class="sheet-body">
+    <h1 class="panel-title">Combo Run</h1>
+    <p class="sheet-note">Probe the ordered combo against every configured endpoint.</p>
+    <form class="form" method="post" action="/ui/combo/run">
+      <button class="btn btn-primary" type="submit">RUN COMBO</button>
+    </form>
+  </div>
+
+  {{else if .ComboResultMode}}
+  <div class="sheet-body">
+    <h1 class="panel-title">Combo Run</h1>
+    <p class="msg">{{.Winner}}</p>
+    <ul id="combo-steps">
+      {{range .Results}}
+      <li class="step {{if .OK}}step-ok{{else}}step-fail{{end}}">
+        {{.Name}} | {{.Status}} | {{.Detail}} | {{.LatencyMS}} ms
+      </li>
+      {{end}}
+    </ul>
+  </div>
+
+  {{else if .ComboAddMode}}
+  <div class="sheet-body">
+    <h1 class="panel-title">ADD TO COMBO</h1>
+    <div class="list">
+      {{range .Options}}
+      <div class="model-group">
+        <p class="group-title">{{.Provider}}</p>
+        <form method="post" action="/ui/combo/add?sheet=1">
+          <input type="hidden" name="provider" value="{{.Provider}}">
+          <input type="hidden" name="model" value="{{.Model}}">
+          <button class="model-toggle {{if .Active}}selected{{end}}" type="submit" {{if .Active}}disabled{{end}}>{{.Provider}}/{{.Model}}</button>
+        </form>
+      </div>
+      {{else}}
+      <p class="sheet-note">NO MODELS IN ANY PROVIDER YET.</p>
+      {{end}}
+    </div>
+  </div>
+
+  {{else if .LogsSheetMode}}
+  {{template "logsBody" .}}
+
+  {{else if eq .Title "Add Model"}}
+  <main class="grid">
+    <section class="panel">
+      <h1 class="panel-title">Add Model</h1>
+      <form class="add-model-row" method="get" action="/ui/combo/add">
+        <input id="combo-search" name="q" value="{{.Search}}" placeholder="SEARCH" aria-label="Search models">
+        <button class="btn" type="submit">SEARCH</button>
+      </form>
+      <div id="combo-model-list">
+        {{range .Options}}
+        <div class="model-group">
+          <p class="group-title">{{.Provider}}</p>
+          <form method="post" action="/ui/combo/add">
+            <input type="hidden" name="provider" value="{{.Provider}}">
+            <input type="hidden" name="model" value="{{.Model}}">
+            <button class="model-toggle {{if .Active}}selected{{end}}" type="submit" {{if .Active}}disabled{{end}}>
+              {{.Model}}
+            </button>
+          </form>
+        </div>
+        {{else}}
+        <p class="sheet-note">NO MODELS MATCH THAT SEARCH.</p>
+        {{end}}
+      </div>
+      <p><a class="btn" href="/">DONE</a></p>
+    </section>
+  </main>
+
+  {{else}}
+  <main class="grid">
+    <section class="panel panel-providers">
+      <h1 class="panel-title">Providers</h1>
+      <p class="hint">Click a provider to edit its API key and models.</p>
+      <ul class="list">
+        {{range .Providers}}
+        <li class="item">
+          <a class="item-main" href="#sheet-{{urlquery .Name}}">
+            <span class="item-name">{{.Name}}</span>
+            {{if or .KeySet .Models}}
+            <span class="item-meta">{{if .KeySet}}KEY SET{{end}}{{if .Models}} {{len .Models}} MODELS{{end}}</span>
+            {{end}}
+          </a>
+          {{if not .Baked}}
+          <form class="item-remove" method="post" action="/ui/providers/remove">
+            <input type="hidden" name="name" value="{{.Name}}">
+            <button class="btn-remove" type="submit" aria-label="Remove provider {{.Name}}">X</button>
+          </form>
+          {{end}}
+        </li>
+        {{end}}
+      </ul>
+      <details class="add-provider"{{if .AddOpen}} open{{end}}>
+        <summary class="btn" aria-label="Add provider"><span class="add-open" aria-hidden="true">+ ADD PROVIDER</span><span class="add-close" aria-hidden="true">- ADD PROVIDER</span></summary>
+        <form class="form" method="post" action="/ui/providers">
+          <p class="hint">Remote hosts: HTTPS only. Loopback: HTTP or HTTPS. No commas or newlines. URL must include the scheme (e.g. https://api.example.com/v1).</p>
+          <label>NAME
+            <input name="name" value="{{.AddName}}" placeholder="My Provider" autocomplete="off" maxlength="64" required>
+          </label>
+          <label>BASE URL
+            <input type="text" inputmode="url" name="base" value="{{.AddBase}}" placeholder="https://api.example.com/v1" autocomplete="off" required>
+          </label>
+          <label>KEY ENV VAR
+            <input name="keyEnv" value="{{if .AddKeyEnv}}{{.AddKeyEnv}}{{else}}API_KEY{{end}}" placeholder="API_KEY" autocomplete="off" required>
+          </label>
+          <button class="btn btn-primary" type="submit">SAVE PROVIDER</button>
+        </form>
+      </details>
+    </section>
+
+    <section class="panel panel-combo">
+      <h1 class="panel-title">Ordered Combo</h1>
+      <p class="hint">First reachable endpoint wins. 2xx and non-404 4xx count as live; 5xx and 404 fail. Order is persisted exactly as shown.</p>
+      <ol id="combo-list">
+        {{range .Combo}}
+        <li class="combo-item">
+          <span class="combo-index">{{.Number}}</span>
+          <span class="combo-label">{{.Label}}</span>
+          <span class="combo-actions">
+            <form method="post" action="/ui/combo">
+              <input type="hidden" name="action" value="up">
+              <input type="hidden" name="index" value="{{.Index}}">
+              <button class="btn-up" type="submit" {{if .First}}disabled{{end}} aria-label="Move up {{.Label}}">UP</button>
+            </form>
+            <form method="post" action="/ui/combo">
+              <input type="hidden" name="action" value="down">
+              <input type="hidden" name="index" value="{{.Index}}">
+              <button class="btn-down" type="submit" {{if .Last}}disabled{{end}} aria-label="Move down {{.Label}}">DOWN</button>
+            </form>
+            <form method="post" action="/ui/combo">
+              <input type="hidden" name="action" value="remove">
+              <input type="hidden" name="index" value="{{.Index}}">
+              <button class="btn-remove" type="submit" aria-label="Remove {{.Label}}">X</button>
+            </form>
+          </span>
+        </li>
+        {{else}}
+        <li class="empty">NO MODELS IN COMBO.</li>
+        {{end}}
+      </ol>
+      <p class="chips"><a class="btn" href="#combo-add">+ ADD TO COMBO</a>{{if .Combo}}<a class="btn btn-run" href="#combo-result">RUN COMBO</a>{{else}}<button class="btn btn-run" type="button" disabled>RUN COMBO</button>{{end}}</p>
+    </section>
+
+    <section class="panel" id="build-target">
+      <h1 class="panel-title">BUILD TARGET</h1>
+      <p class="hint">Defaults to this machine. Pick a target to cross-compile.</p>
+      <div class="chips">
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="darwin/arm64">
+          <button class="btn" type="submit">DARWIN/ARM64</button>
+        </form>
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="darwin/amd64">
+          <button class="btn" type="submit">DARWIN/AMD64</button>
+        </form>
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="linux/amd64">
+          <button class="btn" type="submit">LINUX/AMD64</button>
+        </form>
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="linux/arm64">
+          <button class="btn" type="submit">LINUX/ARM64</button>
+        </form>
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="windows/amd64">
+          <button class="btn" type="submit">WINDOWS/AMD64</button>
+        </form>
+        <form method="post" action="/ui/build-target">
+          <input type="hidden" name="target" value="windows/arm64">
+          <button class="btn" type="submit">WINDOWS/ARM64</button>
+        </form>
+      </div>
+      <form method="post" action="/ui/build-target">
+        <input type="hidden" name="target" value="native">
+        <button class="btn" type="submit">NATIVE</button>
+      </form>
+      <p class="sheet-note" id="build-target-current">TARGET: {{.BuildTarget}}</p>
+      <form method="post" action="/ui/build">
+        <button class="btn btn-primary" type="submit">BUILD SELECTED TARGET</button>
+      </form>
+      <div id="build-status" class="msg" aria-live="polite">{{.BuildStatus}}</div>
+    </section>
+
+    <div class="sheet-backdrop" id="combo-add" role="dialog" aria-modal="true" aria-label="Add to combo">
+      <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 class="sheet-title">ADD TO COMBO</h2>
+          <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
+        </div>
+        <iframe class="sheet-frame" title="Add to combo" src="/ui/combo/add/sheet"></iframe>
+      </div>
+    </div>
+
+    <div class="sheet-backdrop" id="combo-result" role="dialog" aria-modal="true" aria-label="Combo run">
+      <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 class="sheet-title">COMBO RUN</h2>
+          <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
+        </div>
+        <iframe class="sheet-frame" title="Combo run" src="/ui/combo/sheet"></iframe>
+      </div>
+    </div>
+
+    <div class="sheet-backdrop" id="logs" role="dialog" aria-modal="true" aria-label="Logs">
+      <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 class="sheet-title">LOGS</h2>
+          <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
+        </div>
+        <iframe class="sheet-frame" title="Logs" src="/ui/logs"></iframe>
+      </div>
+    </div>
+
+    {{range .Providers}}
+    {{if not .Demo}}{{template "providerSheet" .}}{{end}}
+    {{end}}
+  </main>
+  {{end}}
+  <script>
+    // Escape closes the CSS :target sheet without a reload, so typed form
+    // values and the open <details> survive. Inside an iframe the parent owns
+    // the hash; setting #providers is a real fragment change, which re-evaluates
+    // :target (replaceState('') does not in Chrome).
+    addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var home = window.parent !== window ? window.parent : window;
+      home.location.hash = '#providers';
+    });
+    // Opening a sheet moves focus into it; the page behind is inert to the
+    // keyboard because only the open dialog keeps a tabbable control.
+    var opener = null;
+    addEventListener('hashchange', function () {
+      var open = document.querySelector(':target');
+      var close = open && open.querySelector('.sheet-close');
+      // preventScroll: focusing the close button must not move the page.
+      if (close) {
+        // Remember which link opened the sheet so closing returns focus to it;
+        // otherwise focus stays on the now hidden iframe and Tab restarts at
+        // the top of the document.
+        if (open.querySelector('iframe.sheet-frame')) {
+          opener = document.querySelector('a[href=' + JSON.stringify(location.hash) + ']');
+        }
+        close.focus({ preventScroll: true });
+        return;
+      }
+      if (opener) {
+        opener.focus({ preventScroll: true });
+        opener = null;
+      }
+    });
+    // Add Model filters the rendered list while typing; SEARCH still narrows
+    // it server-side without JS. A provider-name match keeps its whole group.
+    var comboSearch = document.getElementById('combo-search');
+    if (comboSearch) comboSearch.addEventListener('input', function () {
+      var q = comboSearch.value.trim().toLowerCase();
+      document.querySelectorAll('#combo-model-list .model-group').forEach(function (group) {
+        var title = group.querySelector('.group-title');
+        var all = q === '' || (title && title.textContent.toLowerCase().indexOf(q) !== -1);
+        var shown = false;
+        group.querySelectorAll('.model-toggle').forEach(function (btn) {
+          var hit = all || btn.textContent.trim().toLowerCase().indexOf(q) !== -1;
+          btn.parentNode.hidden = !hit;
+          shown = shown || hit;
+        });
+        group.hidden = !shown;
+      });
+    });
+    // Every sheet iframe is rendered once per parent document, so a second
+    // opening would show the state from before the last write. Reload it from
+    // its own src (LOG, provider, combo, add-model) each time the sheet opens.
+    addEventListener('hashchange', function () {
+      var open = document.querySelector(':target');
+      var frame = open && open.querySelector('iframe.sheet-frame');
+      if (!frame) return;
+      // set() keeps one nonce instead of stacking t= on every reopen.
+      var url = new URL(frame.getAttribute('src'), location.href);
+      url.searchParams.set('t', String(Date.now()));
+      frame.src = url.pathname + url.search;
+    });
+    // Back/forward can restore this document from the browser's bfcache with
+    // the lists it had before the last write; no request is made, so no header
+    // helps. A restore is the one case where a full reload is the cheap fix.
+    addEventListener('pageshow', function (e) {
+      if (e.persisted) location.reload();
+    });
+    // A sheet posts its success message after an in-sheet write. The parent
+    // reloads with the hash (sheet stays open) and renders the toast itself,
+    // because the iframe is rebuilt from src and would lose it.
+    addEventListener('message', function (e) {
+      if (e.origin !== window.location.origin || typeof e.data !== 'string') return;
+      if (e.data.lastIndexOf('walsy-refresh', 0) !== 0) return;
+      var msg = e.data.split('|')[1] || '';
+      var next = window.location.pathname + (msg ? '?msg=' + msg : '') + window.location.hash;
+      try { sessionStorage.setItem('walsy-y', String(document.scrollingElement.scrollTop)); } catch (err) {}
+      // A second write in the same sheet produces the same address, and
+      // assigning an identical href does not navigate (Chrome treats it as a
+      // no-op), so the lists would stay stale. Force the reload in that case.
+      if (next === window.location.href.slice(window.location.origin.length)) {
+        window.location.reload();
+      } else {
+        window.location.href = next;
+      }
+    });
+    // The reload above puts the page back at the top; the toast in the URL is
+    // the marker that this load follows a write, so restore the saved place.
+    try {
+      var savedY = sessionStorage.getItem('walsy-y');
+      if (savedY !== null && location.search.indexOf('msg=') >= 0) {
+        sessionStorage.removeItem('walsy-y');
+        window.scrollTo(0, Number(savedY) || 0);
+      }
+    } catch (err) {}
+  </script>
+</body>
+</html>
+
+{{define "logsBody"}}
+<div class="sheet-body">
+  <h1 class="panel-title">LOGS</h1>
+  <p class="sheet-note">{{.Log.Calls}} CALL(S) SINCE <time data-ts="{{.Log.SinceTS}}">{{.Log.Since}}</time> - {{.Log.ReqB}} B SENT / {{.Log.RespB}} B RECEIVED. NEWEST FIRST, IN MEMORY ONLY.</p>
+  <table class="log-table">
+    <thead><tr><th>TIME</th><th>KIND</th><th>OUTCOME</th><th>MS</th><th>SENT</th><th>RECV</th><th>USAGE</th></tr></thead>
+    <tbody>
+      {{range .Logs}}<tr><td><time data-ts="{{.TS}}">{{.At}}</time></td><td>{{.Kind}}</td><td>{{.Outcome}}</td><td>{{.MS}}</td><td>{{.ReqB}}</td><td>{{.RespB}}</td><td class="log-usage">{{.Usage}}</td></tr>
+      {{else}}<tr><td colspan="7">NO CALLS YET.</td></tr>{{end}}
+    </tbody>
+  </table>
+  <script>
+    // Timestamps are stored as unix millis and drawn in the viewer's own zone,
+    // so the sheet reads like the clock on the machine it is opened from.
+    document.querySelectorAll('time[data-ts]').forEach(function (el) {
+      var d = new Date(Number(el.getAttribute('data-ts')));
+      el.textContent = d.toLocaleTimeString([], { hour12: false });
+      el.title = d.toString();
+    });
+  </script>
+</div>
+{{end}}
+
+{{define "providerSheet"}}
+<div class="sheet-backdrop" id="sheet-{{urlquery .Name}}" role="dialog" aria-modal="true" aria-label="{{.Name}}">
+  <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2 class="sheet-title">{{.Name}}</h2>
+      <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
+    </div>
+    <div class="sheet-body">
+      <iframe class="sheet-frame" title="{{.Name}}" src="/ui/providers/sheet?name={{urlquery .Name}}"></iframe>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "providerKeys"}}
+{{$name := .Name}}
+<div class="keys">
+  <h2 class="config-title">KEY TEST</h2>
+  <p class="sheet-note">TEST probes the stored key against the endpoint. Values stay hidden.</p>
+  {{if .KeyCount}}<p class="sheet-note">{{.KeyCount}} KEY(S) STORED - VALUES HIDDEN</p>{{end}}
+  {{range .KeySlots}}
+  <form class="key-row" method="post" action="/ui/providers/keys">
+    <input type="hidden" name="name" value="{{$name}}">
+    <input type="hidden" name="index" value="{{.}}">
+    <span class="key-label">KEY {{.}}</span>
+    <button class="btn btn-small" type="submit" name="action" value="test" aria-label="Test key {{.}}">TEST</button>
+    <button class="btn btn-small" type="submit" name="action" value="remove" aria-label="Remove key {{.}}">REMOVE</button>
+  </form>
+  {{end}}
+  <form class="form" method="post" action="/ui/providers/keys">
+    <input type="hidden" name="name" value="{{$name}}">
+    <input type="hidden" name="action" value="add">
+    <label>ADD API KEY
+      <input type="password" name="key" placeholder="PASTE KEY" autocomplete="off">
+    </label>
+    <button class="btn btn-primary" type="submit">ADD KEY</button>
+  </form>
+  {{if .KeyCount}}
+  <form class="clear-form" method="post" action="/ui/providers/keys">
+    <input type="hidden" name="name" value="{{$name}}">
+    <input type="hidden" name="action" value="clear">
+    <button class="btn btn-small" type="submit">CLEAR ALL KEYS</button>
+  </form>
+  {{end}}
+</div>
+{{end}}

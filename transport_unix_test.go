@@ -55,7 +55,7 @@ func TestServeUnixRoundTrip(t *testing.T) {
 	<-done
 }
 
-// no upstream ⇒ transparent no-op: client closes, server drains, no error frame.
+// no upstream -> transparent no-op: client closes, server drains, no error frame.
 func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 	// macOS sun_path is 104 bytes; use a short deterministic path.
 	path := filepath.Join(os.TempDir(), fmt.Sprintf("ws1-%d.sock", os.Getpid()))

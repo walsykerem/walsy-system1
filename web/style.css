@@ -1,0 +1,257 @@
+/* WALSY / SYSTEM ONE - neo-brutalist. Flat, square, hard-shadow. */
+:root {
+  --bg: #E5E5E5;
+  --ink: #111111;
+  --accent: #D9481F;
+  --white: #FFFFFF;
+  --muted: #4A4A4A;
+  --b: 2px solid var(--ink);
+  --shadow: 4px 4px 0 var(--ink);
+  --bshadow: 2px 2px 0 var(--ink);
+  --z-modal: 50;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* ---- topbar ---- */
+.topbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 14px 20px;
+  background: var(--ink); color: var(--bg); border-bottom: var(--b);
+}
+.brand { font-weight: 800; font-size: clamp(16px, 3vw, 22px); letter-spacing: 1px; text-transform: uppercase; }
+.slash { color: var(--accent); padding: 0 4px; }
+/* LOGS is the header action at the far right of the dark topbar. */
+.topbar-link {
+  display: inline-flex; align-items: center; min-height: 30px; padding: 4px 12px;
+  font: inherit; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--bg); background: transparent; border: 2px solid var(--bg); text-decoration: none;
+}
+.topbar-link:hover, .topbar-link:focus-visible { background: var(--accent); color: #000; border-color: var(--accent); }
+/* LOGS sheet: one dense table, monospace numbers, no decoration. */
+.log-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.log-table th, .log-table td { padding: 4px 6px; border-bottom: 1px solid var(--ink); text-align: left; vertical-align: top; }
+.log-table th { font-weight: 800; letter-spacing: 1px; text-transform: uppercase; border-bottom: var(--b); }
+.log-table td:nth-child(4), .log-table th:nth-child(4),
+.log-table td:nth-child(5), .log-table th:nth-child(5),
+.log-table td:nth-child(6), .log-table th:nth-child(6) { text-align: right; white-space: nowrap; }
+.log-usage { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+/* ---- layout ---- */
+main.grid, .grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px; align-items: start; padding: 24px 20px; max-width: 1200px; margin: 0 auto;
+}
+.panel { background: var(--bg); border: var(--b); box-shadow: var(--shadow); padding: 20px; min-width: 0; }
+/* Right column: combo stacked above build; providers spans both rows. */
+.panel-providers { grid-column: 1; grid-row: 1 / span 2; }
+.panel-combo { grid-column: 2; grid-row: 1; }
+#build-target { grid-column: 2; grid-row: 2; }
+.panel-title {
+  margin: 0 0 12px; padding: 0 0 10px; border-bottom: var(--b);
+  font-size: clamp(16px, 2.5vw, 20px); font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+}
+.hint { margin: 0 0 16px; padding: 8px 10px; background: var(--white); border: var(--b); border-left-width: 6px; font-size: 12px; }
+.msg { margin: 12px 0 0; min-height: 1.2em; font-weight: 700; }
+.msg:not(:empty) { padding: 8px 10px; background: var(--white); border: var(--b); }
+.empty { padding: 16px; border: 2px dashed var(--ink); color: var(--muted); text-align: center; font-size: 13px; }
+
+/* ---- provider list ---- */
+ul.list, .list { list-style: none; margin: 0 0 18px; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; background: var(--white); border: var(--b); }
+button.item-main, .item-main {
+  display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 8px;
+  min-width: 0; min-height: 32px; padding: 2px; background: none; border: 0;
+  font: inherit; text-align: left; color: inherit; cursor: default;
+}
+button.item-main { cursor: pointer; }
+.item-name { padding: 1px 6px; background: var(--ink); color: var(--bg); font-weight: 800; text-transform: uppercase; overflow-wrap: anywhere; }
+.item-meta { font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
+.item-remove { display: flex; }
+.add-provider { position: relative; }
+.add-provider > summary { list-style: none; margin-bottom: 0; width: fit-content; cursor: pointer; }
+.add-provider > summary::-webkit-details-marker { display: none; }
+.add-close { display: none; }
+.add-provider[open] .add-open { display: none; }
+.add-provider[open] .add-close { display: inline; }
+/* Overlaid so opening never moves BUILD TARGET; scrolls internally when short. */
+.add-provider > form {
+  position: absolute; inset: 100% 0 auto 0; z-index: 6; margin-top: 12px;
+  max-height: 80vh; overflow-y: auto;
+  background: var(--bg); border: var(--b); box-shadow: var(--shadow); padding: 16px;
+}
+/* Hint runs flush with the label text; its box would otherwise indent it 16px. */
+.add-provider > form > .hint { margin: 0; padding: 0; background: none; border: 0; }
+
+/* ---- form fields ---- */
+form.form, .form { display: grid; gap: 12px; }
+.form label, .field label { display: grid; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.form input, .field input, #combo-search {
+  width: 100%; min-height: 36px; padding: 8px 10px;
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--white);
+  border: var(--b); border-radius: 0; appearance: none;
+}
+.form input::placeholder, .field input::placeholder, #combo-search::placeholder { color: #595959; }
+
+/* ---- API keys (values are never rendered) ---- */
+.keys { display: grid; gap: 10px; }
+.sheet-note { margin: 10px 0 0; font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--muted); }
+.key-row { display: flex; align-items: center; gap: 8px; }
+.key-label { flex: 1; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+.btn-small { min-height: 30px; padding: 5px 10px; font-size: 11px; border-radius: 0; box-shadow: var(--bshadow); }
+.clear-form { justify-self: start; }
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 9px 16px;
+  font: inherit; font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--ink); background: var(--white); border: var(--b); border-radius: 0; box-shadow: var(--bshadow); cursor: pointer;
+}
+.btn:not(:disabled):hover { background: var(--accent); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--ink); }
+.btn:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--ink); }
+.btn:disabled { opacity: .5; pointer-events: none; background: var(--bg); color: var(--muted); border-color: var(--muted); box-shadow: none; transform: none; }
+.btn-primary, .btn-run, .btn-danger { background: var(--accent); color: #000; }
+.btn-primary:not(:disabled):hover, .btn-run:not(:disabled):hover, .btn-danger:not(:disabled):hover { background: var(--ink); color: var(--bg); }
+
+/* ---- combo list ---- */
+#combo-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+.combo-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--white); border: var(--b); }
+.combo-grip { color: var(--muted); font-size: 18px; line-height: 1; cursor: grab; user-select: none; }
+.combo-index { display: inline-grid; place-items: center; min-width: 28px; height: 28px; background: var(--ink); color: var(--bg); font-size: 12px; font-weight: 800; }
+.combo-label { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.combo-actions { display: flex; gap: 6px; }
+.btn-up, .btn-down, .btn-remove {
+  min-width: 32px; min-height: 32px; padding: 4px 8px;
+  background: var(--white); color: var(--ink); border: var(--b); border-radius: 0; box-shadow: var(--bshadow);
+  font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; cursor: pointer;
+}
+.btn-remove { background: var(--accent); color: #000; }
+.btn-up:not(:disabled):hover, .btn-down:not(:disabled):hover, .btn-remove:not(:disabled):hover { background: var(--accent); }
+.btn-up:disabled, .btn-down:disabled, .btn-remove:disabled { opacity: .5; pointer-events: none; background: var(--bg); color: var(--muted); border-color: var(--muted); box-shadow: none; }
+
+/* ---- chips / steps / winner ---- */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.chip {
+  min-height: 32px; padding: 6px 12px; background: var(--white); color: var(--ink);
+  border: var(--b); border-radius: 0; box-shadow: var(--bshadow); font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; cursor: pointer;
+}
+.chip:not(:disabled):hover { background: var(--accent); }
+.chip.selected { background: var(--ink); color: var(--bg); }
+.chip:disabled { opacity: .5; pointer-events: none; background: var(--bg); color: var(--muted); border-color: var(--muted); }
+
+#combo-steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 8px; }
+.step { padding: 8px 10px; background: var(--white); border: var(--b); border-left: 6px solid var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+.step-ok::before { content: "OK | "; font-weight: 800; }
+.step-fail { border-left-color: var(--ink); }
+.step-fail::before { content: "FAIL | "; font-weight: 800; color: #B83610; }
+
+/* ---- sheets ---- */
+/* #providers is the "no sheet open" marker the close links point at. A fixed,
+   zero-size anchor keeps the browser from scrolling to it. */
+.anchor { position: fixed; top: 0; left: 0; width: 0; height: 0; }
+body:has(.sheet-backdrop:target) { overflow: hidden; }
+/* Panel is pinned to the viewport's top-right corner so a toast rendered inside
+   the sheet iframe lands in the screen's top-right, not mid-screen. */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  display: flex; align-items: stretch; justify-content: flex-end; padding: 0;
+  background: rgba(17, 17, 17, .35);
+}
+/* Click-outside: a full-bleed anchor sits under the sheet, so any click on the
+   dimmed area closes the sheet without JS. */
+.sheet-dismiss { position: absolute; inset: 0; z-index: 0; }
+.sheet-backdrop[hidden], .sheet-backdrop:not(:target) { display: none !important; }
+.sheet-backdrop:target { display: flex; }
+.sheet {
+  position: relative; z-index: 1;
+  width: min(92vw, 560px); max-width: 560px; max-height: 100vh; max-height: 100dvh;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: var(--b); box-shadow: var(--shadow);
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: var(--ink); color: var(--bg); border-bottom: var(--b); }
+.sheet-title { margin: 0; font-size: 16px; overflow-wrap: anywhere; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.sheet-close { min-width: 32px; min-height: 32px; padding: 2px 10px; background: var(--bg); color: var(--ink); border: 2px solid var(--bg); font: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.sheet-close:hover { background: var(--accent); }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+/* iframe hosts: the scroll lives inside the iframe document, not here. */
+.sheet-body:has(.sheet-frame) { display: flex; padding: 0; overflow: hidden; }
+.sheet-frame { display: block; flex: 1; width: 100%; height: auto; border: 0; border-radius: 0; background: var(--bg); }
+/* Standalone iframe documents: no chrome, no shadow, scroll in .sheet-body only. */
+body.sheet-document { background: var(--bg); }
+body.sheet-document .sheet-body { height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; }
+.sheet-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: var(--b); }
+.sheet-provider { margin: 0 0 12px; padding: 8px 10px; background: var(--white); border: var(--b); font-weight: 800; }
+.field { display: grid; gap: 4px; }
+.config-block { display: grid; gap: 10px; margin: 0 0 16px; padding: 12px; background: var(--white); border: var(--b); }
+.config-title { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.config-form { gap: 8px; }
+.config-actions { display: flex; gap: 8px; }
+.add-model-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.add-model-row input { flex: 1; min-width: 140px; }
+.add-model-row .btn { flex: 0 0 auto; }
+
+.sheet-models { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.model-pill { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; background: var(--white); border: var(--b); }
+.pill-label { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.pill-remove-form { display: inline; margin: 0; }
+.pill-remove { min-width: 32px; min-height: 32px; padding: 2px 8px; background: var(--accent); color: #000; border: var(--b); border-radius: 0; box-shadow: var(--bshadow); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+
+#combo-search { margin-bottom: 12px; }
+#combo-model-list { display: grid; gap: 12px; }
+.model-group { padding: 10px; background: var(--white); border: var(--b); }
+.group-title { margin: 0 0 8px; font-size: 13px; font-weight: 800; text-transform: uppercase; }
+.model-toggle { display: inline-flex; align-items: center; min-height: 32px; margin: 0 6px 6px 0; padding: 6px 12px; background: var(--white); color: var(--ink); border: var(--b); border-radius: 0; box-shadow: var(--bshadow); font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; cursor: pointer; overflow-wrap: anywhere; }
+.model-toggle:not(:disabled):hover { background: var(--accent); }
+.model-toggle.selected { background: var(--ink); color: var(--bg); }
+.model-toggle:disabled { opacity: .5; pointer-events: none; background: var(--bg); color: var(--muted); border-color: var(--muted); }
+
+/* ---- toasts: top-right, CSS-only auto dismiss after --ms ---- */
+.toasts {
+  position: fixed; top: 1rem; right: 1rem; z-index: 1000;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  width: min(360px, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.toast {
+  width: 100%; padding: 10px 12px;
+  background: var(--white); color: var(--ink);
+  border: var(--b); border-left-width: 6px;
+  box-shadow: var(--shadow);
+  font-size: 13px; font-weight: 700; overflow-wrap: anywhere;
+  animation: toast-out var(--ms, 6000ms) linear forwards;
+}
+.toast-error { border-left-color: var(--accent); }
+.toast-ok { border-left-color: var(--ink); }
+@keyframes toast-out {
+  0%, 88% { opacity: 1; transform: translateX(0); visibility: visible; }
+  100% { opacity: 0; transform: translateX(calc(100% + 1rem)); visibility: hidden; }
+}
+@keyframes toast-fade {
+  0%, 88% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation-name: toast-fade; }
+}
+
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; gap: 20px; padding: 18px 14px; }
+  .panel-providers, .panel-combo, #build-target { grid-column: auto; grid-row: auto; }
+  .panel { padding: 16px; }
+  .topbar { padding: 12px 14px; }
+  .combo-item { flex-wrap: wrap; }
+  .combo-actions { width: 100%; }
+}

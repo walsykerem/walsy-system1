@@ -39,6 +39,7 @@ type stateEnvelope struct {
 	Phase      string `json:"phase"`
 	Authority  bool   `json:"authority"`
 	Calibrated bool   `json:"calibrated"`
+	Item       string `json:"item"` // optional decision_items.json entry (e.g. "tools.pick")
 }
 
 // droppedKeys are normalized key names removed recursively, before assembly.
@@ -192,8 +193,8 @@ func passResult(reason string, abstained bool) routeResult {
 	return routeResult{Decision: decPass, Reason: reason, Abstained: abstained, Passthrough: true}
 }
 
-// inScope is the honest coverage intersection: model-before ∧ authoritative ∧
-// opted-in ∧ calibrated. Context-only and post-tool phases never enter payday.
+// inScope is the honest coverage intersection: model-before and authoritative and
+// opted-in and calibrated. Context-only and post-tool phases never enter payday.
 func inScope(e stateEnvelope) bool {
 	p := strings.ToLower(strings.ReplaceAll(e.Phase, "_", "-"))
 	return (p == "before-model" || p == "pre-model") && e.Authority && e.OptIn && e.Calibrated
@@ -224,13 +225,13 @@ func isLabelShaped(text string) bool {
 	return false
 }
 
-// routeKey hashes the canonical state (cache.go) — normalized, byte-stable.
+// routeKey hashes the canonical state (cache.go) - normalized, byte-stable.
 func routeKey(state string) string {
 	sum := sha256.Sum256([]byte(canonicalState(state)))
 	return hex.EncodeToString(sum[:])
 }
 
-// route runs Layer 0 → Layer 1 → Layer 2. Every failure is a transparent
+// route runs Layer 0 -> Layer 1 -> Layer 2. Every failure is a transparent
 // passthrough; no 503, no fail-closed, no raw conf/secret in the result.
 func route(state string, p *pin, c *decisionCache) routeResult {
 	var e stateEnvelope
@@ -238,7 +239,7 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 		return passResult("no-state", false)
 	}
 
-	// Layer 0: deterministic, µs — no SO call.
+	// Layer 0: deterministic, us - no SO call.
 	if !inScope(e) {
 		reason := "layer0-scope"
 		if !e.OptIn {
@@ -246,7 +247,7 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 		}
 		return passResult(reason, false)
 	}
-	f := layer0{NeedLabel: e.NeedLabel, NoScratch: e.NoScratch, Safe: e.Safe, Reversible: e.Reversible}
+	f := layer0{NeedLabel: e.NeedLabel, NoScratch: e.NoScratch, Safe: e.Safe, Reversible: e.Reversible, CleanRename: !staleRename(e.State)}
 	if !gate(f) {
 		return passResult("layer0-gate", false)
 	}
@@ -258,24 +259,47 @@ func route(state string, p *pin, c *decisionCache) routeResult {
 	}
 
 	// Layer 1: cache hit or one SO shot.
+	// A registry item brings its own question, label set and proceed list.
+	item, isItem := decisionItemFor(e.Item)
+	if isItem && !item.Gate {
+		return passResult("registry-local", false) // AGENTS.md:66 - the agent's own call, no model
+	}
+	admits := func(choice string) bool { return choice == "yes" }
+	if isItem {
+		admits = item.admits
+	}
+
 	key := routeKey(state)
 	if c != nil {
 		if d, hit := c.lookup(key); hit {
-			if d.Choice == abstainLabel {
+			if d.Choice == abstainLabel || !admits(d.Choice) {
 				return passResult("cache-abstain", true)
 			}
 			return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: d.ConfBucket}
 		}
 	}
 
-	d := askSO(e.State) // only the cleaned user state crosses this boundary
+	var d soDecision
+	if isItem {
+		d = askSOQ(e.State, item.question()) // only the cleaned user state crosses this boundary
+	} else {
+		d = askSO(e.State)
+	}
 	switch {
 	case d.TimedOut:
 		return passResult(classify(0, context.DeadlineExceeded), true)
 	case d.Choice == "":
-		return passResult("so-degraded", true) // HTTP≠200, parse error or conf<0.8
-	case d.Choice != "yes":
-		return passResult("so-"+d.Choice, true) // "no"/"other": abstain, never served
+		return passResult("so-degraded", true) // HTTP!=200, parse error or conf<0.8
+	case !admits(d.Choice):
+		// Outside the item's proceed list nothing is admitted; the generic
+		// question keeps its "no" deny path when the typed layer enforces.
+		if soMode() == "enforcing" && d.Conf >= defaultThreshold() && (!isItem || d.Choice == "no") {
+			return routeResult{Decision: decDeny, Reason: "so-deny", Abstained: true, ConfBucket: confBucket(d.Conf)}
+		}
+		if isItem {
+			return passResult("registry-nonproceed", true)
+		}
+		return passResult("so-"+d.Choice, true)
 	case d.Conf < defaultThreshold():
 		return passResult("so-low-conf", true)
 	default:

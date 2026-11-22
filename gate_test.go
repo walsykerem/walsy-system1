@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -12,12 +14,12 @@ func TestGate(t *testing.T) {
 		f layer0
 		w bool
 	}{
-		{layer0{true, true, true, true}, true},
-		{layer0{false, true, true, true}, false},
-		{layer0{true, false, true, true}, false},
-		{layer0{true, true, false, true}, false},
-		{layer0{true, true, true, false}, false},
-		{layer0{}, false},
+		{layer0{true, true, true, true, true}, true},
+		{layer0{false, true, true, true, true}, false},
+		{layer0{true, false, true, true, true}, false},
+		{layer0{true, true, false, true, true}, false},
+		{layer0{true, true, true, true, false}, false},
+		{layer0{CleanRename: true}, false},
 	}
 	for _, c := range cases {
 		if got := gate(c.f); got != c.w {
@@ -83,4 +85,38 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 		t.Fatalf("timeout should be TimedOut+empty, got %+v", d)
 	}
 	srv3.Close()
+}
+
+// TestAskSOStoredProviderKey proves the SO key comes from any registry provider
+// whose base matches the SO endpoint, not only from one hard-coded env name.
+func TestAskSOStoredProviderKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "stored-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+	}))
+	defer srv.Close()
+
+	orig := soEndpoint
+	soEndpoint = srv.URL
+	defer func() { soEndpoint = orig }()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("EVREN_API_KEY", "")
+	state := filepath.Join(home, ".walsy-system1")
+	if err := os.MkdirAll(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeProviders(t, state, "LOCAL-SO,"+srv.URL+",LOCAL_KEY\n", 0600)
+	if err := saveKey("LOCAL-SO", "stored-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	d := askSO("state")
+	if d.Choice != "yes" || d.Conf < 0.95 {
+		t.Fatalf("stored provider key not used: %+v", d)
+	}
 }

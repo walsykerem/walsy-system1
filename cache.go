@@ -15,7 +15,7 @@ import (
 
 const (
 	abstainLabel  = "abstain"
-	admitMargin   = 0.10 // clef is overconfident (0.97–1.0): require an argmax gap
+	admitMargin   = 0.10 // clef is overconfident (0.97-1.0): require an argmax gap
 	canaryEvery   = 8    // 1/N replay of known-label cells
 	cacheCapacity = 1024
 )
@@ -196,7 +196,7 @@ type cacheStats struct {
 }
 
 // providerKVStats is the PROVIDER prefix-cache ledger. Deliberately a separate
-// type and a separate decisionCache field — never merged with cacheStats.
+// type and a separate decisionCache field - never merged with cacheStats.
 type providerKVStats struct {
 	MatchPrefix int
 	PrefixLen   int
@@ -229,7 +229,15 @@ func (c *decisionCache) lookup(key string) (cachedDecision, bool) {
 	return cachedDecision{}, false
 }
 
+// store writes the cell under the mutex.
 func (c *decisionCache) store(key string, d cachedDecision) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeLocked(key, d)
+}
+
+// storeLocked mutates idx/ll; the caller must hold c.mu.
+func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 	if el, ok := c.idx[key]; ok {
 		el.Value.(*cacheCell).dec = d
 		c.ll.MoveToFront(el)
@@ -266,7 +274,7 @@ func (c *decisionCache) admit(key string, d cachedDecision) {
 	defer c.mu.Unlock()
 
 	if d.Choice == "no" || d.Choice == "other" || !validBucket(d.ConfBucket) {
-		c.store(key, cachedDecision{Choice: abstainLabel, ConfBucket: d.ConfBucket, Reason: "negative-verdict"})
+		c.storeLocked(key, cachedDecision{Choice: abstainLabel, ConfBucket: d.ConfBucket, Reason: "negative-verdict"})
 		return
 	}
 	m, ok := reasonMargin(d.Reason)
@@ -276,10 +284,11 @@ func (c *decisionCache) admit(key string, d cachedDecision) {
 	if m < admitMargin {
 		return
 	}
-	c.store(key, d)
+	c.storeLocked(key, d)
 }
 
-func (c *decisionCache) flush(key string) {
+// flushLocked drops a cell; the caller must hold c.mu.
+func (c *decisionCache) flushLocked(key string) {
 	if el, ok := c.idx[key]; ok {
 		delete(c.idx, key)
 		c.ll.Remove(el)
@@ -295,7 +304,7 @@ func (c *decisionCache) canaryReplay(key, want string) bool {
 	d, ok := c.idx[key]
 	if !ok || d.Value.(*cacheCell).dec.Choice != want {
 		if ok {
-			c.flush(key)
+			c.flushLocked(key)
 		}
 		c.router.WrongReuse++
 		c.flushes++
@@ -386,7 +395,7 @@ func (g *group) do(key string, fn func() (cachedDecision, error)) (val cachedDec
 	return c.val, c.err
 }
 
-// forget drops a leader that exceeded the 1500ms budget; its later finish is
+// forget drops a leader that exceeded the SO budget; its later finish is
 // harmless because finish() is identity-checked.
 func (g *group) forget(key string) {
 	g.mu.Lock()
