@@ -166,17 +166,6 @@ func TestRouterAuditRedaction(t *testing.T) {
 	}
 }
 
-func TestRouterDiscoveredTools(t *testing.T) {
-	resetRouterForTest(t)
-	t.Setenv("WALSY_ROUTER_TOOLS", "zeta,read_file,bad tool,zeta")
-	t.Setenv("WALSY_ROUTER_DENY", "zeta")
-	routerReset()
-	got := discoveredTools()
-	if len(got) != 1 || got[0] != "read_file" {
-		t.Fatalf("discovered = %v", got)
-	}
-}
-
 func TestRouterBudgetSpendTable(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -185,9 +185,12 @@ func TestGateKeyCanonicalizesVolatileFields(t *testing.T) {
 func TestArgsSecretCheckedWithBody(t *testing.T) {
 	resetRouterForTest(t)
 	d := newDecisionBridge()
+	// The write must name a path this session already read, so the unread-path
+	// write guard passes and the argument-level secret scan is what refuses.
+	d.guard.check("read_file", json.RawMessage(`{"path":"/tmp/args-secret.txt"}`))
 	// AKIA literal is a shape pattern that argsSecretCheck sees inside raw JSON
 	// (a quoted api_key assignment would not match the assignment regex).
-	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"content":"hello world","metadata":{"api_key":"AKIAIOSFODNN7EXAMPLE"}}}}`)
+	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"filePath":"/tmp/args-secret.txt","content":"hello world","metadata":{"api_key":"AKIAIOSFODNN7EXAMPLE"}}}}`)
 	resp, blocked := d.enforcingGate(req)
 	if !blocked {
 		t.Fatal("write call with content + metadata api_key must be blocked")

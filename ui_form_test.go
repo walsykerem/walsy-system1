@@ -108,7 +108,7 @@ func TestUIAddProviderPersistsAndRerenders(t *testing.T) {
 	}
 }
 
-// The Msg/MsgMs toast contract: default 6000, clamp 2000..30000.
+// The Msg/MsgMs toast contract: default 6000, clamp 1000..30000.
 func TestUIMsgMs(t *testing.T) {
 	render := template.Must(template.New("probe").Parse(`{{.Msg}}|{{.MsgMs}}`))
 	cases := []struct {

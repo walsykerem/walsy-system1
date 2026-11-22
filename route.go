@@ -315,7 +315,7 @@ func routeInner(state string, p *pin) routeResult {
 
 	var d soDecision
 	if isItem {
-		d = askSOQWithThreshold(e.State, item.question(), thr) // only the cleaned user state crosses this boundary
+		d = askSOQ(e.State, item.question()) // only the cleaned user state crosses this boundary
 	} else {
 		d = askSO(e.State)
 	}

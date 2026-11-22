@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // round-trip: a unix-socket client and an in-memory upstream exchange frames
@@ -74,6 +75,21 @@ func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 	}
 	if _, err := c.Write([]byte("frame")); err != nil {
 		t.Fatal(err)
+	}
+	// Half-close the write side: with no upstream the server must drain the
+	// frame and close the connection, never emit an error frame.
+	uc, ok := c.(*net.UnixConn)
+	if !ok {
+		t.Fatal("expected a unix connection")
+	}
+	if err := uc.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 64)
+	n, err := c.Read(buf)
+	if err != io.EOF {
+		t.Fatalf("server must drain and close with no error frame: n=%d err=%v body=%q", n, err, buf[:n])
 	}
 	c.Close()
 }

@@ -171,8 +171,8 @@ var runGoTest = func(ctx context.Context, dir string) ([]byte, error) {
 }
 
 // installBuild swaps the new binary in, keeping the old one as .prev so a
-// failed test run can put it back. A hardlink keeps the old binary reachable
-// for the whole swap, so rel is never missing between two renames.
+// failed swap can put it back. A hardlink keeps the old binary reachable for
+// the whole swap, so rel is never missing between two renames.
 func installBuild(src, tmp, rel string) error {
 	from, to := filepath.Join(src, tmp), filepath.Join(src, rel)
 	if _, err := os.Stat(from); err != nil {
@@ -188,26 +188,14 @@ func installBuild(src, tmp, rel string) error {
 	}
 	if err := os.Rename(from, to); err != nil {
 		_ = os.Remove(from)
+		if _, e := os.Stat(to); e != nil {
+			// The old binary was moved aside above; put it back so rel is never
+			// left missing after a failed install.
+			_ = os.Rename(to+".prev", to)
+		}
 		return err
 	}
 	return nil
-}
-
-// discardFailedBuild leaves no failing binary at rel: it restores .prev when
-// there is one, otherwise it removes the failing build. It returns what it
-// actually did, so the banner never claims a revert that did not happen.
-func discardFailedBuild(src, rel string) string {
-	to := filepath.Join(src, rel)
-	if _, err := os.Stat(to + ".prev"); err == nil {
-		if err := os.Rename(to+".prev", to); err == nil {
-			return "BUILD REVERTED: TESTS FAILED"
-		}
-		return "BUILD FAILED: TESTS FAILED, OLD BINARY NOT RESTORED"
-	}
-	if err := os.Remove(to); err != nil {
-		return "BUILD FAILED: TESTS FAILED, NO PREVIOUS BINARY, FAILING BUILD COULD NOT BE REMOVED"
-	}
-	return "BUILD FAILED: TESTS FAILED, NO PREVIOUS BINARY, FAILING BUILD DISCARDED"
 }
 
 func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
@@ -252,20 +240,23 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 		os.Remove(filepath.Join(sourceDir, tmp))
 		renderBuildResult(w, "BUILD FAILED\n"+tail)
 	default:
-		if err := installBuild(sourceDir, tmp, rel); err != nil {
-			renderBuildResult(w, "BUILD FAILED: NEW BINARY NOT INSTALLED\n"+tail)
-			return
-		}
+		// Tests run before install: a failing build must never replace the
+		// working binary on disk.
 		if out, err := runGoTest(ctx, sourceDir); err != nil {
+			os.Remove(filepath.Join(sourceDir, tmp))
 			sig := failureSignature(string(out))
 			revert, steer := buildAttempts.fail(sig)
-			msg := discardFailedBuild(sourceDir, rel) + "\n" + buildOutputTail(out)
+			msg := "BUILD FAILED: TESTS FAILED, OLD BINARY KEPT\n" + buildOutputTail(out)
 			if revert {
 				msg += "\n" + steer
 			} else {
 				msg += "\nfailure class: " + classifyFailure(string(out))
 			}
 			renderBuildResult(w, msg)
+			return
+		}
+		if err := installBuild(sourceDir, tmp, rel); err != nil {
+			renderBuildResult(w, "BUILD FAILED: NEW BINARY NOT INSTALLED\n"+err.Error()+"\n"+tail)
 			return
 		}
 		buildAttempts.counts = map[string]int{} // green build clears the failure ledger

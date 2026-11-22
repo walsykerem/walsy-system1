@@ -144,20 +144,10 @@ func gateQuestion(q soQuestion) soQuestion {
 
 // askSOQ asks one question whose label set is the caller's. A registry item
 // brings its own instructions and labels, so the answer must be one of them.
+// A below-cut answer is kept, not discarded: the label and confidence come back
+// so the caller can steer with them. The cut is applied by the caller (route's
+// so-low-conf branch, toolsDecide's !admitted branch), never by this parser.
 func askSOQ(state string, q soQuestion) soDecision {
-	return askSOQWithThreshold(state, q, defaultThreshold())
-}
-
-// askSOQWithThreshold keeps a below-cut answer instead of discarding it: the
-// label and confidence come back so the caller can steer with them, and the cut
-// itself is applied by the caller (route's so-low-conf branch, toolsDecide's
-// !admitted branch). A per-item value may only lower the global gate: anything
-// <=0 or above defaultThreshold clamps back to the global rule.
-func askSOQWithThreshold(state string, q soQuestion, threshold float64) soDecision {
-	if threshold <= 0 || threshold > defaultThreshold() {
-		threshold = defaultThreshold()
-	}
-	_ = threshold // the parse no longer judges; kept so callers state their cut
 	key := soAPIKey()
 	if key == "" {
 		return soDecision{}

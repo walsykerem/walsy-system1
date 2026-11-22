@@ -68,47 +68,13 @@ func gateKey(request []byte, cap capabilityConfig) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// buildStateWithCapability fills missing opt-in fields from the built-in
-// defaults so a real client (which sends none of these fields) reaches SO.
-func buildStateWithCapability(request string, cap capabilityConfig) string {
+// buildSOState fills missing opt-in fields from the built-in defaults so a
+// real client (which sends none of these fields) reaches SO. The capability
+// config is constant, so these defaults are unconditional.
+func buildSOState(request string) string {
 	var obj map[string]any
 	if json.Unmarshal([]byte(request), &obj) != nil || obj == nil {
 		obj = map[string]any{}
-	}
-	if cap.NeedLabel {
-		if _, ok := obj["need_label"].(bool); !ok {
-			obj["need_label"] = true
-		}
-	}
-	if cap.NoScratch {
-		if _, ok := obj["no_scratch"].(bool); !ok {
-			obj["no_scratch"] = true
-		}
-	}
-	if cap.Safe {
-		if _, ok := obj["safe"].(bool); !ok {
-			obj["safe"] = true
-		}
-	}
-	if cap.Reversible {
-		if _, ok := obj["reversible"].(bool); !ok {
-			obj["reversible"] = true
-		}
-	}
-	if cap.Authority {
-		if _, ok := obj["authority"].(bool); !ok {
-			obj["authority"] = true
-		}
-	}
-	if cap.Calibrated {
-		if _, ok := obj["calibrated"].(bool); !ok {
-			obj["calibrated"] = true
-		}
-	}
-	if cap.Phase != "" {
-		if s, ok := obj["phase"].(string); !ok || s == "" {
-			obj["phase"] = cap.Phase
-		}
 	}
 	for _, k := range []string{"need_label", "no_scratch", "safe", "reversible", "authority", "calibrated"} {
 		if _, ok := obj[k].(bool); !ok {
@@ -156,7 +122,7 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 		return passResult("no-key", false)
 	}
 	cap := soCapability()
-	state := buildStateWithCapability(string(request), cap)
+	state := buildSOState(string(request))
 	key := gateKey(request, cap)
 	if cached, hit := d.cache.lookup(key); hit {
 		return cachedResult(cached)

@@ -66,7 +66,9 @@ func normalizedPath(p string) string {
 }
 
 // samePath treats a relative path as equal to any absolute path ending in it,
-// so a client's cwd never has to match the relay's.
+// so a client's cwd never has to match the relay's. A bare filename and a
+// pathed one are never assumed equal: that would let a write to an unread
+// directory ride on a same-named file elsewhere.
 func samePath(a, b string) bool {
 	if a == b {
 		return true
@@ -81,9 +83,6 @@ func samePath(a, b string) bool {
 // check returns a block reason for a write to an unseen path or a runaway
 // repeat. Every non-write call just records the paths it named.
 func (g *writeGuard) check(tool string, args json.RawMessage) (string, bool) {
-	if len(args) == 0 {
-		return "", false
-	}
 	sum := sha256.Sum256(append([]byte(tool+"\x00"), args...))
 	key := hex.EncodeToString(sum[:])
 
@@ -93,14 +92,16 @@ func (g *writeGuard) check(tool string, args json.RawMessage) (string, bool) {
 		g.paths, g.seen = map[string]struct{}{}, map[string]int{}
 	}
 	path := argumentPath(args)
-	if path == "" {
-		return "", false
-	}
 	if !isWriteTool(tool) {
-		if len(g.paths) < guardMaxPaths {
+		if path != "" && len(g.paths) < guardMaxPaths {
 			g.paths[path] = struct{}{}
 		}
 		return "", false
+	}
+	if path == "" {
+		// A write whose target cannot be read is not provably new: block it
+		// instead of waving it through.
+		return "write with no readable path: name the target path, or state why the path cannot be read", true
 	}
 	// Only writes carry the runaway-repeat guard: repeating a read is normal.
 	g.seen[key]++
@@ -125,6 +126,8 @@ func guardReasonCode(reason string) string {
 	switch {
 	case strings.HasPrefix(reason, "write to a path"):
 		return "unread-write"
+	case strings.HasPrefix(reason, "write with no readable path"):
+		return "unread-path"
 	case strings.HasPrefix(reason, "repeated identical"):
 		return "repeat"
 	}

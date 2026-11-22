@@ -7,9 +7,10 @@ import (
 )
 
 // auditVerdict is the local final-answer check: OK only when every declared
-// todo item is covered by a done entry and every named risk is verified.
-// Missing carries the first few uncovered items for the report, never a model
-// call. An unreadable state is OK: a malformed block must not block a report.
+// todo item is covered by a done entry and every named risk is verified by
+// evidence. Missing carries the first few uncovered items for the report, never
+// a model call. An unreadable state is NOT OK: an audit that cannot read the
+// claim must not pass it.
 type auditVerdict struct {
 	OK      bool
 	Missing []string
@@ -26,12 +27,12 @@ type auditState struct {
 }
 
 // finalAudit checks a "done" claim against the state it came from. A todo
-// entry prefixed "risk:" is a risk, so one list covers both. Fail-open on
-// unreadable state. Pure: no I/O, no network, no model.
+// entry prefixed "risk:" is a risk, so one list covers both. An unreadable
+// state fails closed. Pure: no I/O, no network, no model.
 func finalAudit(state string) auditVerdict {
 	var s auditState
 	if json.Unmarshal([]byte(state), &s) != nil {
-		return auditVerdict{OK: true}
+		return auditVerdict{Missing: []string{"state unreadable"}, Steer: auditSteer([]string{"state unreadable"})}
 	}
 	done := map[string]bool{}
 	for _, d := range s.Done {
@@ -86,16 +87,24 @@ func finalAudit(state string) auditVerdict {
 	return auditVerdict{OK: false, Missing: missing, Steer: auditSteer(missing)}
 }
 
-// riskCovered accepts an exact done entry or a done entry that names the risk,
-// so "verified api timeout under load" covers "api timeout". A done entry that
-// denies the wording ("did not verify api timeout") covers nothing: the point is
-// the evidence, and a sentence that says the risk was not checked is not it.
+// riskCovered accepts an exact done entry or a done entry that both names the
+// risk and states evidence ("verified api timeout under load" covers "api
+// timeout"). Naming alone is not coverage: a sentence that only restates the
+// risk, or says it was not checked, covers nothing.
 func riskCovered(key string, done map[string]bool) bool {
-	if done[key] {
-		return true
-	}
 	for d := range done {
-		if strings.Contains(d, key) && !deniesWork(d) {
+		if strings.Contains(d, key) && hasEvidence(d) && !deniesWork(d) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasEvidence reports whether a done entry states an evidence verb rather than
+// merely restating the item.
+func hasEvidence(s string) bool {
+	for _, w := range []string{"verified", "tested", "fixed", "confirmed", "reproduced", "proved", "validated", "measured", "checked"} {
+		if strings.Contains(s, w) {
 			return true
 		}
 	}
@@ -104,7 +113,7 @@ func riskCovered(key string, done map[string]bool) bool {
 
 // deniesWork reports whether a done entry says the work was not actually done.
 func deniesWork(s string) bool {
-	for _, w := range []string{"not ", "n't", "never", "unverified", "untested", "unchecked", "skipped", "todo"} {
+	for _, w := range []string{"not ", "n't", "never", "unverified", "untested", "unchecked", "unresolved", "skipped", "todo", "still open", "pending", "blocked", "no conclusion", "unknown", "open"} {
 		if strings.Contains(s, w) {
 			return true
 		}

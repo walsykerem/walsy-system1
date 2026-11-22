@@ -299,7 +299,6 @@ func TestProviderEndpointAndResetRoutes(t *testing.T) {
 	check(t, evren.KeyEnv == "EVREN_API_KEY", "baked key env inherited")
 	check(t, evren.DefaultBase == "https://evren-llmapi.ssyz.org.tr/v1/systemone", "baked default retained")
 	check(t, evren.CanReset, "override is resettable")
-	check(t, evren.DocsURL == "https://custom.example", "docs url derived from base")
 
 	// New custom provider with explicit keyEnv.
 	rec = postFormTest(t, h, "/ui/providers/endpoint", url.Values{
@@ -333,9 +332,8 @@ func TestProviderEndpointAndResetRoutes(t *testing.T) {
 	evren = findViewProvider(t, "Evren System One")
 	check(t, evren.Base == bakedBase("Evren System One") && !evren.CanReset, "baked default restored")
 
-	// Untouched baked provider keeps its documented endpoint and docs URL.
+	// Untouched baked provider keeps its documented endpoint.
 	openRouter := findViewProvider(t, "OpenRouter")
-	check(t, openRouter.DocsURL == "https://openrouter.ai/docs", "fixed docs url")
 	check(t, !openRouter.CanReset && openRouter.Base == "https://openrouter.ai/api/v1/systemone", "baked endpoint shown")
 
 	// Remove a custom provider; its stored models return when re-added.
@@ -652,6 +650,7 @@ func TestProviderRemoveRoute(t *testing.T) {
 // Weight is part of the combo contract (VERIFY.md): it must round-trip through
 // the JSON API, persist, and stay out of the file when unset.
 func TestComboWeightRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // never write the real ~/.walsy-system1/combo.txt
 	s, _ := dashboardTestServer(t)
 	var out map[string]any
 	steps := []comboStepJSON{

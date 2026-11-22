@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -133,56 +134,67 @@ func TestBuildSlotRejectsConcurrentBuild(t *testing.T) {
 	<-done
 }
 
-// A failed test run must never leave the untested binary live, and the banner
-// must say what actually happened: restored, or discarded on a first build.
-func TestInstallBuildAndDiscardFailed(t *testing.T) {
+// A failing test run must never replace the working binary: tests run before
+// the swap, so the old binary stays live and the banner says so.
+func TestFailedTestRunKeepsOldBinary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	rel := filepath.Join("dist", "walsy-system1-"+runtime.GOOS+"-"+runtime.GOARCH)
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	origBuild, origVet, origTest := runGoBuild, runGoVet, runGoTest
+	t.Cleanup(func() { runGoBuild, runGoVet, runGoTest = origBuild, origVet, origTest })
+	runGoVet = func(context.Context, string) ([]byte, error) { return nil, nil }
+	runGoBuild = func(_ context.Context, d, out, _, _ string) ([]byte, error) {
+		if err := os.WriteFile(filepath.Join(d, out), []byte("new"), 0755); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	runGoTest = func(context.Context, string) ([]byte, error) {
+		return []byte("--- FAIL: TestX"), errors.New("exit status 1")
+	}
+	rec := httptest.NewRecorder()
+	handleUIBuild(rec, dashRequest(http.MethodPost, "/ui/build", nil), dir)
+	if body := rec.Body.String(); !strings.Contains(body, "TESTS FAILED") {
+		t.Fatalf("banner = %q", body)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, rel)); string(got) != "old" {
+		t.Fatalf("failing build replaced the live binary: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, rel+".tmp")); !os.IsNotExist(err) {
+		t.Fatal("failing build left its .tmp behind")
+	}
+}
+
+// installBuild swaps the new binary in, keeps the old one as .prev, and errors
+// on a build that produced no binary.
+func TestInstallBuildSwap(t *testing.T) {
 	dir := t.TempDir()
 	rel := filepath.Join("dist", "app")
-	write := func(name, body string) {
-		if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	install := func(tmp, body string) {
+		if err := os.WriteFile(filepath.Join(dir, tmp), []byte(body), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0755); err != nil {
-			t.Fatal(err)
+		if err := installBuild(dir, tmp, rel); err != nil {
+			t.Fatalf("install %q: %v", body, err)
 		}
 	}
-	read := func(name string) string {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return ""
-		}
-		return string(b)
-	}
-
-	// First build: nothing to restore, so the failing binary must be removed.
-	write("dist/app.tmp", "new")
-	if err := installBuild(dir, "dist/app.tmp", rel); err != nil {
-		t.Fatalf("first install: %v", err)
-	}
-	if got := discardFailedBuild(dir, rel); !strings.Contains(got, "NO PREVIOUS BINARY") {
-		t.Fatalf("first build failure banner = %q", got)
-	}
-	if got := read("dist/app"); got != "" {
-		t.Fatalf("failing first build left %q live", got)
-	}
-
-	// Later build: the previous binary comes back and the banner says so.
-	write("dist/app", "old")
-	write("dist/app.tmp", "new")
-	if err := installBuild(dir, "dist/app.tmp", rel); err != nil {
-		t.Fatalf("second install: %v", err)
-	}
-	if got := read("dist/app"); got != "new" {
+	install("dist/app.tmp", "new")
+	if got, _ := os.ReadFile(filepath.Join(dir, "dist", "app")); string(got) != "new" {
 		t.Fatalf("installed binary = %q", got)
 	}
-	if got := discardFailedBuild(dir, rel); got != "BUILD REVERTED: TESTS FAILED" {
-		t.Fatalf("revert banner = %q", got)
+	install("dist/app.tmp", "newer")
+	if got, _ := os.ReadFile(filepath.Join(dir, "dist", "app.prev")); string(got) != "new" {
+		t.Fatalf("prev = %q, want the previous binary", got)
 	}
-	if got := read("dist/app"); got != "old" {
-		t.Fatalf("reverted binary = %q", got)
-	}
-
-	// A build that produced no binary is an error, not a silent success.
 	if err := installBuild(dir, "dist/missing", rel); err == nil {
 		t.Fatal("installBuild accepted a missing build output")
 	}

@@ -114,19 +114,14 @@ func TestPerItemThreshold(t *testing.T) {
 	}
 }
 
-// The measured 0.768 label the global gate discards is admitted under a
-// below-global item cut, and an above-global cut clamps instead of loosening.
-func TestPerItemThresholdReachesParser(t *testing.T) {
+// A below-cut label is kept, not discarded: the label and confidence come back
+// so route/toolsDecide can steer with them; the cut is applied by the caller.
+func TestBelowCutLabelIsKept(t *testing.T) {
 	q := soQuestion{Type: "choice", Criteria: map[string]string{"yes": "admit", "no": "pass"}}
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.768}}}`))
 	})
-	if d := askSOQWithThreshold("decide: classify this", q, 0.7); d.Choice != "yes" || d.Conf != 0.768 {
-		t.Fatalf("below-global cut must admit 0.768: %+v", d)
-	}
-	// Below the caller's cut the label is still returned, so the refusal can
-	// steer; the cut is applied by route/toolsDecide, not by the parser.
-	if d := askSOQWithThreshold("decide: classify this", q, 0.95); d.Choice != "yes" || d.Conf != 0.768 {
+	if d := askSOQ("decide: classify this", q); d.Choice != "yes" || d.Conf != 0.768 {
 		t.Fatalf("parser must keep a below-cut label: %+v", d)
 	}
 }

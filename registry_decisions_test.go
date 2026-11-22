@@ -163,7 +163,7 @@ func TestRegistryItemAdmissionTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls = 0
-			res := route(buildStateWithCapability(tc.payload, soCapability()), nil)
+			res := route(buildSOState(tc.payload), nil)
 			if res.Decision != tc.wantDecision || res.Reason != tc.wantReason {
 				t.Fatalf("result = %+v, want decision %q reason %q", res, tc.wantDecision, tc.wantReason)
 			}
@@ -291,8 +291,8 @@ func TestRegistrySpecRowsAdmitAndSteer(t *testing.T) {
 		if low.Admitted {
 			t.Errorf("%s low conf: below-0.8 label was admitted", tc.id)
 		}
-		// askSOQWithThreshold discards an answer below the cut (gate.go), so the
-		// consult path can only prove non-admission here, not carry a steer.
+		// A below-cut label is kept but not admitted (gate.go), so the consult
+		// path proves non-admission here; the steer rides on the label.
 	}
 }
 

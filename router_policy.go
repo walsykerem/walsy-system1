@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +36,6 @@ type routerPolicy struct {
 	budgetLeft int
 	deny       map[string]bool
 	mirror     string
-	tools      []string
 	threshold  int
 	cooldown   time.Duration
 	breakers   map[string]routerBreaker
@@ -54,6 +52,7 @@ var routerAuditKeys = map[string]bool{
 	"tool": true, "status": true, "bucket": true, "decision": true,
 	"phase": true, "mode": true, "provider": true, "outcome": true,
 	"reason": true, "budget": true, "count": true, "latency_ms": true,
+	"method": true, "allow": true,
 }
 
 // routerReset clears per-process counters. Tests call it between cases.
@@ -80,13 +79,6 @@ func routerInitLocked() {
 			routerState.deny[name] = true
 		}
 	}
-	for _, n := range strings.Split(routerConfigValue("tools"), ",") {
-		name, ok := routerSafeField(strings.TrimSpace(n))
-		if ok && !routerState.deny[name] && len(routerState.tools) < 64 {
-			routerState.tools = append(routerState.tools, name)
-		}
-	}
-	sort.Strings(routerState.tools)
 }
 
 // routerAllow denies only tools on an explicit env/config deny list. Payload,
@@ -188,15 +180,6 @@ func routerMirrorURL() string {
 	defer routerMu.Unlock()
 	routerInitLocked()
 	return routerState.mirror
-}
-
-// discoveredTools returns sanitized, explicitly configured tool names; it
-// never inspects payloads or model output.
-func discoveredTools() []string {
-	routerMu.Lock()
-	defer routerMu.Unlock()
-	routerInitLocked()
-	return append([]string(nil), routerState.tools...)
 }
 
 // routerAudit appends a redacted JSONL record to ~/.walsy-system1/audit.jsonl.

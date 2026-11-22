@@ -161,7 +161,7 @@ func toolsDecide(item, state, phase string, strict bool) string {
 	}
 	req, _ := json.Marshal(map[string]any{"state": state, "phase": phase, "item": item})
 	thr := it.threshold(defaultThreshold())
-	d := askSOQWithThreshold(buildStateWithCapability(string(req), soCapability()), it.question(), thr)
+	d := askSOQ(buildSOState(string(req)), it.question())
 	if d.TimedOut {
 		return toolsError("model timeout")
 	}

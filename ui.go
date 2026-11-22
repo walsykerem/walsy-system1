@@ -50,7 +50,6 @@ type uiPage struct {
 	// providerKeys template renders with a flat uiPage too.
 	Base        string
 	DefaultBase string
-	DocsURL     string
 	CanReset    bool
 	Demo        bool
 	KeySet      bool
@@ -279,7 +278,6 @@ func providerSheetPage(r *http.Request) (uiPage, bool) {
 		KeySlots:    keySlots(name),
 		Base:        provider.Base,
 		DefaultBase: provider.DefaultBase,
-		DocsURL:     provider.DocsURL,
 		CanReset:    provider.CanReset,
 		Demo:        provider.Demo,
 		KeySet:      provider.KeySet,

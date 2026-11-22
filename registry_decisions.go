@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// decision_items.json is the 41-item decision registry (data only: each item
+// decision_items.json is the 56-item decision registry (data only: each item
 // carries the question, its label set, which labels may proceed, and whether
 // it is irreversible or forbidden to ask about at all).
 //

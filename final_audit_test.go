@@ -21,12 +21,18 @@ func TestFinalAudit(t *testing.T) {
 		{"skipped todo does not cover", `{"todo":["write tests"],"done":["skipped write tests"]}`, false, "write tests"},
 		{"untested todo does not cover", `{"todo":["wire route"],"done":["wire route untested"]}`, false, "wire route"},
 		{"risk todo entry", `{"todo":["risk: disk full"],"done":[]}`, false, "risk: disk full"},
-		{"covered risk todo", `{"todo":["risk: disk full"],"done":["risk: disk full"]}`, true, ""},
+		{"restated risk is not coverage", `{"todo":["risk: disk full"],"done":["risk: disk full"]}`, false, "risk: disk full"},
 		{"unverified risk alias", `{"unverified_risks":["key leak"],"done":[]}`, false, "risk: key leak"},
 		{"no claims", `{"done":["ship it"]}`, true, ""},
 		{"key folding", `{"todo":["Write  Tests"],"done":["write tests"]}`, true, ""},
-		{"unreadable fails open", `not json`, true, ""},
-		{"empty fails open", ``, true, ""},
+		{"risk restated without evidence", `{"risk":["api timeout"],"done":["api timeout"]}`, false, "risk: api timeout"},
+		{"risk still open", `{"risk":["api timeout"],"done":["verified api timeout still open"]}`, false, "risk: api timeout"},
+		{"risk unresolved", `{"risk":["key leak"],"done":["confirmed key leak, unresolved"]}`, false, "risk: key leak"},
+		{"risk no conclusion", `{"risk":["key leak"],"done":["confirmed key leak, no conclusion"]}`, false, "risk: key leak"},
+		{"risk with evidence verb", `{"risk":["api timeout"],"done":["reproduced and confirmed api timeout"]}`, true, ""},
+		{"unreadable fails closed", `not json`, false, "state unreadable"},
+		{"empty fails closed", ``, false, "state unreadable"},
+		{"wrong-typed state fails closed", `{"risk":"api timeout"}`, false, "state unreadable"},
 	}
 	for _, c := range cases {
 		got := finalAudit(c.state)

@@ -28,30 +28,7 @@ type dashboardProvider struct {
 	KeyCount    int      `json:"-"`
 	KeySlots    []int    `json:"-"`
 	DefaultBase string   `json:"-"`
-	DocsURL     string   `json:"-"`
 	CanReset    bool     `json:"-"`
-}
-
-// docsURLs are fixed links for well-known slots. Everything else gets the
-// scheme+host of its current base; nothing is fetched server-side.
-var docsURLs = map[string]string{
-	"OpenRouter":      "https://openrouter.ai/docs",
-	"OpenCode Zen":    "https://opencode.ai/docs",
-	"Ollama Cloud":    "https://docs.ollama.com",
-	"Ollama Local":    "https://docs.ollama.com",
-	"v1m System One":  "https://v1m.ir",
-	"Nace Drex":       "https://console.nace.ai",
-	"Cloudflare Clef": "https://developers.cloudflare.com/workers-ai/models/clef/",
-	"Evren":           "https://evren-llmapi.ssyz.org.tr",
-	"Command Code":    "https://api.commandcode.ai",
-}
-
-func baseOrigin(base string) string {
-	u, err := url.Parse(base)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host
 }
 
 const defaultKeyEnv = "API_KEY"
@@ -113,14 +90,10 @@ func providerView() (providersResponse, error) {
 			list = []string{}
 		}
 		count := keyCount(p.Name)
-		docs := docsURLs[p.Name]
-		if docs == "" {
-			docs = baseOrigin(p.Base)
-		}
 		out.Providers = append(out.Providers, dashboardProvider{
 			Name: p.Name, Base: p.Base, KeyEnv: p.KeyEnv, Baked: baked,
 			Models: list, KeySet: count > 0, KeyCount: count, KeySlots: keySlots(p.Name),
-			DefaultBase: bakedBase(p.Name), DocsURL: docs, CanReset: overrides[p.Name] && bakedBase(p.Name) != "",
+			DefaultBase: bakedBase(p.Name), CanReset: overrides[p.Name] && bakedBase(p.Name) != "",
 		})
 		if !baked {
 			out.CustomSlot = p.Name

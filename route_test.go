@@ -230,24 +230,6 @@ func TestRouteTrustBoundary(t *testing.T) {
 	}
 }
 
-// checker 29: PAV improves ECE; rZero baseline; no live SO.
-func TestCalibrationECE(t *testing.T) {
-	raw := []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0}
-	labels := []float64{0, 1, 0, 1, 0, 1, 0, 1, 0, 1}
-	fit := isotonicFit(raw, labels)
-	if got, want := ece(fit, labels), ece(raw, labels); !(got < want) {
-		t.Fatalf("ece(isotonic)=%v want < ece(raw)=%v", got, want)
-	}
-	costs := []float64{0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05, 0}
-	base := rZero(costs)
-	if base <= 0 || base >= 1 {
-		t.Fatalf("rZero=%v out of range", base)
-	}
-	if rZero(nil) != defaultThreshold() {
-		t.Fatal("rZero cold fallback must be defaultThreshold")
-	}
-}
-
 // checker 30: clientxauthority matrix -- only model-before /\ authoritative /\
 // opt-in /\ calibrated enters payday. Context-only / post-tool pass through.
 func TestRouteCoverageMatrix(t *testing.T) {

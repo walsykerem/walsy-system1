@@ -68,7 +68,7 @@ func simPost(t *testing.T, c *http.Client, s *httptest.Server, path string, form
 // fragment resolves to an element in the document, every same-origin URL the
 // page points at answers 200 with a document rather than a JSON error.
 func TestServedMarkupIsSelfContained(t *testing.T) {
-	s, c, base := simHome(t)
+	_, c, base := simHome(t)
 	status, home := simGet(t, c, base+"/")
 	if status != 200 {
 		t.Fatalf("GET / = %d", status)
@@ -162,7 +162,6 @@ func TestServedMarkupIsSelfContained(t *testing.T) {
 	if !strings.Contains(home, `src="/ui/combo/add/sheet"`) {
 		t.Error("home page has no add-to-combo sheet frame")
 	}
-	_ = s
 }
 
 // TestUserJourneySheetsAndState drives one full session through the HTTP API

@@ -62,13 +62,17 @@ func TestWriteGuardRepeatLimit(t *testing.T) {
 	}
 }
 
-func TestWriteGuardFailsOpenWithoutArgs(t *testing.T) {
+// A write whose path cannot be read cannot be checked against what this session
+// read, so it is refused; a read naming no path has nothing to record.
+func TestWriteGuardRefusesUnreadablePath(t *testing.T) {
 	g := newWriteGuard()
-	if _, blocked := g.check("write_file", nil); blocked {
-		t.Fatal("no arguments must fail open")
+	if _, blocked := g.check("read_file", nil); blocked {
+		t.Fatal("a read naming no path has nothing to record")
 	}
-	if _, blocked := g.check("write_file", json.RawMessage(`{"path":42}`)); blocked {
-		t.Fatal("non-string path must fail open")
+	for _, args := range []json.RawMessage{nil, json.RawMessage(`{"path":42}`), json.RawMessage(`{}`)} {
+		if _, blocked := g.check("write_file", args); !blocked {
+			t.Fatalf("write with args %s must be refused", args)
+		}
 	}
 }
 

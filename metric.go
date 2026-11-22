@@ -23,7 +23,6 @@ type metric struct {
 	Decision     string `json:"decision,omitempty"`
 	UpstreamExit string `json:"upstream_exit,omitempty"` // "error" only; never a secret
 	Model        string `json:"model,omitempty"`
-	KeyHash      string `json:"key_hash,omitempty"`
 	ListenAddr   string `json:"listen_addr,omitempty"`
 	Reason       string `json:"reason_code,omitempty"`
 	Covered      bool   `json:"covered,omitempty"`

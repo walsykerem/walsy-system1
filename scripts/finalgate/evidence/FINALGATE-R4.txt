@@ -1,0 +1,28 @@
+# scripts/finalgate run (round 4)
+timestamp: 2026-11-22T15:31:21Z
+command: EVREN_API_KEY=... go run ./scripts/finalgate
+--- output
+K1   done    0.8753
+K2   done    0.8629
+K3   done    0.8483
+K4   done    0.8639
+K5   done    0.8370
+K6   done    0.8908
+K7   done    0.8955
+K8   done    0.8185
+K9   done    0.8762
+K10  done    0.8875
+K11  done    0.8659
+K12  done    0.8505
+K13  done    0.8850
+K15  done    0.8867
+K16  done    0.8505
+K14  done    0.8867
+K17  done    0.8146
+AGGREGATE 0.8645 mean over 17 claims, min 0.8146, open 0
+REMAINING G1 the model's generic no label passes a tool call through; only deterministic security and scope refusals block. Deliberate, largest blast radius in the set.
+REMAINING G2 the tool budget refills on every initialize frame, so it caps one session boundary, not an agent lifetime.
+REMAINING G3 samePath falls back to a bare basename compare, so a read of /repo/a.go licenses a write to handlers/a.go. Re-reviewed in round 4: requiring both paths to carry a slash to match broke TestWriteGuardMatchesRelativeToAbsolute (read /repo/sub/a.go then write a.go is a legitimate flow), so the canary form stands and the content checks (diff-secret, diff-wipe) still run on every write.
+REMAINING G4 the argument-level scan matches credential shapes only; a shell redirect that deletes files, or a destructive multi-file change, is not diff-judged because there is no old content to compare.
+REMAINING G5 three unbounded-input limits, disclosed not fixed: transport_unix.go starts a goroutine per accepted connection with no cap, mcp_tools.go decodes stdin with no io.LimitReader, and transport_http.go answers an unreachable upstream with an error carrying id:null. All three are loopback single-user surface; none is reachable through the documented use, and none is worth new code yet.
+VERDICT COMPLETE 17/17

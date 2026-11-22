@@ -3,7 +3,6 @@ package main
 import (
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -40,18 +39,5 @@ func TestClassifyTruthTable(t *testing.T) {
 		if got := classify(c.status, c.exc); got != c.want {
 			t.Fatalf("classify(%d, %v)=%q want %q", c.status, c.exc, got, c.want)
 		}
-	}
-}
-
-// A 503 is a reason-code, never an HTTP response the caller can emit.
-func TestClassify503NeverReturnsStatus(t *testing.T) {
-	got := classify(http.StatusServiceUnavailable, nil)
-	if got != "transient" {
-		t.Fatalf("503 must classify as transient reason-code, got %q", got)
-	}
-	rec := httptest.NewRecorder()
-	_ = got // string only: no status written to the caller's response
-	if rec.Code != http.StatusOK {
-		t.Fatalf("caller response mutated: code=%d", rec.Code)
 	}
 }

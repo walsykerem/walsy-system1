@@ -194,11 +194,6 @@ func TestCacheTwoSeparateCounters(t *testing.T) {
 	if kv.MatchPrefix != 1 || kv.PrefixLen != 512 || kv.PromptLen != 2048 {
 		t.Fatalf("provider KV ledger wrong: %+v", kv)
 	}
-	// Type-level separation: router stats have no prefix fields, provider stats
-	// have no hit fields (compile-time guarantee).
-	_ = cacheStats{}
-	_ = providerKVStats{MatchPrefix: 0}
-	_ = fmt.Sprintf("%T %T", router, kv)
 }
 
 // TestDecisionCacheConcurrent is the race-detector proof: 8 goroutines hit
