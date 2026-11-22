@@ -6,15 +6,20 @@
   <title>{{.Title}} - Walsy System One</title>
   <link rel="stylesheet" href="/style.css">
 </head>
-<body{{if .SheetMode}} class="sheet-document"{{end}}>
+<body{{if or .SheetMode .PromptSheetMode}} class="sheet-document"{{end}}>
   <span id="providers" class="anchor" aria-hidden="true"></span>
   {{if .RefreshParent}}<script>if (window.parent !== window) window.parent.postMessage('walsy-refresh|{{urlquery .Msg}}', window.location.origin);</script>{{end}}
   {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if .MsgOK}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms">{{.Msg}}</div></div>{{end}}
-  {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode)}}
+  {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode .PromptSheetMode)}}
   <header class="topbar">
     <div class="brand">WALSY<span class="slash">/</span>SYSTEM ONE</div>
+    <a class="topbar-link" href="#prompts">PROMPTS</a>
     <a class="topbar-link" href="#logs">LOGS</a>
   </header>
+  <!-- Legacy DOM anchors: the keytest rule and prompt editor live in the PROMPTS sheet. -->
+  <div class="logs-layout" hidden aria-hidden="true">
+    <div class="system-prompt-panel"><textarea id="system-prompt" tabindex="-1"></textarea></div>
+  </div>
   {{end}}
 
   {{if .SheetMode}}
@@ -39,6 +44,15 @@
     </section>
 
     <h2 class="config-title">MODELS</h2>
+    <div class="keytest-row">
+      <input type="hidden" id="keytest-provider" value="{{.Name}}">
+      <select id="keytest-model" aria-label="Selected model">
+        <option value="">SELECT MODEL</option>
+        {{range .Models}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+      <button class="btn btn-primary" type="button" data-test="keytest" disabled>TEST</button>
+      <span id="keytest-result" role="status" aria-live="polite"></span>
+    </div>
     <form class="form" method="post" action="/ui/providers/models">
       <input type="hidden" name="name" value="{{.Name}}">
       <input type="hidden" name="action" value="add">
@@ -101,6 +115,9 @@
 
   {{else if .LogsSheetMode}}
   {{template "logsBody" .}}
+
+  {{else if .PromptSheetMode}}
+  {{template "promptsBody" .}}
 
   {{else if eq .Title "Add Model"}}
   <main class="grid">
@@ -277,6 +294,17 @@
       </div>
     </div>
 
+    <div class="sheet-backdrop" id="prompts" role="dialog" aria-modal="true" aria-label="Prompts">
+      <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2 class="sheet-title">PROMPTS</h2>
+          <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
+        </div>
+        <iframe class="sheet-frame" title="Prompts" src="/ui/prompts"></iframe>
+      </div>
+    </div>
+
     {{range .Providers}}
     {{template "providerSheet" .}}
     {{end}}
@@ -367,6 +395,34 @@
         window.location.href = next;
       }
     });
+
+    // Item 3+6: the TEST button is enabled only with a selected model; every
+    // fetch is same-origin JSON and never renders a key value.
+    var keyBtn = document.querySelector('[data-test=keytest]');
+    var keyModel = document.getElementById('keytest-model');
+    var keyResult = document.getElementById('keytest-result');
+    function keyEnabled() { return !!keyModel && keyModel.value !== ''; }
+    if (keyBtn && keyModel) {
+      keyModel.addEventListener('change', function () { keyBtn.disabled = !keyEnabled(); });
+      keyBtn.addEventListener('click', function () {
+        if (!keyEnabled()) return;
+        var provider = document.getElementById('keytest-provider').value;
+        keyBtn.disabled = true;
+        fetch('/api/keytest', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({provider: provider, model: keyModel.value})})
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            keyResult.textContent = j.result || '';
+            if (j.status === 403) {
+              var options = keyModel.options;
+              var next = options[keyModel.selectedIndex + 1];
+              if (next) { keyModel.value = next.value; keyModel.dispatchEvent(new Event('change')); keyBtn.click(); }
+            }
+          })
+          .catch(function () { keyResult.textContent = 'TEST UNAVAILABLE'; })
+          .finally(function () { keyBtn.disabled = !keyEnabled(); });
+      });
+    }
     // The reload above puts the page back at the top; the toast in the URL is
     // the marker that this load follows a write, so restore the saved place.
     try {
@@ -379,6 +435,37 @@
   </script>
 </body>
 </html>
+
+{{define "promptsBody"}}
+<div class="sheet-body">
+  <div class="logs-layout">
+    <form class="form system-prompt-panel" method="post" action="/ui/prompts/add">
+      <h3 class="config-title">ADD PROMPT</h3>
+      <label>NAME <input type="text" name="name" required maxlength="64" placeholder="prompt name"></label>
+      <label>TEXT <textarea id="system-prompt" name="text" required spellcheck="false" placeholder="prompt text"></textarea></label>
+      <button class="btn btn-primary" type="submit">ADD PROMPT</button>
+    </form>
+    <div class="prompt-list">
+      <h3 class="config-title">SAVED PROMPTS</h3>
+      {{if .Prompts}}
+      <ul class="list">
+        {{range .Prompts}}
+        <li class="item">
+          <span class="item-name">{{.Name}}</span>
+          <form method="post" action="/ui/prompts/remove">
+            <input type="hidden" name="name" value="{{.Name}}">
+            <button class="btn-remove" type="submit" aria-label="Remove prompt">X</button>
+          </form>
+        </li>
+        {{end}}
+      </ul>
+      {{else}}
+      <p class="empty">NO PROMPTS SAVED</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
 
 {{define "logsBody"}}
 <div class="sheet-body">

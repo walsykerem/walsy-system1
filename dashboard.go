@@ -270,7 +270,40 @@ var stateMu sync.Mutex
 // unlockedPost lists POST routes the router leaves unlocked. The probe/run
 // routes never write state; /ui/providers/keys takes stateMu itself for its
 // add/remove/clear actions so a 2s key TEST cannot stall every other save.
+// probeKeyStatus returns only the HTTP status class of a key probe. The key
+// value is never returned, logged, or echoed; only Authorization/x-api-key
+// headers carry it, and the body is discarded.
+func probeKeyStatus(name string, index int) int {
+	keys, err := loadKeys(name)
+	if err != nil || index < 1 || index > len(keys) {
+		return http.StatusUnauthorized
+	}
+	view, err := providerView()
+	if err != nil {
+		return http.StatusForbidden
+	}
+	base := providerBase(view, name)
+	if !validProviderBase(base) {
+		return http.StatusForbidden
+	}
+	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(`{"messages":[{"role":"user","content":"ping"}]}`))
+	if err != nil {
+		return http.StatusForbidden
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+keys[index-1])
+	req.Header.Set("x-api-key", keys[index-1])
+	resp, err := keyTestClient.Do(req)
+	if err != nil {
+		return http.StatusForbidden
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return resp.StatusCode
+}
+
 var unlockedPost = map[string]bool{
+	"/api/keytest":       true,
 	"/api/combo/run":     true,
 	"/ui/combo/run":      true,
 	"/ui/build":          true,
@@ -534,6 +567,102 @@ func NewDashboardHandler() http.Handler {
 		switch r.URL.Path {
 		case "/style.css":
 			serveAsset(w, "style.css", "text/css; charset=utf-8")
+		case "/api/logs":
+			if r.Method != http.MethodGet {
+				writeAPIError(w, "method not allowed")
+				return
+			}
+			rows, err := auditLogRows()
+			if err != nil {
+				writeAPIError(w, "logs unavailable")
+				return
+			}
+			writeJSON(w, http.StatusOK, rows)
+		case "/api/keytest":
+			if r.Method != http.MethodPost {
+				writeAPIError(w, "method not allowed")
+				return
+			}
+			var req struct {
+				Provider string `json:"provider"`
+				Model    string `json:"model"`
+			}
+			if !decodeRequest(w, r, &req) || req.Provider == "" {
+				writeAPIError(w, "invalid request")
+				return
+			}
+			models, err := loadModels()
+			if err != nil || len(models[req.Provider]) == 0 {
+				writeJSON(w, http.StatusOK, map[string]any{"status": 401, "result": "INVALID KEY", "winner": ""})
+				return
+			}
+			selected := req.Model
+			if selected == "" {
+				selected = models[req.Provider][0]
+			}
+			// Test all keys for the selected model. A 401 stops; 403 moves on to
+			// the next model, which the client selects and posts again.
+			for k := 1; k <= keyCount(req.Provider); k++ {
+				switch probeKeyStatus(req.Provider, k) {
+				case http.StatusOK:
+					writeJSON(w, http.StatusOK, map[string]any{"status": 200, "result": "WINNER " + selected, "winner": selected})
+					return
+				case http.StatusUnauthorized:
+					writeJSON(w, http.StatusOK, map[string]any{"status": 401, "result": "INVALID KEY", "winner": ""})
+					return
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"status": 403, "result": "FORBIDDEN", "winner": ""})
+		case "/api/system-prompt":
+			switch r.Method {
+			case http.MethodGet:
+				writeJSON(w, http.StatusOK, map[string]any{"prompt": loadSystemPrompt()})
+			case http.MethodPost:
+				var req struct {
+					Prompt string `json:"prompt"`
+				}
+				if !decodeRequest(w, r, &req) {
+					writeAPIError(w, "invalid request")
+					return
+				}
+				prompt, truncated := capSystemPrompt(req.Prompt)
+				if err := saveSystemPrompt(prompt); err != nil {
+					writeAPIError(w, "prompt save failed")
+					return
+				}
+				msg := "PROMPT SAVED"
+				if truncated {
+					msg = "PROMPT SAVED - TRUNCATED TO 8192 CHARS"
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": msg})
+			default:
+				writeAPIError(w, "method not allowed")
+			}
+		case "/api/prompts":
+			switch r.Method {
+			case http.MethodGet:
+				writeJSON(w, http.StatusOK, loadPrompts())
+			case http.MethodPost:
+				if !sameOrigin(r) {
+					writeAPIError(w, "cross-origin request rejected")
+					return
+				}
+				var req struct {
+					Name string `json:"name"`
+					Text string `json:"text"`
+				}
+				if !decodeRequest(w, r, &req) || req.Name == "" || req.Text == "" {
+					writeAPIError(w, "invalid request")
+					return
+				}
+				if err := addPrompt(req.Name, req.Text); err != nil {
+					writeAPIError(w, "prompt save failed")
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+			default:
+				writeAPIError(w, "method not allowed")
+			}
 		case "/api/health":
 			if r.Method != http.MethodGet {
 				writeAPIError(w, "method not allowed")
@@ -676,6 +805,24 @@ func NewDashboardHandler() http.Handler {
 				return
 			}
 			uiLogsSheet(w)
+		case "/ui/prompts":
+			if r.Method != http.MethodGet {
+				writeAPIError(w, "method not allowed")
+				return
+			}
+			uiPromptsSheet(w)
+		case "/ui/prompts/add":
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
+				return
+			}
+			uiPromptAdd(w, r)
+		case "/ui/prompts/remove":
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
+				return
+			}
+			uiPromptRemove(w, r)
 		case "/ui/combo/run":
 			// POST only: this is the iframe form target, never a standalone page.
 			if r.Method != http.MethodPost {

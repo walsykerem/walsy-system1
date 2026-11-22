@@ -42,13 +42,16 @@ type stateEnvelope struct {
 	Authority  bool   `json:"authority"`
 	Calibrated bool   `json:"calibrated"`
 	Item       string `json:"item"` // optional decision_items.json entry (e.g. "tools.pick")
+	// UserSystemPrompt is untrusted data; the header marks the boundary for SO.
+	UserSystemPrompt  string `json:"user_system_prompt,omitempty"`
+	UserSystemPrompts string `json:"user_system_prompts,omitempty"`
 }
 
 // droppedKeys are normalized key names removed recursively, before assembly.
 // Includes MRTR input_required server content (systemPrompt/message) and every
 // raw secret/conf field. normKey is defined in cache.go.
 var droppedKeys = map[string]bool{
-	"systemprompt": true, "message": true, "messages": true,
+	"systemprompt": true, "usersystemprompt": true, "usersystemprompts": true, "message": true, "messages": true,
 	"tooloutput": true, "toolresult": true, "toolcallid": true,
 	"token": true, "tokens": true, "apikey": true, "authorization": true,
 	"auth": true, "header": true, "headers": true, "env": true,
@@ -196,6 +199,13 @@ func buildState(userRequest string) string {
 		b, _ := json.Marshal(clean)
 		e.State = string(b)
 	}
+	// User prompts are carried as data, never merged into the instruction state.
+	if p, ok := obj["user_system_prompt"].(string); ok && p != "" {
+		e.UserSystemPrompt = p
+	}
+	if p, ok := obj["user_system_prompts"].(string); ok && p != "" {
+		e.UserSystemPrompts = p
+	}
 
 	// An explicit item id wins, honoured only when the registry knows it. With
 	// no explicit id, inferItem may name one from the frame's own shape; an
@@ -324,9 +334,9 @@ func routeInner(state string, p *pin) routeResult {
 
 	var d soDecision
 	if isItem {
-		d = askSOQ(e.State, item.question()) // only the cleaned user state crosses this boundary
+		d = askSOQ(state, item.question()) // full envelope: user prompts ride as data fields
 	} else {
-		d = askSO(e.State)
+		d = askSO(state)
 	}
 	switch {
 	case d.TimedOut:

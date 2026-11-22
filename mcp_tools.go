@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,6 +23,23 @@ type frameLimitReader struct {
 
 var errFrameTooLarge = errors.New("tools frame too large")
 
+// cacheDirName is the single temp folder for cache and System One scratch files.
+const cacheDirName = "walsy-system1-cache"
+
+func cacheDir() string { return filepath.Join(os.TempDir(), cacheDirName) }
+
+// prepareCacheDir wipes only the dedicated cache folder before an MCP stdin
+// transport starts. A failed wipe is reported but never blocks cold start.
+func prepareCacheDir(stderr io.Writer) {
+	dir := cacheDir()
+	if err := os.RemoveAll(dir); err != nil {
+		fmt.Fprintln(stderr, "cache remove:", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		fmt.Fprintln(stderr, "cache mkdir:", err)
+	}
+}
+
 func (l *frameLimitReader) Read(p []byte) (int, error) {
 	if l.n >= maxToolsFrame {
 		return 0, errFrameTooLarge
@@ -38,6 +56,7 @@ func (l *frameLimitReader) Read(p []byte) (int, error) {
 // dashboard state and the relay audit log as two read-only tools, so the proxy
 // is a visible MCP entry instead of only wrapping someone else's server.
 func runToolsServer(in io.Reader, out io.Writer) {
+	prepareCacheDir(os.Stderr)
 	lr := &frameLimitReader{r: in}
 	dec := json.NewDecoder(lr)
 	enc := json.NewEncoder(out)

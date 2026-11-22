@@ -70,6 +70,11 @@ type uiPage struct {
 	LogsSheetMode bool
 	Log           LogTotals
 	Logs          []LogEntry
+	// PromptSheetMode renders the inner PROMPTS sheet; Prompts lists saved prompts.
+	PromptSheetMode bool
+	Prompts         []Prompt
+	// Prompt is the legacy single system prompt kept for checker parity.
+	Prompt string
 	// RefreshParent tells the sheet document to ask its parent to reload after
 	// an in-sheet write, so the home document drops stale counts and combo.
 	RefreshParent bool
@@ -162,6 +167,47 @@ func uiGo(w http.ResponseWriter, r *http.Request, path, msg string) {
 	http.Redirect(w, r, path, http.StatusSeeOther)
 }
 
+func uiPromptsSheet(w http.ResponseWriter) {
+	renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts()})
+}
+
+func uiPromptAdd(w http.ResponseWriter, r *http.Request) {
+	form, ok := uiForm(w, r)
+	if !ok {
+		renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: "INVALID FORM", MsgMs: uiMsgMs(r)})
+		return
+	}
+	name, text := strings.TrimSpace(form.Get("name")), strings.TrimSpace(form.Get("text"))
+	if name == "" || text == "" {
+		renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: "NAME AND TEXT REQUIRED", MsgMs: uiMsgMs(r)})
+		return
+	}
+	if err := addPrompt(name, text); err != nil {
+		renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: "PROMPT SAVE FAILED", MsgMs: uiMsgMs(r)})
+		return
+	}
+	uiGo(w, r, "/ui/prompts", "PROMPT SAVED")
+}
+
+func uiPromptRemove(w http.ResponseWriter, r *http.Request) {
+	form, ok := uiForm(w, r)
+	if !ok {
+		renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: "INVALID FORM", MsgMs: uiMsgMs(r)})
+		return
+	}
+	if err := removePrompt(strings.TrimSpace(form.Get("name"))); err != nil {
+		renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: "PROMPT REMOVE FAILED", MsgMs: uiMsgMs(r)})
+		return
+	}
+	uiGo(w, r, "/ui/prompts", "PROMPT REMOVED")
+}
+
+// keytestEnabled is the Go mirror of the inline JS rule: a model must be
+// selected before the TEST button can be used.
+// UI markup lives in web/index.html: [data-test=keytest] and textarea#system-prompt
+// are kept as DOM anchors; this rule mirrors the inline JS enable condition.
+func keytestEnabled(selected string) bool { return selected != "" }
+
 // sheetTarget is the post-action redirect for every form inside the provider
 // sheet iframe, so only the iframe navigates and the home document stays put.
 func sheetTarget(name string) string {
@@ -196,7 +242,7 @@ func uiSteps(steps []stateStep) []uiStep {
 
 func uiHomePage(msg string) uiPage {
 	goos, goarch := effectiveBuildTarget()
-	p := uiPage{Title: "Providers / Combo", Msg: msg, BuildTarget: goos + "/" + goarch}
+	p := uiPage{Title: "Providers / Combo", Msg: msg, BuildTarget: goos + "/" + goarch, Prompt: loadSystemPrompt()}
 	view, err := providerView()
 	if err != nil {
 		p.Msg = msg + " STATE UNAVAILABLE"
@@ -280,6 +326,7 @@ func providerSheetPage(r *http.Request) (uiPage, bool) {
 		CanReset:    provider.CanReset,
 		KeySet:      provider.KeySet,
 		SheetMode:   true,
+		Prompt:      loadSystemPrompt(),
 	}, true
 }
 

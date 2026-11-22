@@ -297,6 +297,45 @@ func TestJSParityUIForms(t *testing.T) {
 	t.Fatal("LOCAL-A missing from unchanged JSON API")
 }
 
+// Item 3+6: DOM markup and the shared enable rule must stay in sync.
+func TestJSGoParityItems36(t *testing.T) {
+	s := parityServer(t)
+	if err := saveCustomProvider("PARITY-P", "https://example.invalid", "key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveModels(map[string][]string{"PARITY-P": {"m1"}}); err != nil {
+		t.Fatal(err)
+	}
+	home := parityGet(t, s, "/") + parityGet(t, s, "/ui/providers/sheet?name=PARITY-P") + parityGet(t, s, "/ui/logs")
+	for _, anchor := range []string{
+		`data-test="keytest"`,
+		`id="keytest-model"`,
+		`id="keytest-provider"`,
+		`id="system-prompt"`,
+		`class="logs-layout"`,
+	} {
+		if !strings.Contains(home, anchor) {
+			t.Fatalf("home DOM missing %q", anchor)
+		}
+	}
+	css := parityGet(t, s, "/style.css")
+	for _, anchor := range []string{`.logs-layout { display: flex`, `.system-prompt-panel { display: flex`, `#system-prompt`} {
+		if !strings.Contains(css, anchor) {
+			t.Fatalf("style.css missing %q", anchor)
+		}
+	}
+	// Same condition as the inline JS function keyEnabled().
+	if keytestEnabled("") || !keytestEnabled("cloudflare/clef") {
+		t.Fatal("Go/JS keytest enable rule diverged")
+	}
+	// Inline handler contract stays unchanged.
+	for _, bad := range []string{"onclick=", "onkeydown=", "<script src="} {
+		if strings.Contains(home, bad) {
+			t.Fatalf("inline handler appeared: %s", bad)
+		}
+	}
+}
+
 func TestJSParityNoSOConfigPanel(t *testing.T) {
 	s := parityServer(t)
 	page := parityGet(t, s, "/")

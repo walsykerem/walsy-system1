@@ -181,6 +181,19 @@ body:has(.sheet-backdrop:target) { overflow: hidden; }
 /* iframe hosts: the scroll lives inside the iframe document, not here. */
 .sheet-body:has(.sheet-frame) { display: flex; padding: 0; overflow: hidden; }
 .sheet-frame { display: block; flex: 1; width: 100%; height: auto; border: 0; border-radius: 0; background: var(--bg); }
+/* Item 6: system prompt sits to the right of logs in a flex row. */
+.logs-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.logs-layout .sheet-frame { flex: 1; }
+.system-prompt-panel { display: flex; flex-direction: column; gap: 8px; width: 40%; min-width: 220px; padding: 12px; border-left: var(--b); background: var(--bg); }
+.system-prompt-panel #system-prompt { flex: 1; min-height: 140px; resize: none; padding: 8px; background: var(--white); color: var(--ink); border: var(--b); font: inherit; }
+.system-prompt-panel .btn { align-self: flex-start; }
+.system-prompt-panel textarea { min-height: 140px; }
+.prompt-list { flex: 1; min-width: 200px; padding: 12px; }
+.prompt-list .item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: var(--b); }
+.prompt-list .item-name { overflow-wrap: anywhere; }
+.btn-remove { cursor: pointer; background: var(--bg); color: var(--ink); border: var(--b); }
+.empty { color: var(--muted, #666); }
+@media (max-width: 700px) { .logs-layout { flex-direction: column; } .system-prompt-panel { width: 100%; border-left: 0; border-top: var(--b); } }
 /* Standalone iframe documents: no chrome, no shadow, scroll in .sheet-body only. */
 body.sheet-document { background: var(--bg); }
 body.sheet-document .sheet-body { height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; }

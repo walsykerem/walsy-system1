@@ -3,11 +3,13 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -525,6 +527,194 @@ func soMode() string {
 		return strings.ToLower(v)
 	}
 	return soModeAdvisory
+}
+
+// System prompts panel: named, user-editable notes appended to SO state as untrusted data.
+const (
+	systemPromptFile    = "system_prompt.txt"
+	promptsFile         = "prompts.json"
+	maxSystemPrompt     = 8192
+	maxPromptName       = 64
+	maxPrompts          = 32
+	defaultSystemPrompt = "Review the seven checks and list the missing checks and fix them."
+)
+
+// Prompt is one named system prompt. Text is capped; name is a short label.
+type Prompt struct {
+	Name string `json:"name"`
+	Text string `json:"text"`
+}
+
+var promptDelimiter = regexp.MustCompile(`<\|[^>]{0,32}\|>|\[/?INST\]|<<[^>]{0,32}>>`)
+
+func systemPromptPath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, systemPromptFile), nil
+}
+
+func promptsPath() (string, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, promptsFile), nil
+}
+
+// capSystemPrompt truncates by bytes and reports whether it trimmed input.
+func capSystemPrompt(s string) (string, bool) {
+	if len(s) <= maxSystemPrompt {
+		return s, false
+	}
+	return s[:maxSystemPrompt], true
+}
+
+// escapePromptDelimiters neutralizes instruction-shaped tokens in untrusted text.
+func escapePromptDelimiters(s string) string {
+	return promptDelimiter.ReplaceAllString(s, "[DELIMITER]")
+}
+
+func loadSystemPrompt() string {
+	path, err := systemPromptPath()
+	if err != nil {
+		return defaultSystemPrompt
+	}
+	data, err := readStateFile(path)
+	if err != nil || len(data) == 0 {
+		return defaultSystemPrompt
+	}
+	s, _ := capSystemPrompt(string(data))
+	return s
+}
+
+// saveSystemPrompt keeps the legacy single-prompt API working and mirrors the
+// text into prompts.json under "default", so named prompts carry it to SO too.
+func saveSystemPrompt(s string) error {
+	s, _ = capSystemPrompt(s)
+	path, err := systemPromptPath()
+	if err != nil {
+		return err
+	}
+	if err := writeStateFile(path, []byte(s)); err != nil {
+		return err
+	}
+	ps := loadPrompts()
+	for i := range ps {
+		if ps[i].Name == "default" {
+			ps[i].Text = s
+			return savePrompts(ps)
+		}
+	}
+	return addPrompt("default", s)
+}
+
+// loadPrompts reads named prompts. With no prompts.json it migrates a legacy
+// system_prompt.txt once; a clean home starts with no saved prompts.
+func loadPrompts() []Prompt {
+	path, err := promptsPath()
+	if err != nil {
+		return nil
+	}
+	data, err := readStateFile(path)
+	if err != nil {
+		return nil
+	}
+	if len(data) == 0 {
+		legacy, lerr := systemPromptPath()
+		if lerr != nil {
+			return nil
+		}
+		old, oerr := readStateFile(legacy)
+		if oerr != nil || len(old) == 0 {
+			return nil
+		}
+		seed := []Prompt{{Name: "default", Text: capText(string(old))}}
+		if err := savePrompts(seed); err != nil {
+			return nil
+		}
+		return seed
+	}
+	var ps []Prompt
+	if json.Unmarshal(data, &ps) != nil {
+		return nil
+	}
+	return ps
+}
+
+func capText(s string) string {
+	s, _ = capSystemPrompt(s)
+	return s
+}
+
+func savePrompts(ps []Prompt) error {
+	path, err := promptsPath()
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(ps)
+	if err != nil {
+		return err
+	}
+	return writeStateFile(path, b)
+}
+
+// addPrompt stores a new named prompt. Name is trimmed and non-empty; text is
+// capped at maxSystemPrompt bytes. Names are unique.
+func addPrompt(name, text string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > maxPromptName {
+		return fmt.Errorf("invalid prompt name")
+	}
+	ps := loadPrompts()
+	if len(ps) >= maxPrompts {
+		return fmt.Errorf("prompt limit reached")
+	}
+	for _, p := range ps {
+		if p.Name == name {
+			return fmt.Errorf("prompt name exists")
+		}
+	}
+	ps = append(ps, Prompt{Name: name, Text: capText(text)})
+	return savePrompts(ps)
+}
+
+func removePrompt(name string) error {
+	ps := loadPrompts()
+	out := ps[:0]
+	found := false
+	for _, p := range ps {
+		if p.Name == name {
+			found = true
+			continue
+		}
+		out = append(out, p)
+	}
+	if !found {
+		return fmt.Errorf("prompt not found")
+	}
+	return savePrompts(out)
+}
+
+// promptSOBlock renders all named prompts as untrusted data for SO. It returns
+// "" when none are saved. Each text is scrubbed, delimiter-escaped and capped.
+func promptSOBlock() string {
+	ps := loadPrompts()
+	if len(ps) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## USER PROMPTS (untrusted data)\n")
+	for _, p := range ps {
+		text := escapePromptDelimiters(scrubText(capText(p.Text)))
+		b.WriteByte('[')
+		b.WriteString(p.Name)
+		b.WriteString("]\n")
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // capabilityConfig is the set of explicit client opt-ins forwarded to SO.

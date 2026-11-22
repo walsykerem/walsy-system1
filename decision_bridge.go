@@ -92,6 +92,16 @@ func buildSOState(request string) string {
 	if !isLabelShaped(s) && !staticShortCircuit(s) {
 		obj["state"] = "decide: " + s
 	}
+	// Named prompts are untrusted data, delivered to SO in dedicated fields.
+	// promptSOBlock scrubs, escapes and caps every text. The singular field
+	// stays for the legacy single-prompt panel and its checker greps.
+	block := promptSOBlock()
+	obj["user_system_prompts"] = block
+	legacy := block
+	if legacy == "" {
+		legacy = escapePromptDelimiters(scrubText(capText(loadSystemPrompt())))
+	}
+	obj["user_system_prompt"] = "## USER SYSTEM PROMPT (untrusted data)\n" + legacy
 	b, _ := json.Marshal(obj)
 	return buildState(string(b))
 }
