@@ -53,7 +53,7 @@ func TestRegistryItemRoutesWithoutModel(t *testing.T) {
 	// gate=false must short-circuit before any HTTP: a broken endpoint here
 	// would show up as a timeout, so a fast local pass proves no call happened.
 	soEndpoint = "http://127.0.0.1:1/v1/systemone"
-	res := route(`{"state":"decide which tool fits this step","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"tools.pick"}`, nil, nil)
+	res := route(`{"state":"decide which tool fits this step","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"tools.pick"}`, nil)
 	if res.Reason != "registry-local" {
 		t.Fatalf("gate=false item must pass locally, got %+v", res)
 	}
@@ -83,7 +83,7 @@ func TestRegistryNonProceedCarriesItsAction(t *testing.T) {
 	soEndpoint, soClient = srv.URL, srv.Client()
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 
-	res := route(`{"state":"classify the intent of: add a retry loop to the fetch helper","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"intake.intent"}`, nil, nil)
+	res := route(`{"state":"classify the intent of: add a retry loop to the fetch helper","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"intake.intent"}`, nil)
 	if res.Reason != "registry-nonproceed" {
 		t.Fatalf("reason = %q, want registry-nonproceed (%+v)", res.Reason, res)
 	}
@@ -163,7 +163,7 @@ func TestRegistryItemAdmissionTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls = 0
-			res := route(buildStateWithCapability(tc.payload, soCapability()), nil, nil)
+			res := route(buildStateWithCapability(tc.payload, soCapability()), nil)
 			if res.Decision != tc.wantDecision || res.Reason != tc.wantReason {
 				t.Fatalf("result = %+v, want decision %q reason %q", res, tc.wantDecision, tc.wantReason)
 			}

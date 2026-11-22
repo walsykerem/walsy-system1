@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // Guards the harness itself: a PASS can only come from a real forwarded echo.
 func TestCheckForwardRejectsBlockAndAcceptsEcho(t *testing.T) {
@@ -31,6 +35,35 @@ func TestCheckWithoutWantedTextFails(t *testing.T) {
 	check("vacuous", "anything")
 	if fail != 1 {
 		t.Fatalf("empty want: fail=%d want 1", fail)
+	}
+	fail = 0
+}
+
+// checkReason must read the reason field the gate recorded, and must fail
+// rather than pass when the log is missing or carries a different code.
+func TestCheckReasonReadsAuditField(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".walsy-system1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(home, ".walsy-system1", "audit.jsonl")
+	body := "{\"event\":\"decision\",\"decision\":\"pass\",\"reason\":\"layer0-static\"}\n"
+	if err := os.WriteFile(log, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fail = 0
+	checkReason("present", home, "layer0-static")
+	if fail != 0 {
+		t.Fatalf("present reason: fail=%d want 0", fail)
+	}
+	checkReason("absent", home, "so-no")
+	if fail != 1 {
+		t.Fatalf("absent reason: fail=%d want 1", fail)
+	}
+	fail = 0
+	checkReason("no log", t.TempDir(), "so-no")
+	if fail != 1 {
+		t.Fatalf("missing log: fail=%d want 1", fail)
 	}
 	fail = 0
 }

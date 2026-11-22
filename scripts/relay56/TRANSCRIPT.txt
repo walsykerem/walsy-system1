@@ -1,8 +1,8 @@
 # relay56 live transcript
-timestamp: 2026-11-22T12:54:11Z
-harness: scripts/relay56/main.go sha256=931fa0af39caa986cc5bf03553c550a26bcf3921b9cc4a683c0e6c04a7bec384
-harness test: scripts/relay56/main_test.go sha256=4a6fe8034adc6482bde7345221d06a55d583d96b9c3682d43ddcf7649f5893fa
-binary: 30cb4b0cbff699d4803c12d67b0e5a550958ee7b01df5588c936cf35f4dff4dd  walsy-system1
+timestamp: 2026-11-22T14:21:10Z
+harness: scripts/relay56/main.go sha256=8871c082f30b4e9480c78366a197b6635cbb65e5f4eafecc19822635d5825da8
+harness test: scripts/relay56/main_test.go sha256=badecf29b617506667b7bcb0d6508f36adf87651296f42ec119904ecad711011
+binary: 14780d5d71fb23b3006c67e2c7ebc3791f448647649ba4a152ddd7d7dfe37ef7  walsy-system1
 command: RELAY56_BIN=/Users/keremurhan/walsy-system1/walsy-system1 GOCACHE=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache go run ./scripts/relay56
 --- run
 PASS unread-write   blocked: write to a path this session never touched: /tmp/relay56-a.txt: read it first, or state why it is new
@@ -23,6 +23,14 @@ PASS budget-3       forwarded unchanged (/tmp/relay56-3.txt)
 PASS budget-4       forwarded unchanged (/tmp/relay56-4.txt)
 PASS budget-stop    blocked: router tool budget spent (3 calls for this session); reset: send initialize for a new session or rais
 PASS budget-refill  forwarded unchanged (/tmp/relay56-7.txt)
+PASS so-no          forwarded unchanged (/tmp/relay56-n.txt)
+PASS so-no-audit        audited reason=so-no
+PASS so-other       forwarded unchanged (/tmp/relay56-o.txt)
+PASS so-other-audit     audited reason=so-other
+PASS no-state       forwarded unchanged (antishirk.todo_ledger)
+PASS no-state-audit     audited reason=no-state
+PASS layer0-static  forwarded unchanged (/tmp/relay56-s.txt)
+PASS layer0-static-audit audited reason=layer0-static
 RELAY-OK
 --- summary
-18 PASS, 0 FAIL, RELAY-OK
+26 PASS, 0 FAIL, RELAY-OK

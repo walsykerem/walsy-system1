@@ -34,7 +34,7 @@ func TestRouteLayers(t *testing.T) {
 	// Layer 0: non-label-shaped -> direct pass, SO never called.
 	called := false
 	withSO(t, func(w http.ResponseWriter, r *http.Request) { called = true })
-	r := route(scopeState("what is the weather today", true), nil, newDecisionCache())
+	r := route(scopeState("what is the weather today", true), nil)
 	if r.Decision != decPass || !r.Passthrough || r.Reason != "layer0-shape" {
 		t.Fatalf("layer0 shape: %+v", r)
 	}
@@ -48,7 +48,7 @@ func TestRouteLayers(t *testing.T) {
 		Safe: true, Reversible: true, OptIn: true, Phase: "before-model",
 		Authority: true, Calibrated: true,
 	})
-	r = route(string(b), nil, newDecisionCache())
+	r = route(string(b), nil)
 	if r.Decision != decPass || r.Reason != "layer0-gate" || called {
 		t.Fatalf("layer0 gate: %+v called=%v", r, called)
 	}
@@ -58,7 +58,7 @@ func TestRouteLayers(t *testing.T) {
 		called = true
 		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
 	})
-	r = route(scopeState("classify this request", true), newPin(bakedRegistry()), newDecisionCache())
+	r = route(scopeState("classify this request", true), newPin(bakedRegistry()))
 	if r.Decision != decPin || !r.Covered || r.ConfBucket != "0.9" || !called {
 		t.Fatalf("layer1: %+v called=%v", r, called)
 	}
@@ -69,7 +69,7 @@ func TestRouteFailSafe(t *testing.T) {
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.799}}}`))
 	})
-	if r := route(scopeState("classify this", true), nil, newDecisionCache()); r.Decision != decPass || !r.Abstained {
+	if r := route(scopeState("classify this", true), nil); r.Decision != decPass || !r.Abstained {
 		t.Fatalf("conf 0.799: %+v", r)
 	}
 	// swap endpoint response for 0.801 via a fresh server
@@ -79,7 +79,7 @@ func TestRouteFailSafe(t *testing.T) {
 	orig := soEndpoint
 	soEndpoint = srv2.URL
 	t.Cleanup(func() { soEndpoint = orig; srv2.Close() })
-	if r := route(scopeState("classify this", true), nil, newDecisionCache()); r.Decision != decPin || r.ConfBucket != "0.8" {
+	if r := route(scopeState("classify this", true), nil); r.Decision != decPin || r.ConfBucket != "0.8" {
 		t.Fatalf("conf 0.801: %+v", r)
 	}
 }
@@ -89,7 +89,7 @@ func TestRouteTimeoutAndHTTP500(t *testing.T) {
 	soTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { soTimeout = origTO })
 	withSO(t, func(w http.ResponseWriter, r *http.Request) { time.Sleep(200 * time.Millisecond) })
-	if r := route(scopeState("classify this", true), nil, newDecisionCache()); r.Decision != decPass || r.Reason != "transient" {
+	if r := route(scopeState("classify this", true), nil); r.Decision != decPass || r.Reason != "transient" {
 		t.Fatalf("timeout: %+v", r)
 	}
 
@@ -99,7 +99,7 @@ func TestRouteTimeoutAndHTTP500(t *testing.T) {
 	orig := soEndpoint
 	soEndpoint = srv.URL
 	t.Cleanup(func() { soEndpoint = orig; srv.Close() })
-	r := route(scopeState("classify this", true), nil, newDecisionCache())
+	r := route(scopeState("classify this", true), nil)
 	if r.Decision != decPass || !r.Abstained {
 		t.Fatalf("HTTP 500: %+v", r)
 	}
@@ -125,7 +125,7 @@ func TestSOSchemaOnWire(t *testing.T) {
 		}
 		w.Write([]byte(`{"answers":{"gate":{"choice":"no","confidence":0.95}}}`))
 	})
-	route(scopeState("classify this", true), nil, newDecisionCache())
+	route(scopeState("classify this", true), nil)
 	if requests != 1 {
 		t.Fatalf("retry forbidden: %d requests", requests)
 	}
@@ -224,7 +224,7 @@ func TestRouteTrustBoundary(t *testing.T) {
 		Reversible: true, OptIn: false, Phase: "before-model",
 		Authority: true, Calibrated: true,
 	})
-	r := route(string(b), nil, newDecisionCache())
+	r := route(string(b), nil)
 	if r.Reason != "-32602" || !r.Passthrough || called {
 		t.Fatalf("missing capability: %+v called=%v", r, called)
 	}
@@ -269,7 +269,7 @@ func TestRouteCoverageMatrix(t *testing.T) {
 	for _, c := range cases {
 		c.e.State = "plain greeting"
 		b, _ := json.Marshal(c.e)
-		r := route(string(b), nil, newDecisionCache())
+		r := route(string(b), nil)
 		if r.Reason != c.want || !r.Passthrough {
 			t.Fatalf("%s: %+v want %s", c.name, r, c.want)
 		}
@@ -310,17 +310,17 @@ func TestRoutePerItemThreshold(t *testing.T) {
 
 	// Default: no per-item value -> the global 0.8 refuses 0.768, but the label
 	// survives so the refusal names the next step.
-	if r := route(state(), nil, newDecisionCache()); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" || r.Steer == "" {
+	if r := route(state(), nil); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" || r.Steer == "" {
 		t.Fatalf("default cut: %+v", r)
 	}
 
 	setItemThreshold(t, "context.sufficient", 0.7)
-	if r := route(state(), nil, newDecisionCache()); r.Decision != decPin || r.Label != "sufficient" {
+	if r := route(state(), nil); r.Decision != decPin || r.Label != "sufficient" {
 		t.Fatalf("per-item cut: %+v", r)
 	}
 
 	setItemThreshold(t, "context.sufficient", 0.95)
-	if r := route(state(), nil, newDecisionCache()); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" {
+	if r := route(state(), nil); r.Decision != decPass || r.Reason != "so-low-conf" || r.Label != "sufficient" {
 		t.Fatalf("clamped cut: %+v", r)
 	}
 }

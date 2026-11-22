@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 )
@@ -241,25 +239,19 @@ func isLabelShaped(text string) bool {
 	return false
 }
 
-// routeKey hashes the canonical state (cache.go) - normalized, byte-stable.
-func routeKey(state string) string {
-	sum := sha256.Sum256([]byte(canonicalState(state)))
-	return hex.EncodeToString(sum[:])
-}
-
 // route runs Layer 0 -> Layer 1 -> Layer 2. Every failure is a transparent
 // passthrough; no 503, no fail-closed, no raw conf/secret in the result.
 // A non-admit answer always carries the one concrete next step, so a
 // below-0.8 verdict steers instead of sending the caller back to rediscover it.
-func route(state string, p *pin, c *decisionCache) routeResult {
-	r := routeInner(state, p, c)
+func route(state string, p *pin) routeResult {
+	r := routeInner(state, p)
 	if r.Steer == "" && r.Decision != decPin {
 		r.Steer = SteerText(r.Reason, r.Label)
 	}
 	return r
 }
 
-func routeInner(state string, p *pin, c *decisionCache) routeResult {
+func routeInner(state string, p *pin) routeResult {
 	var e stateEnvelope
 	if json.Unmarshal([]byte(state), &e) != nil {
 		return passResult("no-state", false)
@@ -280,7 +272,7 @@ func routeInner(state string, p *pin, c *decisionCache) routeResult {
 	if staticShortCircuit(e.State) {
 		return passResult("layer0-static", false)
 	}
-	// Layer 1: cache hit or one SO shot.
+	// Layer 1: one SO shot.
 	// A registry item brings its own question, label set and proceed list. An
 	// explicit known item is already decision-shaped, so it skips layer0-shape.
 	item, isItem := decisionItemFor(e.Item)
@@ -321,20 +313,6 @@ func routeInner(state string, p *pin, c *decisionCache) routeResult {
 		admits = item.admits
 	}
 
-	key := routeKey(state)
-	if c != nil {
-		if d, hit := c.lookup(key); hit {
-			if d.Choice == abstainLabel || !admits(d.Choice) {
-				return passResult("cache-abstain", true)
-			}
-			r := routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: d.ConfBucket}
-			if isItem {
-				r.Label, r.Steer = d.Choice, item.Action[d.Choice]
-			}
-			return r
-		}
-	}
-
 	var d soDecision
 	if isItem {
 		d = askSOQWithThreshold(e.State, item.question(), thr) // only the cleaned user state crosses this boundary
@@ -370,9 +348,6 @@ func routeInner(state string, p *pin, c *decisionCache) routeResult {
 		return r
 	default:
 		bucket := confBucket(d.Conf)
-		if c != nil {
-			c.admit(key, cachedDecision{Choice: d.Choice, ConfBucket: bucket, Reason: "margin=1"})
-		}
 		if p != nil {
 			p.markSuccess(p.current().Name)
 		}

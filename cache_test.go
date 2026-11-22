@@ -42,37 +42,6 @@ func TestCacheCanonicalDeterminism(t *testing.T) {
 	}
 }
 
-func TestCacheNegativeVerdictIsAbstain(t *testing.T) {
-	for _, choice := range []string{"no", "other"} {
-		c := newDecisionCache()
-		c.admit("k-"+choice, cachedDecision{Choice: choice, ConfBucket: "0.9"})
-		d, ok := c.lookup("k-" + choice)
-		if !ok {
-			t.Fatalf("%s: expected negative cell cached", choice)
-		}
-		if d.Choice != abstainLabel {
-			t.Fatalf("%s served as %q, want %q", choice, d.Choice, abstainLabel)
-		}
-	}
-}
-
-func TestCacheAdmissionBucket(t *testing.T) {
-	// conf<0.8 (invalid bucket): never served as a positive label.
-	c0 := newDecisionCache()
-	c0.admit("low", cachedDecision{Choice: "yes", ConfBucket: ""})
-	d0, ok := c0.lookup("low")
-	if !ok || d0.Choice != abstainLabel {
-		t.Fatalf("invalid bucket not stored as abstain: %+v ok=%v", d0, ok)
-	}
-
-	// valid bucket -> admitted.
-	c1 := newDecisionCache()
-	c1.admit("good", cachedDecision{Choice: "yes", ConfBucket: "0.8"})
-	if d, ok := c1.lookup("good"); !ok || d.Choice != "yes" {
-		t.Fatalf("valid decision not admitted: %+v ok=%v", d, ok)
-	}
-}
-
 func TestCacheSingleflightCoalescing(t *testing.T) {
 	var g group
 	var calls int64
@@ -213,7 +182,7 @@ func TestCacheLRUEviction(t *testing.T) {
 
 func TestCacheTwoSeparateCounters(t *testing.T) {
 	c := newDecisionCache()
-	c.admit("k", cachedDecision{Choice: "yes", ConfBucket: "0.9"})
+	c.store("k", cachedDecision{Choice: "yes", ConfBucket: "0.9"})
 	c.lookup("k")
 	c.recordProviderPrefix(512, 2048)
 

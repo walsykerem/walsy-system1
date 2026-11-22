@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	abstainLabel  = "abstain"
 	cacheCapacity = 1024
 )
 
@@ -248,23 +247,6 @@ func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 		delete(c.idx, old.Value.(*cacheCell).key)
 		c.ll.Remove(old)
 	}
-}
-
-func validBucket(b string) bool {
-	return b == "0.8" || b == "0.9" || b == "1.0"
-}
-
-// admit: negative verdicts and invalid buckets are cached as abstain (skip
-// repeat SO calls); positives with a valid bucket are admitted.
-func (c *decisionCache) admit(key string, d cachedDecision) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if d.Choice == "no" || d.Choice == "other" || !validBucket(d.ConfBucket) {
-		c.storeLocked(key, cachedDecision{Choice: abstainLabel, ConfBucket: d.ConfBucket, Reason: "negative-verdict"})
-		return
-	}
-	c.storeLocked(key, d)
 }
 
 func (c *decisionCache) stats() cacheStats {

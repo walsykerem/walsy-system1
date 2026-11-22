@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -35,9 +36,10 @@ type frame struct {
 }
 
 type client struct {
-	in  io.WriteCloser
-	r   *bufio.Reader
-	cmd *exec.Cmd
+	in   io.WriteCloser
+	r    *bufio.Reader
+	cmd  *exec.Cmd
+	home string
 }
 
 var (
@@ -93,8 +95,15 @@ func die(err error) {
 }
 
 func spawn(ep string) *client {
+	// A private HOME isolates the audit log so checkReason can read back the
+	// exact reason code the relay recorded without touching the user's own.
+	home, err := os.MkdirTemp("", "relay56-home-")
+	if err != nil {
+		die(err)
+	}
 	cmd := exec.Command(bin, "cat")
 	cmd.Env = append(os.Environ(),
+		"HOME="+home,
 		"WALSY_SO_ENDPOINT="+ep,
 		"EVREN_API_KEY=relay56-test-key",
 		"WALSY_SO_MODE=enforcing",
@@ -111,12 +120,13 @@ func spawn(ep string) *client {
 	if err := cmd.Start(); err != nil {
 		die(err)
 	}
-	return &client{in: stdin, r: bufio.NewReader(stdout), cmd: cmd}
+	return &client{in: stdin, r: bufio.NewReader(stdout), cmd: cmd, home: home}
 }
 
 func (c *client) close() {
 	c.in.Close()
 	_ = c.cmd.Wait()
+	_ = os.RemoveAll(c.home)
 }
 
 // send writes one frame and waits for the reply with the same id, skipping the
@@ -226,6 +236,30 @@ func checkDisk(name, path, forbidden string) {
 	fmt.Printf("PASS %-14s on disk: present without %q (%d B)\n", name, forbidden, len(b))
 }
 
+// checkReason asserts the relay audited a decision carrying the given reason
+// code. The audit JSONL is the only observable that names a reason: a forwarded
+// frame's reply is the upstream echo and never carries the code.
+func checkReason(name, home, reason string) {
+	b, err := os.ReadFile(filepath.Join(home, ".walsy-system1", "audit.jsonl"))
+	if err != nil {
+		fmt.Printf("FAIL %-18s no audit log: %v\n", name, err)
+		fail++
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) != nil {
+			continue
+		}
+		if m["reason"] == reason {
+			fmt.Printf("PASS %-18s audited reason=%s\n", name, reason)
+			return
+		}
+	}
+	fmt.Printf("FAIL %-18s reason %q not in audit\n", name, reason)
+	fail++
+}
+
 func call(id int, tool string, args map[string]any) frame {
 	p, _ := json.Marshal(map[string]any{"name": tool, "arguments": args})
 	return frame{ID: id, Method: "tools/call", Params: p}
@@ -326,6 +360,41 @@ func main() {
 	check("budget-stop", msg(c.send(call(5, "read_file", map[string]any{"path": "/tmp/relay56-5.txt"}))), "budget spent", "initialize")
 	handshake(c, 6)
 	checkForward("budget-refill", c.send(call(7, "read_file", map[string]any{"path": "/tmp/relay56-7.txt"})), "/tmp/relay56-7.txt")
+	c.close()
+
+	// 6) so-no: a generic frame the model labels "no" is not an admit, and the
+	// typed layer fails open (forwards) while recording the reason code.
+	c = spawn(ep)
+	handshake(c, 1)
+	script(answer{Choice: "no", Conf: 0.96})
+	checkForward("so-no", c.send(call(2, "read_file", map[string]any{"path": "/tmp/relay56-n.txt"})), "/tmp/relay56-n.txt")
+	checkReason("so-no-audit", c.home, "so-no")
+	c.close()
+
+	// 7) so-other: an "other" label is likewise not an admit and fails open.
+	c = spawn(ep)
+	handshake(c, 1)
+	script(answer{Choice: "other", Conf: 0.95})
+	checkForward("so-other", c.send(call(2, "read_file", map[string]any{"path": "/tmp/relay56-o.txt"})), "/tmp/relay56-o.txt")
+	checkReason("so-other-audit", c.home, "so-other")
+	c.close()
+
+	// 8) no-state: a ledger frame with no verdict text routes to no-state and
+	// is forwarded with the matching steer.
+	c = spawn(ep)
+	handshake(c, 1)
+	checkForward("no-state", c.send(frame{ID: 2, Method: "tools/call",
+		Params: json.RawMessage(`{"item":"antishirk.todo_ledger","state":"x"}`)}), "antishirk.todo_ledger")
+	checkReason("no-state-audit", c.home, "no-state")
+	c.close()
+
+	// 9) layer0-static: a bare static word reaches the Layer 0 short-circuit
+	// instead of the model, and is answered without a decision call.
+	c = spawn(ep)
+	handshake(c, 1)
+	checkForward("layer0-static", c.send(frame{ID: 2, Method: "tools/call",
+		Params: json.RawMessage(`{"name":"read_file","state":"status","arguments":{"path":"/tmp/relay56-s.txt"}}`)}), "/tmp/relay56-s.txt")
+	checkReason("layer0-static-audit", c.home, "layer0-static")
 	c.close()
 
 	if fail > 0 {

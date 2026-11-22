@@ -19,12 +19,6 @@ func SteerText(reason, label string) string {
 	if s := steerTable[reason]; s != "" {
 		return s
 	}
-	// Cached refusals carry their original reason: cache-<reason>.
-	if r, ok := strings.CutPrefix(reason, "cache-"); ok {
-		if s := SteerText(r, label); s != "" {
-			return s
-		}
-	}
 	// Any other non-proceed label: so-<choice>. The refusal stands.
 	if r, ok := strings.CutPrefix(reason, "so-"); ok && r != "" {
 		return "the model's " + r + " label is not an admit: take the reversible branch or hand to a human; the same state will get the same answer."
@@ -40,9 +34,7 @@ var steerTable = map[string]string{
 	"layer0-shape":        "restate the state as one label-shaped decision: classify, score, route or a yes/no question.",
 	"registry-local":      "decide locally from the registry item's proceed list; no model call is needed.",
 	"registry-nonproceed": "take the registry item's action for that label or hand it to a human.",
-	"cache-abstain":       "this exact state was already refused: add the missing evidence or decide locally.",
 	"cache-hit":           "proceed with the cached admitted label; nothing is left to ask.",
-	"negative-verdict":    "the cached verdict was no: add the missing evidence or decide locally.",
 	"so-degraded":         "name the label set and the concrete options, or decide locally; the model returned no usable label.",
 	"so-low-conf":         "the evidence is too thin for a confident label: name the missing fact and decide locally.",
 	"so-no":               "not admitted: the typed layer passes this through unchanged, so keep going on your own judgment.",

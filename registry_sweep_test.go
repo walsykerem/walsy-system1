@@ -64,8 +64,8 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 			// Deterministic ledger: the todo/done list is the decision, and no
 			// model call may happen either way.
 			atomic.StoreInt64(&calls, 0)
-			open := route(envelopeWithState(id, `{"todo":["write tests"],"done":[]}`), nil, nil)
-			done := route(envelopeWithState(id, `{"todo":["write tests"],"done":["write tests"]}`), nil, nil)
+			open := route(envelopeWithState(id, `{"todo":["write tests"],"done":[]}`), nil)
+			done := route(envelopeWithState(id, `{"todo":["write tests"],"done":["write tests"]}`), nil)
 			if open.Reason != "ledger-open" || !strings.Contains(open.Steer, "write tests") {
 				t.Errorf("ledger open = %+v, want ledger-open naming the open item", open)
 			}
@@ -81,7 +81,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 		if !it.Gate {
 			atomic.StoreInt64(&calls, 0)
 			setAnswer("", 0)
-			r := route(env, nil, nil)
+			r := route(env, nil)
 			if r.Reason != "registry-local" || r.Steer == "" {
 				t.Errorf("%s: local item = %+v, want registry-local with a steer", id, r)
 			}
@@ -109,7 +109,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 		}
 
 		setAnswer(proceed, 0.95)
-		if r := route(env, nil, nil); r.Reason != "so-admit" || r.Steer != it.Action[proceed] || r.Steer == "" {
+		if r := route(env, nil); r.Reason != "so-admit" || r.Steer != it.Action[proceed] || r.Steer == "" {
 			t.Errorf("%s: admit %q = %+v, want so-admit steering %q", id, proceed, r, it.Action[proceed])
 		} else {
 			admitted++
@@ -117,7 +117,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 
 		if rest != "" {
 			setAnswer(rest, 0.95)
-			if r := route(env, nil, nil); r.Reason != "registry-nonproceed" || r.Steer != it.Action[rest] || r.Steer == "" {
+			if r := route(env, nil); r.Reason != "registry-nonproceed" || r.Steer != it.Action[rest] || r.Steer == "" {
 				t.Errorf("%s: non-proceed %q = %+v, want registry-nonproceed steering %q", id, rest, r, it.Action[rest])
 			} else {
 				refused++
@@ -125,7 +125,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 		}
 
 		setAnswer(proceed, 0.30)
-		r := route(env, nil, nil)
+		r := route(env, nil)
 		// Below the cut the item still steers with its own action for the label
 		// it returned, which is precise; a generic "scored below 0.8" is not.
 		if r.Reason != "so-low-conf" || r.Label != proceed || r.Steer != it.Action[proceed] || r.Steer == "" {
@@ -139,7 +139,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 			// already says stop, so weak evidence must not reopen the action.
 			// It still steers with that label's own action, not generic text.
 			setAnswer(rest, 0.30)
-			if r := route(env, nil, nil); r.Reason != "registry-nonproceed" || r.Label != rest || r.Steer != it.Action[rest] || r.Steer == "" {
+			if r := route(env, nil); r.Reason != "registry-nonproceed" || r.Label != rest || r.Steer != it.Action[rest] || r.Steer == "" {
 				t.Errorf("%s: low-confidence %q = %+v, want registry-nonproceed carrying %q", id, rest, r, it.Action[rest])
 			} else {
 				lowNo++
@@ -147,7 +147,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 		}
 
 		setAnswer("outside-the-set", 0.95)
-		if r := route(env, nil, nil); r.Reason != "so-degraded" || r.Steer == "" {
+		if r := route(env, nil); r.Reason != "so-degraded" || r.Steer == "" {
 			t.Errorf("%s: out-of-set label = %+v, want so-degraded with a steer", id, r)
 		}
 	}
@@ -239,7 +239,7 @@ func TestEveryDecisionPointLive(t *testing.T) {
 			local++
 			continue
 		}
-		r := route(envelope(id, true), nil, nil)
+		r := route(envelope(id, true), nil)
 		labels[r.Label+"|"+r.Reason]++
 		switch r.Reason {
 		case "so-admit":

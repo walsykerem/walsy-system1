@@ -120,26 +120,25 @@ func buildStateWithCapability(request string, cap capabilityConfig) string {
 	}
 	obj["opt_in"] = true
 	// Make the state gate-shaped so SO is reachable; never invent content.
+	// A bare static word (ping, status, ...) is left untouched so Layer 0
+	// answers it for free instead of paying for a model call.
 	s, _ := obj["state"].(string)
-	if !isLabelShaped(s) {
+	if !isLabelShaped(s) && !staticShortCircuit(s) {
 		obj["state"] = "decide: " + s
 	}
 	b, _ := json.Marshal(obj)
 	return buildState(string(b))
 }
 
+// cacheResult projects a route result into the cell the bridge stores. Only a
+// terminal admit (pin) is ever cached, so the cell is always a yes.
 func cacheResult(r routeResult) cachedDecision {
-	if r.Decision == decPin {
-		return cachedDecision{Choice: "yes", ConfBucket: r.ConfBucket, Reason: "margin=1"}
-	}
-	return cachedDecision{Choice: abstainLabel, ConfBucket: r.ConfBucket, Reason: r.Reason}
+	return cachedDecision{Choice: "yes", ConfBucket: r.ConfBucket, Reason: "margin=1"}
 }
 
+// cachedResult is the cache-hit decision: the only cached cell is an admit.
 func cachedResult(c cachedDecision) routeResult {
-	if c.Choice == "yes" {
-		return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: c.ConfBucket}
-	}
-	return passResult("cache-"+c.Reason, false)
+	return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: c.ConfBucket}
 }
 
 // decide runs buildState + route per request, keyed by request+capability.
@@ -162,7 +161,7 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 	if cached, hit := d.cache.lookup(key); hit {
 		return cachedResult(cached)
 	}
-	r := route(state, d.pin, nil)
+	r := route(state, d.pin)
 	// Only terminal decisions (pin/yes) are cached. Transient and degraded
 	// outcomes are abstains; caching one would fail open forever for this state.
 	if r.Decision == decPin {
