@@ -24,7 +24,7 @@ var (
 func main() {
 	flag.Parse()
 	if *flagPrintConfig {
-		fmt.Println(opencodeMCPSnippet("system1", flag.Args()))
+		fmt.Println(opencodeMCPSnippet("system1", *flagTransport, flag.Args()))
 		return
 	}
 	if *flagDashboard {

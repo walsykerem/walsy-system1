@@ -26,7 +26,7 @@ func parseBootstrapSnippet(t *testing.T, raw string) bootstrapSnippet {
 }
 
 func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
-	raw := opencodeMCPSnippet("system1", []string{"--flag", "value"})
+	raw := opencodeMCPSnippet("system1", "stdio", []string{"--flag", "value"})
 	if strings.Contains(strings.ToLower(raw), "environment") ||
 		strings.Contains(strings.ToLower(raw), "token") ||
 		strings.Contains(raw, "sk-") || strings.Contains(raw, testSecret) {
@@ -54,19 +54,27 @@ func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
 		}
 	}
 
-	raw = opencodeMCPSnippet("", nil)
+	// stdio cannot run without an upstream command, so the snippet must point
+	// at the self-contained tools server instead of a dead invocation.
+	raw = opencodeMCPSnippet("", "", nil)
 	got = parseBootstrapSnippet(t, raw)
 	srv, ok = got.MCP.Servers["system1"]
 	if !ok {
 		t.Fatalf("empty name must default to system1: %s", raw)
 	}
-	if len(srv.Command) != 3 || srv.Command[1] != "-transport" || srv.Command[2] != "stdio" {
-		t.Fatalf("empty-upstream command = %v", srv.Command)
+	if len(srv.Command) != 3 || srv.Command[1] != "-transport" || srv.Command[2] != "tools" {
+		t.Fatalf("empty-upstream command = %v, want -transport tools", srv.Command)
+	}
+
+	raw = opencodeMCPSnippet("system1", "tools", nil)
+	got = parseBootstrapSnippet(t, raw)
+	if cmd := got.MCP.Servers["system1"].Command; len(cmd) != 3 || cmd[2] != "tools" {
+		t.Fatalf("tools transport not honored: %v", cmd)
 	}
 }
 
 func TestBootstrapSnippetRoundTripJSON(t *testing.T) {
-	raw := opencodeMCPSnippet("upstream", []string{"npx", "-y", "@example/mcp"})
+	raw := opencodeMCPSnippet("upstream", "stdio", []string{"npx", "-y", "@example/mcp"})
 	got := parseBootstrapSnippet(t, raw)
 	cmd := got.MCP.Servers["upstream"].Command
 	if len(cmd) != 6 || cmd[len(cmd)-3] != "npx" || cmd[len(cmd)-2] != "-y" || cmd[len(cmd)-1] != "@example/mcp" {
