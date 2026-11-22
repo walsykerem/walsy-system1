@@ -20,6 +20,8 @@ var (
 	guardReturn = regexp.MustCompile(`return "(unread-write|repeat|guard)"`)
 	// d.Choice comparisons give the so-<choice> family its labels.
 	choiceCompare = regexp.MustCompile(`d\.Choice == "([a-z]+)"`)
+	// diffSteer's cases are the diff-* reason codes written by the write gate.
+	diffSteerCode = regexp.MustCompile(`case "(diff-[a-z-]+)"`)
 )
 
 // derivedReasons reads the emitted reason vocabulary out of the source, so a
@@ -46,7 +48,9 @@ func derivedReasons(t *testing.T) []string {
 	scan("decision_bridge.go", passResultLiteral)
 	scan("guard.go", classifyReturn)
 	scan("write_guard.go", guardReturn)
+	scan("diff_guard.go", diffSteerCode)
 	scan("cache.go", reasonField)
+	// diff codes never pass through the cache's passResult("cache-"+...).
 
 	route := read("route.go")
 	bridge := read("decision_bridge.go")
@@ -58,10 +62,20 @@ func derivedReasons(t *testing.T) []string {
 			}
 		}
 	}
-	// cache-<reason>: cached refusals reuse the original code.
+	// cache-<reason>: cached refusals reuse the original code. diff-* refusals
+	// return before the cache, so they never take this path.
 	if strings.Contains(route, `"cache-"+`) || strings.Contains(bridge, `"cache-"+`) {
 		for r := range found {
-			found["cache-"+r] = true
+			if !strings.HasPrefix(r, "diff-") {
+				found["cache-"+r] = true
+			}
+		}
+	}
+	// The three write-gate codes must all be present; an empty regex would
+	// otherwise pass the generic steering check vacuously.
+	for _, code := range []string{"diff-secret", "diff-wipe", "diff-destructive"} {
+		if !found[code] {
+			t.Errorf("reason %q missing from source scan", code)
 		}
 	}
 	out := make([]string, 0, len(found))
@@ -78,6 +92,9 @@ func TestSteerTextCoversReasons(t *testing.T) {
 	}
 	for _, reason := range reasons {
 		got := SteerText(reason, "")
+		if strings.HasPrefix(reason, "diff-") {
+			got = diffSteer(reason, "test")
+		}
 		if got == "" {
 			t.Errorf("reason %q has no steer text", reason)
 			continue

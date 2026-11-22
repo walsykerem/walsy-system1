@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -96,5 +98,70 @@ func TestBudgetGateTable(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A4: a degraded/transient outcome must not be cached. Two identical calls
+// must both reach SO rather than serve a stale abstain forever.
+func TestTransientNotCached(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	orig := soEndpoint
+	soEndpoint = srv.URL
+	defer func() { soEndpoint = orig }()
+	t.Setenv("EVREN_API_KEY", "test-key")
+
+	d := newDecisionBridge()
+	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	r1 := d.decide(req)
+	r2 := d.decide(req)
+	if r1.Decision != decPass || r2.Decision != decPass {
+		t.Fatalf("degraded outcomes must fail open: %+v / %+v", r1, r2)
+	}
+	if calls != 2 {
+		t.Fatalf("degraded result was cached: SO called %d times, want 2", calls)
+	}
+	if _, hit := d.cache.lookup(gateKey(req, soCapability())); hit {
+		t.Fatal("transient/degraded outcome must not be stored in cache")
+	}
+}
+
+// B1: volatile envelope/identifier fields must not fragment the gate cache,
+// while a semantic change must.
+func TestGateKeyCanonicalizesVolatileFields(t *testing.T) {
+	cap := soCapability()
+	base := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":1,"messageRef":"m1","sessionId":"s1"}}`)
+	variant := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":999,"messageRef":"m999","sessionId":"s999"},"id":88,"jsonrpc":"2.0","method":"tools/call"}`)
+	if a, b := gateKey(base, cap), gateKey(variant, cap); a != b {
+		t.Fatalf("volatile fields changed gateKey: %s != %s", a, b)
+	}
+	semantic := []byte(`{"name":"write_file","arguments":{"path":"/tmp/a","timestamp":1,"messageRef":"m1","sessionId":"s1"}}`)
+	if a, b := gateKey(base, cap), gateKey(semantic, cap); a == b {
+		t.Fatalf("semantic change did not change gateKey: %s", a)
+	}
+}
+
+// A8: the raw-args secret scan must run even when the call carries a file body,
+// so metadata.api_key alongside content cannot escape the diff-only path.
+func TestArgsSecretCheckedWithBody(t *testing.T) {
+	resetRouterForTest(t)
+	d := newDecisionBridge()
+	// AKIA literal is a shape pattern that argsSecretCheck sees inside raw JSON
+	// (a quoted api_key assignment would not match the assignment regex).
+	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"content":"hello world","metadata":{"api_key":"AKIAIOSFODNN7EXAMPLE"}}}}`)
+	resp, blocked := d.enforcingGate(req)
+	if !blocked {
+		t.Fatal("write call with content + metadata api_key must be blocked")
+	}
+	var reply gateReply
+	if err := json.Unmarshal(resp, &reply); err != nil {
+		t.Fatalf("refusal not JSON: %v %q", err, resp)
+	}
+	if reply.Error.Code != -32001 || !strings.Contains(reply.Error.Message, "secret") {
+		t.Fatalf("want diff-secret refusal, got code=%d msg=%q", reply.Error.Code, reply.Error.Message)
 	}
 }

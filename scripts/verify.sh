@@ -15,7 +15,8 @@ echo "== 2/8 go vet =="
 CGO_ENABLED=0 go vet ./...
 
 echo "== 3/8 go test -race =="
-go test -race -count=1 ./...
+# The race detector needs cgo; do not inherit an ambient CGO_ENABLED=0.
+CGO_ENABLED=1 go test -race -count=1 ./...
 
 echo "== 4/8 go build =="
 CGO_ENABLED=0 go build -o walsy-system1 .

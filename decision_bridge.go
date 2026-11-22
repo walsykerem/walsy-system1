@@ -15,10 +15,12 @@ import (
 )
 
 // Decision wiring: the stdio/unix relays call the real engine on the JSON-RPC
-// stream. Advisory mode is forward-first and never delays a frame; enforcing
-// mode gates initialize/tools/call before forwarding and blocks only on a
-// high-confidence SO deny. Every SO absence/error/degradation fails open.
-// Never log raw payload, secret, conf, token or cost.
+// stream. Advisory mode is forward-first and never delays a frame. Enforcing
+// mode gates initialize/tools/call before forwarding: write/diff guards and a
+// spent session budget block, and an enforcing-mode steer on a non-admitted
+// decision blocks too. Every SO absence/error/degradation fails open; only a
+// terminal admit is cached, so a transient failure is retried rather than
+// poisoning the cache. Never log raw payload, secret, conf, token or cost.
 
 type decisionBridge struct {
 	mu     sync.Mutex
@@ -39,14 +41,30 @@ func newDecisionBridge() *decisionBridge {
 		guard: newWriteGuard()}
 }
 
-// gateKey binds a decision to request bytes and capability config. Budget is
-// deliberately absent: spending the budget must block the call, not mint a new
-// cache cell for the same request.
+// gateKey binds a decision to a request's canonical form and capability config.
+// Volatile envelope identifiers are stripped before canonicalState so a fresh
+// id/timestamp/messageRef/sessionId cannot fragment the cache; canonicalState
+// also strips its own volatile keys recursively. Budget is deliberately absent:
+// spending the budget must block the call, not mint a new cache cell.
 func gateKey(request []byte, cap capabilityConfig) string {
+	var obj map[string]any
+	dec := json.NewDecoder(bytes.NewReader(request))
+	dec.UseNumber()
+	if dec.Decode(&obj) != nil {
+		obj = nil
+	}
+	if obj != nil {
+		// Outer envelope keys never affect a decision; canonicalState strips
+		// timestamp/messageRef/sessionId recursively but not these three.
+		for _, k := range []string{"id", "jsonrpc", "method"} {
+			delete(obj, k)
+		}
+	}
+	b, _ := json.Marshal(obj)
 	h := sha256.New()
-	_, _ = h.Write(request)
-	b, _ := json.Marshal(cap)
-	_, _ = h.Write(b)
+	_, _ = h.Write([]byte(canonicalState(string(b))))
+	c, _ := json.Marshal(cap)
+	_, _ = h.Write(c)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -145,7 +163,11 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 		return cachedResult(cached)
 	}
 	r := route(state, d.pin, nil)
-	d.cache.store(key, cacheResult(r))
+	// Only terminal decisions (pin/yes) are cached. Transient and degraded
+	// outcomes are abstains; caching one would fail open forever for this state.
+	if r.Decision == decPin {
+		d.cache.store(key, cacheResult(r))
+	}
 	return r
 }
 
@@ -191,8 +213,8 @@ func rpcError(id json.RawMessage, code int, msg string) []byte {
 	return append(b, '\n')
 }
 
-// enforcingGate inspects before forwarding. A high-confidence SO deny or a
-// spent session budget blocks; a missing router policy still fails open.
+// enforcingGate inspects before forwarding. Write/diff guards and a spent
+// session budget block; a missing router policy still fails open.
 func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 	f, err := decodeFrame(request)
 	if err != nil || (f.Method != "initialize" && f.Method != "tools/call") {
@@ -208,18 +230,20 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 			routerAudit("writeguard", "tool", tool, "reason", reason)
 			return rpcError(f.ID, -32001, "blocked: "+reason), true
 		}
-		if body, ok := writeContent(toolArgs(f.Params)); ok {
-			p := argumentPath(toolArgs(f.Params))
+		args := toolArgs(f.Params)
+		// The raw-args secret scan always runs, so metadata alongside a file body
+		// (e.g. api_key next to content) cannot escape the diff-only path.
+		if v := argsSecretCheck(args); v.Refuse {
+			routerAudit("diffguard", "tool", tool, "reason", v.Code)
+			return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
+		}
+		if body, ok := writeContent(args); ok {
+			p := argumentPath(args)
 			// Security precheck over the text this call would add, before it lands.
 			if v := diffSecurityCheck(p, oldContentOnDisk(p), body); v.Refuse {
 				routerAudit("diffguard", "tool", tool, "reason", v.Code)
 				return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
 			}
-		} else if v := argsSecretCheck(toolArgs(f.Params)); v.Refuse {
-			// No file body to diff: a shell redirect or an unknown schema still
-			// cannot carry a credential shape through this hop.
-			routerAudit("diffguard", "tool", tool, "reason", v.Code)
-			return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
 		}
 		if _, max, spent := routerBudgetSpend(); !spent {
 			routerAudit("budget", "tool", tool, "budget", "exhausted",
@@ -232,9 +256,6 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 		"allow", strconv.FormatBool(allowed))
 	r := d.decide(unwrapParams(request, f))
 	routerAudit("decision", "method", f.Method, "decision", r.Decision, "reason", r.Reason)
-	if r.Decision == decDeny {
-		return rpcError(f.ID, -32000, withSteer("blocked by decision gate", r.Steer)), true
-	}
 	// Enforcing only, and only when the decision is not an admit: an admitted
 	// item's Steer is its own "continue" action, not a refusal to relay.
 	if soMode() == "enforcing" && steerBlocks(r) {

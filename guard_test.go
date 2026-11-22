@@ -43,23 +43,6 @@ func TestClassifyTruthTable(t *testing.T) {
 	}
 }
 
-func TestIsDegraded(t *testing.T) {
-	for _, c := range []struct {
-		last string
-		want bool
-	}{
-		{"transient", true},
-		{"permanent", true},
-		{"ok", false},
-		{"unknown", false},
-		{"", false},
-	} {
-		if got := isDegraded(c.last); got != c.want {
-			t.Fatalf("isDegraded(%q)=%v want %v", c.last, got, c.want)
-		}
-	}
-}
-
 // A 503 is a reason-code, never an HTTP response the caller can emit.
 func TestClassify503NeverReturnsStatus(t *testing.T) {
 	got := classify(http.StatusServiceUnavailable, nil)

@@ -38,9 +38,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 
 	index := loadDecisionItems()
-	if len(index) != 56 {
-		t.Fatalf("registry has %d items, want exactly 56", len(index))
-	}
+	assertRegistryCount56(t, index)
 	ids := make([]string, 0, len(index))
 	for id := range index {
 		ids = append(ids, id)
@@ -232,9 +230,7 @@ func TestEveryDecisionPointLive(t *testing.T) {
 	soEndpoint, soClient = soEndpointDefault(), &http.Client{Timeout: 25 * time.Second}
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 	index := loadDecisionItems()
-	if len(index) != 56 {
-		t.Fatalf("registry has %d items, want exactly 56", len(index))
-	}
+	assertRegistryCount56(t, index)
 	var admitted, refused, low, degraded, local int
 	labels := map[string]int{}
 	for _, id := range sorted(itemIDs(index)) {

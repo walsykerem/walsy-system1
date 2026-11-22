@@ -84,7 +84,7 @@ func runStdio(args []string) {
 	}
 }
 
-// prefixWriter tags each upstream stderr line so it cannot be mistaken for a
+// prefixWriter tags each upstream stderr Write so it cannot be mistaken for a
 // session metric line (which is always one JSON object starting with '{').
 type prefixWriter struct {
 	w      interface{ Write([]byte) (int, error) }

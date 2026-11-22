@@ -45,7 +45,7 @@ func TestCacheCanonicalDeterminism(t *testing.T) {
 func TestCacheNegativeVerdictIsAbstain(t *testing.T) {
 	for _, choice := range []string{"no", "other"} {
 		c := newDecisionCache()
-		c.admit("k-"+choice, cachedDecision{Choice: choice, ConfBucket: "0.9", Reason: "margin=0.5"})
+		c.admit("k-"+choice, cachedDecision{Choice: choice, ConfBucket: "0.9"})
 		d, ok := c.lookup("k-" + choice)
 		if !ok {
 			t.Fatalf("%s: expected negative cell cached", choice)
@@ -56,52 +56,20 @@ func TestCacheNegativeVerdictIsAbstain(t *testing.T) {
 	}
 }
 
-func TestCacheAdmissionMargin(t *testing.T) {
-	// conf<0.8: never served as a positive label.
+func TestCacheAdmissionBucket(t *testing.T) {
+	// conf<0.8 (invalid bucket): never served as a positive label.
 	c0 := newDecisionCache()
-	c0.admit("low", cachedDecision{Choice: "yes", ConfBucket: "", Reason: "margin=0.9"})
+	c0.admit("low", cachedDecision{Choice: "yes", ConfBucket: ""})
 	d0, ok := c0.lookup("low")
-	if ok && d0.Choice == "yes" {
-		t.Fatal("conf<0.8 admitted as label")
+	if !ok || d0.Choice != abstainLabel {
+		t.Fatalf("invalid bucket not stored as abstain: %+v ok=%v", d0, ok)
 	}
 
-	// 0.85 + sufficient margin -> admitted.
+	// valid bucket -> admitted.
 	c1 := newDecisionCache()
-	c1.admit("good", cachedDecision{Choice: "yes", ConfBucket: "0.8", Reason: "margin=0.20"})
+	c1.admit("good", cachedDecision{Choice: "yes", ConfBucket: "0.8"})
 	if d, ok := c1.lookup("good"); !ok || d.Choice != "yes" {
 		t.Fatalf("valid decision not admitted: %+v ok=%v", d, ok)
-	}
-
-	// low margin -> not admitted.
-	c2 := newDecisionCache()
-	c2.admit("narrow", cachedDecision{Choice: "yes", ConfBucket: "0.9", Reason: "margin=0.02"})
-	if _, ok := c2.lookup("narrow"); ok {
-		t.Fatal("low-margin decision admitted")
-	}
-}
-
-func TestCacheCanarySelfHeal(t *testing.T) {
-	c := newDecisionCache()
-	c.admit("canary", cachedDecision{Choice: "wrong", ConfBucket: "0.9", Reason: "margin=0.5"})
-	before := c.stats().WrongReuse
-
-	if !shouldCanaryReplay(canaryEvery) || shouldCanaryReplay(1) {
-		t.Fatal("canary cadence wrong")
-	}
-	if c.canaryReplay("canary", "yes") {
-		t.Fatal("mismatched canary replay passed")
-	}
-	if _, ok := c.lookup("canary"); ok {
-		t.Fatal("mismatched canary cell not flushed")
-	}
-	after := c.stats().WrongReuse
-	if after != before+1 || c.canaryFlushes() == 0 {
-		t.Fatalf("wrong_reuse counter not incremented: %d -> %d, flushes=%d", before, after, c.canaryFlushes())
-	}
-
-	c.admit("canary", cachedDecision{Choice: "yes", ConfBucket: "0.9", Reason: "margin=0.5"})
-	if !c.canaryReplay("canary", "yes") || c.stats().ReusePrecision == 0 {
-		t.Fatal("matching canary replay failed")
 	}
 }
 
@@ -245,23 +213,21 @@ func TestCacheLRUEviction(t *testing.T) {
 
 func TestCacheTwoSeparateCounters(t *testing.T) {
 	c := newDecisionCache()
-	c.admit("k", cachedDecision{Choice: "yes", ConfBucket: "0.9", Reason: "margin=0.5"})
+	c.admit("k", cachedDecision{Choice: "yes", ConfBucket: "0.9"})
 	c.lookup("k")
-	c.canaryFlushes()
-	c.canaryReplay("k", "no")
 	c.recordProviderPrefix(512, 2048)
 
 	router := c.stats()
 	kv := c.providerStats()
-	if router.ReusePrecision != 0 || router.WrongReuse != 1 || router.Hits != 1 {
+	if router.Hits != 1 {
 		t.Fatalf("router ledger wrong: %+v", router)
 	}
 	if kv.MatchPrefix != 1 || kv.PrefixLen != 512 || kv.PromptLen != 2048 {
 		t.Fatalf("provider KV ledger wrong: %+v", kv)
 	}
 	// Type-level separation: router stats have no prefix fields, provider stats
-	// have no reuse fields (compile-time guarantee).
-	_ = cacheStats{ReusePrecision: 0, WrongReuse: 0}
+	// have no hit fields (compile-time guarantee).
+	_ = cacheStats{}
 	_ = providerKVStats{MatchPrefix: 0}
 	_ = fmt.Sprintf("%T %T", router, kv)
 }
@@ -273,7 +239,7 @@ func TestDecisionCacheConcurrent(t *testing.T) {
 	const goroutines, iters = 8, 200
 	var wg sync.WaitGroup
 	var overflow atomic.Bool
-	d := cachedDecision{Choice: "yes", ConfBucket: "0.9", Reason: "margin=1"}
+	d := cachedDecision{Choice: "yes", ConfBucket: "0.9"}
 
 	check := func() {
 		c.mu.Lock()

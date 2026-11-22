@@ -10,15 +10,21 @@ import (
 	"testing"
 )
 
+// assertRegistryCount56 pins the exact registry size (shared by the decision
+// and sweep tests). Exact, not a floor: a dropped requirement is a data bug,
+// and a new one should be a deliberate change to this count.
+func assertRegistryCount56(t *testing.T, items map[string]decisionItem) {
+	t.Helper()
+	if len(items) != 56 {
+		t.Fatalf("registry has %d items, want exactly 56", len(items))
+	}
+}
+
 // The registry is data, so the checks are: it loads, the proceed list is the
 // admission rule, and a gate=false item cannot reach a model call.
 func TestDecisionRegistry(t *testing.T) {
 	items := loadDecisionItems()
-	// Exact, not a floor: a dropped requirement is a data bug, and a new one
-	// should be a deliberate change to this count.
-	if len(items) != 56 {
-		t.Fatalf("registry has %d items, want exactly 56", len(items))
-	}
+	assertRegistryCount56(t, items)
 	destructive, ok := decisionItemFor("intake.destructive")
 	if !ok || !destructive.Irreversible {
 		t.Fatalf("intake.destructive missing or not irreversible: %+v", destructive)

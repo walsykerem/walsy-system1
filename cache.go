@@ -15,8 +15,6 @@ import (
 
 const (
 	abstainLabel  = "abstain"
-	admitMargin   = 0.10 // clef is overconfident (0.97-1.0): require an argmax gap
-	canaryEvery   = 8    // 1/N replay of known-label cells
 	cacheCapacity = 1024
 )
 
@@ -156,8 +154,9 @@ func foldAlias(s string) string {
 	return b.String()
 }
 
-// canonicalState returns a deterministic string; the caller hashes it together
-// with rubricVersion/model/conf-rule/registryVersion. No map[string]any marshal.
+// canonicalState returns a deterministic string. Callers hash it into a key;
+// gateKey in decision_bridge.go additionally hashes request bytes and the
+// capability config. No map[string]any marshal.
 func canonicalState(s string) string {
 	var v any
 	dec := json.NewDecoder(strings.NewReader(s))
@@ -175,7 +174,7 @@ func canonicalState(s string) string {
 // --- decision cache -------------------------------------------------------
 
 // cachedDecision stores only the typed decision + coarse bucket. Raw conf is
-// never held. Reason may carry "margin=<float>" for admission.
+// never held.
 type cachedDecision struct {
 	Choice     string
 	ConfBucket string
@@ -189,10 +188,8 @@ type cacheCell struct {
 
 // cacheStats is the ROUTER decision-cache ledger only.
 type cacheStats struct {
-	Hits           int
-	Misses         int
-	ReusePrecision int
-	WrongReuse     int
+	Hits   int
+	Misses int
 }
 
 // providerKVStats is the PROVIDER prefix-cache ledger. Deliberately a separate
@@ -204,13 +201,12 @@ type providerKVStats struct {
 }
 
 type decisionCache struct {
-	mu      sync.Mutex
-	cap     int
-	ll      *list.List
-	idx     map[string]*list.Element
-	router  cacheStats
-	kv      providerKVStats
-	flushes int
+	mu     sync.Mutex
+	cap    int
+	ll     *list.List
+	idx    map[string]*list.Element
+	router cacheStats
+	kv     providerKVStats
 }
 
 func newDecisionCache() *decisionCache {
@@ -258,17 +254,8 @@ func validBucket(b string) bool {
 	return b == "0.8" || b == "0.9" || b == "1.0"
 }
 
-func reasonMargin(reason string) (float64, bool) {
-	const p = "margin="
-	if !strings.HasPrefix(reason, p) {
-		return 0, false
-	}
-	m, err := strconv.ParseFloat(strings.TrimPrefix(reason, p), 64)
-	return m, err == nil
-}
-
-// admit: negative verdicts are always cached as abstain (skip repeat SO calls);
-// positive labels need a valid bucket AND a margin >= admitMargin.
+// admit: negative verdicts and invalid buckets are cached as abstain (skip
+// repeat SO calls); positives with a valid bucket are admitted.
 func (c *decisionCache) admit(key string, d cachedDecision) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -277,47 +264,7 @@ func (c *decisionCache) admit(key string, d cachedDecision) {
 		c.storeLocked(key, cachedDecision{Choice: abstainLabel, ConfBucket: d.ConfBucket, Reason: "negative-verdict"})
 		return
 	}
-	m, ok := reasonMargin(d.Reason)
-	if !ok {
-		m = 1 // caller supplied no margin signal -> full separation assumed
-	}
-	if m < admitMargin {
-		return
-	}
 	c.storeLocked(key, d)
-}
-
-// flushLocked drops a cell; the caller must hold c.mu.
-func (c *decisionCache) flushLocked(key string) {
-	if el, ok := c.idx[key]; ok {
-		delete(c.idx, key)
-		c.ll.Remove(el)
-	}
-}
-
-func shouldCanaryReplay(n int) bool { return n > 0 && n%canaryEvery == 0 }
-
-// canaryReplay: 1/N probe of a known-label cell. Mismatch -> cell flush + counters.
-func (c *decisionCache) canaryReplay(key, want string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	d, ok := c.idx[key]
-	if !ok || d.Value.(*cacheCell).dec.Choice != want {
-		if ok {
-			c.flushLocked(key)
-		}
-		c.router.WrongReuse++
-		c.flushes++
-		return false
-	}
-	c.router.ReusePrecision++
-	return true
-}
-
-func (c *decisionCache) canaryFlushes() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.flushes
 }
 
 func (c *decisionCache) stats() cacheStats {

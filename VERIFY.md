@@ -28,6 +28,7 @@ Parent: run `bash scripts/verify.sh` after all parallel agents finish. Do not ru
 - UI check: `GET /` 200, BUILD TARGET panel with 6 platforms + NATIVE, no `#so-config` panel, no `/ui/so` form, no key values; `GET /style.css` `--bg: #E5E5E5`, no `<script>`/CDN/font/node_modules refs. SO capabilities are on by default (`soCapability()`), advisory/fail-open mode unchanged. browse MCP paired-offline; verified by `TestJSParityNoSOConfigPanel`. Auto-on reached by `TestSOAutoOnForPlainClientFrame` (plain `initialize` frame triggers SO with built-in cap fields).
 - client config snippet: `-print-client-config` merges into a temp `opencode.json` copy, valid JSON, `type=local`, `command[1:3]=[-transport stdio]`, binary path exists
 - enforcing end-to-end: covered by passing `TestEnforcingDenyBlocksToolCall`, `TestEnforcingOutageFailsOpen`, `TestPerRequestGating`
+- K16 live sweep (same command finalgate cites): `WALSY_LIVE=1 go test -run TestEveryDecisionPointLive -count=1 -v .` (needs a provider key)
 - live SO via Evren: `choice=yes` conf bucket `0.8`, key never printed
 - final gate verdict: `complete`, confidence `0.8166174393048045`, p(complete)=`0.8777449595365363` (headless render + live binary e2e closed the weak-verdict gaps)
 

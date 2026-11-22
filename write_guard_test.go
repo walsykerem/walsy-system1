@@ -90,6 +90,28 @@ func TestWriteGuardAuditsInAdvisoryMode(t *testing.T) {
 	}
 }
 
+// isWriteTool must match whole segments, not substrings: names that merely
+// contain a verb ("confirm_plan" holds "rm") are not writes (A7).
+func TestIsWriteTool(t *testing.T) {
+	for _, name := range []string{
+		"confirm_plan", "format_code", "perform_action", "transform",
+		"normalize", "dispatch", "readwrite", "warm_cache", "recreate", "rmdir_safe",
+	} {
+		if isWriteTool(name) {
+			t.Errorf("%q must not be a write tool", name)
+		}
+	}
+	for _, name := range []string{
+		"write_file", "edit_file", "create_file", "apply_patch", "delete_file",
+		"move", "rename", "mkdir", "write", "edit", "create", "patch", "append",
+		"delete", "remove", "move", "rename", "mkdir", "rm", "mv",
+	} {
+		if !isWriteTool(name) {
+			t.Errorf("%q must be a write tool", name)
+		}
+	}
+}
+
 // An emptying write must be judged, not skipped: {"content":""} is a wipe, and
 // treating it as "no content" let the destructive case through unscanned.
 func TestWriteContentAcceptsEmpty(t *testing.T) {

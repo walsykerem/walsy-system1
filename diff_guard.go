@@ -25,10 +25,12 @@ var diffSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),
 	regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})`),
 	regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), // JWT bearer token
+	regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{12,}`),                   // prefixed client secret / key
 }
 
 // diffSecretAssign matches a credential key assigned a quoted or bare literal.
-var diffSecretAssign = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*("([^"]*)"|'([^']*)'|([^\s,;#]{6,}))`)
+var diffSecretAssign = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|token|aws_secret_access_key|aws_access_key_id)\b\s*[:=]\s*("([^"]*)"|'([^']*)'|([^\s,;#]{6,}))`)
 
 // diffSecurityCheck is the write gate's security precheck: it scans only the
 // lines the write ADDS, so a file that already carries a secret does not block
@@ -114,11 +116,9 @@ func literalSecretKind(key, val string) string {
 			return ""
 		}
 	}
-	secretish := strings.IndexFunc(v, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0 ||
-		strings.ToLower(v) != v || len(v) >= 16
-	if !secretish {
-		return ""
-	}
+	// A literal credential value of 6+ chars is refused even when it is all
+	// lowercase with no digits (the 15-char lowercase case). Env refs and
+	// placeholders were already skipped above.
 	return key + " assigned a literal value"
 }
 

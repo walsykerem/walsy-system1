@@ -234,7 +234,7 @@ func askSOQWithThreshold(state string, q soQuestion, threshold float64) soDecisi
 		outcome = "unrouted"
 		return soDecision{}
 	}
-	if math.IsNaN(a.Confidence) || a.Confidence > 1 {
+	if math.IsNaN(a.Confidence) || a.Confidence < 0 || a.Confidence > 1 {
 		outcome = "unrouted"
 		return soDecision{}
 	}

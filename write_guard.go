@@ -161,10 +161,15 @@ func argumentPath(args json.RawMessage) string {
 }
 
 func isWriteTool(tool string) bool {
-	t := strings.ToLower(tool)
-	for _, v := range writeVerbs {
-		if strings.Contains(t, v) {
-			return true
+	// A verb must be a whole segment: "write_file" matches, "confirm_plan"
+	// (which merely contains "rm") does not.
+	for _, seg := range strings.FieldsFunc(strings.ToLower(tool), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}) {
+		for _, v := range writeVerbs {
+			if seg == v {
+				return true
+			}
 		}
 	}
 	return false

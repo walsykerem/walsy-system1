@@ -107,35 +107,3 @@ func failureNoise(l string) bool {
 	}
 	return l == "pass" || l == "fail"
 }
-
-// verifyGate tracks whether the last accepted patch has been re-run. The
-// caller marks a patch, records each run, and asks done() before claiming
-// completion: an unverified patch cannot be reported as done.
-type verifyGate struct {
-	patched bool
-}
-
-func newVerifyGate() *verifyGate { return &verifyGate{} }
-
-// patchApplied marks the tree as carrying an unverified patch.
-func (v *verifyGate) patchApplied() { v.patched = true }
-
-// recordRun classifies one build/test run and clears the patch on a pass. It
-// returns the bucket and signature so the same run can feed attemptGuard.
-func (v *verifyGate) recordRun(pass bool, output string) (bucket, signature string) {
-	bucket = classifyFailure(output)
-	signature = failureSignature(output)
-	if pass {
-		v.patched = false
-	}
-	return bucket, signature
-}
-
-// done reports whether a pass exists for the current patch. When it does not,
-// steer names the run that is still owed.
-func (v *verifyGate) done() (bool, string) {
-	if !v.patched {
-		return true, ""
-	}
-	return false, "re-verify: run the build and tests on the patched tree before claiming done; this patch has no passing run."
-}

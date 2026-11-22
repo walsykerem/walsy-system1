@@ -12,8 +12,6 @@ import (
 const (
 	decPass = "pass"
 	decPin  = "pin"
-	decDeny = "deny" // reserved for deterministic security/scope rejection
-	decAsk  = "ask"  // reserved for explicit human/ask handoff
 )
 
 // routeResult is the one routing output. Reason is a reason-code, never a

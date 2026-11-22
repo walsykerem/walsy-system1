@@ -29,11 +29,9 @@ type uiOption struct {
 }
 
 type uiPage struct {
-	Title   string
-	Message string
+	Title string
 	// Msg/MsgMs are the frontend toast contract: Msg is the flash text and
-	// MsgMs its lifetime in milliseconds. Message is kept as the legacy alias
-	// the current embedded template still reads.
+	// MsgMs its lifetime in milliseconds.
 	Msg         string
 	MsgMs       int
 	Name        string
@@ -116,7 +114,6 @@ var uiWriteMessages = map[string]bool{
 	"KEY ADDED":        true,
 	"KEY REMOVED":      true,
 	"KEYS CLEARED":     true,
-	"KEY SAVED":        true,
 	"MODEL ADDED":      true,
 	"MODEL REMOVED":    true,
 	"ENDPOINT SAVED":   true,
@@ -130,9 +127,6 @@ func uiWroteState(msg string) bool {
 }
 
 func renderPage(w http.ResponseWriter, page uiPage) {
-	if page.Msg == "" {
-		page.Msg = page.Message
-	}
 	if page.MsgMs == 0 {
 		page.MsgMs = defaultMsgMs
 	}
@@ -204,11 +198,10 @@ func uiSteps(steps []stateStep) []uiStep {
 
 func uiHomePage(msg string) uiPage {
 	goos, goarch := effectiveBuildTarget()
-	p := uiPage{Title: "Providers / Combo", Message: msg, Msg: msg, BuildTarget: goos + "/" + goarch}
+	p := uiPage{Title: "Providers / Combo", Msg: msg, BuildTarget: goos + "/" + goarch}
 	view, err := providerView()
 	if err != nil {
-		p.Message = msg + " STATE UNAVAILABLE"
-		p.Msg = p.Message
+		p.Msg = msg + " STATE UNAVAILABLE"
 		return p
 	}
 	p.Providers = view.Providers
@@ -217,8 +210,7 @@ func uiHomePage(msg string) uiPage {
 	}
 	steps, err := loadCombo()
 	if err != nil {
-		p.Message = msg + " STATE UNAVAILABLE"
-		p.Msg = p.Message
+		p.Msg = msg + " STATE UNAVAILABLE"
 		return p
 	}
 	p.Combo = uiSteps(steps)
@@ -271,7 +263,7 @@ func providerSheetPage(r *http.Request) (uiPage, bool) {
 	}
 	all, err := loadModels()
 	if err != nil {
-		return uiPage{Title: "Provider", Message: "STATE UNAVAILABLE", Msg: "STATE UNAVAILABLE", Name: name, SheetMode: true, MsgMs: uiMsgMs(r)}, true
+		return uiPage{Title: "Provider", Msg: "STATE UNAVAILABLE", Name: name, SheetMode: true, MsgMs: uiMsgMs(r)}, true
 	}
 	var provider dashboardProvider
 	for _, p := range view.Providers {
@@ -282,7 +274,6 @@ func providerSheetPage(r *http.Request) (uiPage, bool) {
 	}
 	return uiPage{
 		Title:       "Provider: " + name,
-		Message:     r.URL.Query().Get("msg"),
 		Msg:         r.URL.Query().Get("msg"),
 		MsgMs:       uiMsgMs(r),
 		Name:        name,
@@ -516,7 +507,7 @@ func comboAddOptions(r *http.Request) ([]uiOption, string, error) {
 func uiComboAddForm(w http.ResponseWriter, r *http.Request) {
 	options, search, err := comboAddOptions(r)
 	if err != nil {
-		renderPage(w, uiPage{Title: "Add Model", Message: "STATE UNAVAILABLE"})
+		renderPage(w, uiPage{Title: "Add Model", Msg: "STATE UNAVAILABLE"})
 		return
 	}
 	renderPage(w, uiPage{
@@ -531,7 +522,7 @@ func uiComboAddForm(w http.ResponseWriter, r *http.Request) {
 func uiComboAddSheet(w http.ResponseWriter, r *http.Request) {
 	options, search, err := comboAddOptions(r)
 	if err != nil {
-		renderPage(w, uiPage{Title: "Add Model", Message: "STATE UNAVAILABLE", Msg: "STATE UNAVAILABLE", ComboAddMode: true, MsgMs: uiMsgMs(r)})
+		renderPage(w, uiPage{Title: "Add Model", Msg: "STATE UNAVAILABLE", ComboAddMode: true, MsgMs: uiMsgMs(r)})
 		return
 	}
 	renderPage(w, uiPage{
@@ -642,7 +633,7 @@ func uiComboMove(w http.ResponseWriter, r *http.Request) {
 func uiComboSheet(w http.ResponseWriter, r *http.Request) {
 	steps, err := loadCombo()
 	if err != nil {
-		renderPage(w, uiPage{Title: "Combo Run", Message: "STATE UNAVAILABLE", Msg: "STATE UNAVAILABLE", ComboSheetMode: true})
+		renderPage(w, uiPage{Title: "Combo Run", Msg: "STATE UNAVAILABLE", ComboSheetMode: true})
 		return
 	}
 	renderPage(w, uiPage{
@@ -657,12 +648,12 @@ func uiComboSheet(w http.ResponseWriter, r *http.Request) {
 func uiComboRun(w http.ResponseWriter) {
 	view, err := providerView()
 	if err != nil {
-		renderPage(w, uiPage{Title: "Combo Run", Message: "STATE UNAVAILABLE", ComboResultMode: true})
+		renderPage(w, uiPage{Title: "Combo Run", Msg: "STATE UNAVAILABLE", ComboResultMode: true})
 		return
 	}
 	steps, err := loadCombo()
 	if err != nil {
-		renderPage(w, uiPage{Title: "Combo Run", Message: "STATE UNAVAILABLE", ComboResultMode: true})
+		renderPage(w, uiPage{Title: "Combo Run", Msg: "STATE UNAVAILABLE", ComboResultMode: true})
 		return
 	}
 	out := runComboSteps(view, steps)

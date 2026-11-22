@@ -54,24 +54,3 @@ func TestFailureSignatureFeedsAttemptGuard(t *testing.T) {
 		}
 	}
 }
-
-func TestVerifyGate(t *testing.T) {
-	v := newVerifyGate()
-	if ok, steer := v.done(); !ok || steer != "" {
-		t.Fatalf("fresh gate blocked done: %v %q", ok, steer)
-	}
-	v.patchApplied()
-	if ok, steer := v.done(); ok || !strings.HasPrefix(steer, "re-verify:") {
-		t.Fatalf("unverified patch not blocked: %v %q", ok, steer)
-	}
-	if bucket, sig := v.recordRun(false, "--- FAIL: TestZ (0.1s)"); bucket != failTest || sig == "" {
-		t.Fatalf("recordRun returned bucket=%q sig=%q", bucket, sig)
-	}
-	if ok, _ := v.done(); ok {
-		t.Fatal("failing run cleared the patch")
-	}
-	v.recordRun(true, "ok  \twalsy-system1\t0.3s")
-	if ok, steer := v.done(); !ok || steer != "" {
-		t.Fatalf("passing run did not clear the patch: %v %q", ok, steer)
-	}
-}

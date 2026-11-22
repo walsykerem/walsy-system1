@@ -73,6 +73,16 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 	}
 	srv2.Close()
 
+	// Out-of-range confidence (negative) -> empty decision, never admitted.
+	srvNeg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":-0.5}}}`))
+	}))
+	soEndpoint = srvNeg.URL
+	if d := askSO("x"); d.Choice != "" || d.Conf != 0 {
+		t.Fatalf("negative confidence must be rejected, got %+v", d)
+	}
+	srvNeg.Close()
+
 	// Timeout -> TimedOut set, still empty decision.
 	origTO := soTimeout
 	soTimeout = 20 * time.Millisecond

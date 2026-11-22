@@ -32,9 +32,3 @@ func classify(status int, exc error) string {
 		return "unknown"
 	}
 }
-
-// isDegraded is the single bool: any classified failure means passthrough,
-// no retry, no breaker.
-func isDegraded(last string) bool {
-	return last == "transient" || last == "permanent"
-}
