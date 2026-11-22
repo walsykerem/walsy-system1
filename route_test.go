@@ -346,4 +346,9 @@ func TestAdmitSteerDoesNotBlock(t *testing.T) {
 	if !steerBlocks(routeResult{Decision: decPass, Steer: "STOP and ask human"}) {
 		t.Fatal("a steered refusal must block in enforcing mode")
 	}
+	// Low confidence is explicitly fail-open advice, even when it carries a
+	// steer: AGENT_CONTRACT.md:30 requires the relay to keep forwarding.
+	if steerBlocks(routeResult{Decision: decPass, Reason: "so-low-conf", Steer: "name the missing fact"}) {
+		t.Fatal("low-confidence steer must not block in enforcing mode")
+	}
 }

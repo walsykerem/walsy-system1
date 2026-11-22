@@ -92,15 +92,6 @@ func (g *writeGuard) check(tool string, args json.RawMessage) (string, bool) {
 	if g.seen == nil {
 		g.paths, g.seen = map[string]struct{}{}, map[string]int{}
 	}
-	g.seen[key]++
-	repeats := g.seen[key]
-	if repeats > guardRepeatLimit {
-		// Reset so the next attempt is judged on its own, not locked out.
-		delete(g.seen, key)
-		return "repeated identical call " + strconv.Itoa(guardRepeatLimit) +
-			" times: change the arguments or say why it must repeat", true
-	}
-
 	path := argumentPath(args)
 	if path == "" {
 		return "", false
@@ -110,6 +101,14 @@ func (g *writeGuard) check(tool string, args json.RawMessage) (string, bool) {
 			g.paths[path] = struct{}{}
 		}
 		return "", false
+	}
+	// Only writes carry the runaway-repeat guard: repeating a read is normal.
+	g.seen[key]++
+	if g.seen[key] > guardRepeatLimit {
+		// Reset so the next attempt is judged on its own, not locked out.
+		delete(g.seen, key)
+		return "repeated identical call " + strconv.Itoa(guardRepeatLimit) +
+			" times: change the arguments or say why it must repeat", true
 	}
 	for seen := range g.paths {
 		if samePath(seen, path) {
@@ -161,9 +160,18 @@ func argumentPath(args json.RawMessage) string {
 }
 
 func isWriteTool(tool string) bool {
-	// A verb must be a whole segment: "write_file" matches, "confirm_plan"
-	// (which merely contains "rm") does not.
-	for _, seg := range strings.FieldsFunc(strings.ToLower(tool), func(r rune) bool {
+	// Split snake/kebab and camelCase before lowercasing: "write_file" and
+	// "writeFile" both match, "confirm_plan" (which holds "rm") does not.
+	var b strings.Builder
+	runes := []rune(tool)
+	for i, r := range runes {
+		if i > 0 && r >= 'A' && r <= 'Z' &&
+			((runes[i-1] >= 'a' && runes[i-1] <= 'z') || (runes[i-1] >= '0' && runes[i-1] <= '9')) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(r)
+	}
+	for _, seg := range strings.FieldsFunc(strings.ToLower(b.String()), func(r rune) bool {
 		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
 	}) {
 		for _, v := range writeVerbs {

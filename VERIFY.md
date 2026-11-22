@@ -14,16 +14,18 @@ Parent: run `bash scripts/verify.sh` after all parallel agents finish. Do not ru
 
 ## Exact commands `scripts/verify.sh` runs, in order
 
-1. `gofmt -l *.go` — must output nothing (file list printed on failure)
-2. `CGO_ENABLED=0 go test -count=1 ./...`
-3. `CGO_ENABLED=0 go build -o walsy-system1 .`
-4. `/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon --json ./walsy-system1 > /private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy_verify_lrecon.json` — print digest + kind only
-5. `python3` stdlib non-ASCII scan over `*.go` and `web/*` (README excluded) — exit 1 on hit
-6. `echo PASS` — only if all above succeeded
+1. `gofmt -l *.go scripts/*/*.go` — must output nothing
+2. `CGO_ENABLED=0 go vet ./...`
+3. `CGO_ENABLED=1 go test -race -count=1 ./...` — race detector needs cgo
+4. `CGO_ENABLED=0 go build -o walsy-system1 .`
+5. `lrecon --json ./walsy-system1` — print digest + kind only
+6. `python3` stdlib non-ASCII scan over `*.go` and `web/*` (README excluded)
+7. `CGO_ENABLED=0 go vet ./scripts/...`
+8. `echo PASS` — only if all above succeeded
 
 ## Records to fill after the full run
 
-- lrecon digest (post-build, full `bash scripts/verify.sh` PASS): kind `macho`, digest `3568a33005c91a781f1575ec379942c0ff72369eb9a528f481164b5865d24d6d`
+- lrecon digest: historical `3568a33005c91a781f1575ec379942c0ff72369eb9a528f481164b5865d24d6d` (fix1), `30cb4b0cbff699d4803c12d67b0e5a550958ee7b01df5588c936cf35f4dff4dd` (fix2); current (post-fix3) `edad166da066b1881efd2489a80c5c5f8e5171c0df3efad7c9b36da10f3cdc4a`
 - agent-lsp approval: `start_lsp OK`, `blast_radius` on 19 changed Go files, `get_diagnostics` 19 files, 0 severity-1 errors
 - UI check: `GET /` 200, BUILD TARGET panel with 6 platforms + NATIVE, no `#so-config` panel, no `/ui/so` form, no key values; `GET /style.css` `--bg: #E5E5E5`, no `<script>`/CDN/font/node_modules refs. SO capabilities are on by default (`soCapability()`), advisory/fail-open mode unchanged. browse MCP paired-offline; verified by `TestJSParityNoSOConfigPanel`. Auto-on reached by `TestSOAutoOnForPlainClientFrame` (plain `initialize` frame triggers SO with built-in cap fields).
 - client config snippet: `-print-client-config` merges into a temp `opencode.json` copy, valid JSON, `type=local`, `command[1:3]=[-transport stdio]`, binary path exists

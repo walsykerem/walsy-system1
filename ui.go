@@ -205,9 +205,6 @@ func uiHomePage(msg string) uiPage {
 		return p
 	}
 	p.Providers = view.Providers
-	for i := range p.Providers {
-		p.Providers[i].Message = msg
-	}
 	steps, err := loadCombo()
 	if err != nil {
 		p.Msg = msg + " STATE UNAVAILABLE"

@@ -101,6 +101,41 @@ func TestBudgetGateTable(t *testing.T) {
 	}
 }
 
+func TestRouterDenyEnforcingBlocksAdvisoryAudits(t *testing.T) {
+	// The deny list is deterministic policy: enforcing refuses it outright,
+	// advisory records it via routerRecord but still forwards.
+	for _, tc := range []struct {
+		mode    string
+		blocked bool
+	}{
+		{"enforcing", true},
+		{"advisory", false},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			resetRouterForTest(t)
+			t.Setenv("EVREN_API_KEY", "")
+			t.Setenv("WALSY_ROUTER_DENY", "read_file")
+			t.Setenv("WALSY_SO_MODE", tc.mode)
+			routerReset()
+			d := newDecisionBridge()
+			resp, blocked := d.enforcingGate(gateFrame("tools/call", 1))
+			if blocked != tc.blocked {
+				t.Fatalf("blocked=%v want %v resp=%s", blocked, tc.blocked, resp)
+			}
+			if !blocked {
+				return
+			}
+			var reply gateReply
+			if err := json.Unmarshal(resp, &reply); err != nil {
+				t.Fatalf("refusal not JSON: %v %q", err, resp)
+			}
+			if reply.Error.Code != -32001 || !strings.Contains(reply.Error.Message, "denied by router policy") {
+				t.Fatalf("wrong refusal: code=%d msg=%q", reply.Error.Code, reply.Error.Message)
+			}
+		})
+	}
+}
+
 // A4: a degraded/transient outcome must not be cached. Two identical calls
 // must both reach SO rather than serve a stale abstain forever.
 func TestTransientNotCached(t *testing.T) {

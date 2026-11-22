@@ -123,8 +123,8 @@ form.form, .form { display: grid; gap: 12px; }
 .btn:not(:disabled):hover { background: var(--accent); transform: translate(-2px, -2px); box-shadow: 4px 4px 0 var(--ink); }
 .btn:not(:disabled):active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--ink); }
 .btn:disabled { opacity: .5; pointer-events: none; background: var(--bg); color: var(--muted); border-color: var(--muted); box-shadow: none; transform: none; }
-.btn-primary, .btn-run, .btn-danger { background: var(--accent); color: #000; }
-.btn-primary:not(:disabled):hover, .btn-run:not(:disabled):hover, .btn-danger:not(:disabled):hover { background: var(--ink); color: var(--bg); }
+.btn-primary, .btn-run { background: var(--accent); color: #000; }
+.btn-primary:not(:disabled):hover, .btn-run:not(:disabled):hover { background: var(--ink); color: var(--bg); }
 
 /* ---- combo list ---- */
 #combo-list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }

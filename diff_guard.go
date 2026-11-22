@@ -30,7 +30,7 @@ var diffSecretPatterns = []*regexp.Regexp{
 }
 
 // diffSecretAssign matches a credential key assigned a quoted or bare literal.
-var diffSecretAssign = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|token|aws_secret_access_key|aws_access_key_id)\b\s*[:=]\s*("([^"]*)"|'([^']*)'|([^\s,;#]{6,}))`)
+var diffSecretAssign = regexp.MustCompile(`(?i)\\?["']?\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|token|aws_secret_access_key|aws_access_key_id)\b\\?["']?\s*[:=]\s*("([^"]*)"|'([^']*)'|([^\s,;#]{6,}))`)
 
 // diffSecurityCheck is the write gate's security precheck: it scans only the
 // lines the write ADDS, so a file that already carries a secret does not block
@@ -103,6 +103,14 @@ func diffSecretKind(line string) string {
 	return literalSecretKind(m[1], val)
 }
 
+// placeholderValues are values that are placeholders in their entirety, not
+// words that happen to appear inside a real credential.
+var placeholderValues = map[string]bool{
+	"your": true, "xxx": true, "changeme": true, "change-me": true,
+	"placeholder": true, "redacted": true, "example": true, "dummy": true,
+	"todo": true, "****": true,
+}
+
 // literalSecretKind reports a literal credential assignment. Env refs and
 // placeholders are the correct pattern and pass.
 func literalSecretKind(key, val string) string {
@@ -111,10 +119,15 @@ func literalSecretKind(key, val string) string {
 		return ""
 	}
 	lower := strings.ToLower(v)
-	for _, skip := range []string{"$", "os.", "os.getenv", "env.", "process.env", "$(", "{{", "<", "your", "xxx", "changeme", "change-me", "placeholder", "redacted", "example", "dummy", "todo", "****"} {
-		if strings.HasPrefix(lower, skip) || strings.Contains(lower, skip) {
+	// Env refs are prefixes. A placeholder is skipped only when it IS the whole
+	// value: a real secret containing "your"/"$"/"example" must not ride along.
+	for _, p := range []string{"$", "os.", "env.", "process.env", "{{", "<"} {
+		if strings.HasPrefix(lower, p) {
 			return ""
 		}
+	}
+	if placeholderValues[lower] {
+		return ""
 	}
 	// A literal credential value of 6+ chars is refused even when it is all
 	// lowercase with no digits (the 15-char lowercase case). Env refs and

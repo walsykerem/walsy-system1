@@ -254,6 +254,9 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 	allowed := routerAllow(tool)
 	routerAudit("gate", "method", f.Method, "tool", tool,
 		"allow", strconv.FormatBool(allowed))
+	if soMode() == "enforcing" && !allowed {
+		return rpcError(f.ID, -32001, "blocked: tool denied by router policy"), true
+	}
 	r := d.decide(unwrapParams(request, f))
 	routerAudit("decision", "method", f.Method, "decision", r.Decision, "reason", r.Reason)
 	// Enforcing only, and only when the decision is not an admit: an admitted
@@ -293,7 +296,8 @@ var steerFailOpen = map[string]bool{
 	"layer0-scope": true, "layer0-gate": true, "layer0-static": true,
 	"layer0-shape": true, "registry-local": true,
 	"so-degraded": true, "so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,
-	"ok": true, "ledger-complete": true,
+	"so-low-conf": true, // low confidence is advice, never an enforcing block
+	"ok":          true, "ledger-complete": true,
 }
 
 // advisoryHooks record router canary decisions after forwarding and mirror a
@@ -313,6 +317,11 @@ func (d *decisionBridge) advisoryHooks(request []byte) {
 		if reason, hit := d.guard.check(tool, toolArgs(f.Params)); hit {
 			routerAudit("writeguard", "mode", "advisory",
 				"tool", tool, "reason", guardReasonCode(reason))
+		}
+		// Advisory cannot block, but it must audit the same secret shapes
+		// enforcing would refuse, so the default mode stays observable.
+		if v := argsSecretCheck(toolArgs(f.Params)); v.Refuse {
+			routerAudit("diffguard", "mode", "advisory", "tool", tool, "reason", v.Code)
 		}
 		if body, ok := writeContent(toolArgs(f.Params)); ok {
 			p := argumentPath(toolArgs(f.Params))

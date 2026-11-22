@@ -30,7 +30,6 @@ type dashboardProvider struct {
 	DefaultBase string   `json:"-"`
 	DocsURL     string   `json:"-"`
 	CanReset    bool     `json:"-"`
-	Message     string   `json:"-"`
 }
 
 // docsURLs are fixed links for well-known slots. Everything else gets the

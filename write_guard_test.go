@@ -41,17 +41,24 @@ func TestWriteGuardMatchesRelativeToAbsolute(t *testing.T) {
 func TestWriteGuardRepeatLimit(t *testing.T) {
 	g := newWriteGuard()
 	args := json.RawMessage(`{"path":"/tmp/r.txt","text":"same"}`)
+	g.check("read_file", args) // seed the path so writes pass the unread check
 	for i := 0; i < guardRepeatLimit; i++ {
-		if _, blocked := g.check("read_file", args); blocked {
+		if _, blocked := g.check("write_file", args); blocked {
 			t.Fatalf("repeat %d blocked too early", i)
 		}
 	}
-	if reason, blocked := g.check("read_file", args); !blocked || reason == "" {
+	if reason, blocked := g.check("write_file", args); !blocked || reason == "" {
 		t.Fatal("repeat past the limit must block")
 	}
 	// The counter resets, so the next attempt is judged on its own.
-	if _, blocked := g.check("read_file", args); blocked {
+	if _, blocked := g.check("write_file", args); blocked {
 		t.Fatal("blocked call must reset the counter")
+	}
+	// Repeating a read is normal and must never hit the write-only counter.
+	for i := 0; i < guardRepeatLimit+2; i++ {
+		if _, blocked := g.check("read_file", args); blocked {
+			t.Fatalf("read repeat %d blocked", i)
+		}
 	}
 }
 
@@ -103,6 +110,7 @@ func TestIsWriteTool(t *testing.T) {
 	}
 	for _, name := range []string{
 		"write_file", "edit_file", "create_file", "apply_patch", "delete_file",
+		"writeFile", "editFile", "deleteFile", "createFile",
 		"move", "rename", "mkdir", "write", "edit", "create", "patch", "append",
 		"delete", "remove", "move", "rename", "mkdir", "rm", "mv",
 	} {
