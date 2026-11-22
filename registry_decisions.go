@@ -39,18 +39,25 @@ var (
 
 func loadDecisionItems() map[string]decisionItem {
 	decisionOnce.Do(func() {
-		var f struct {
-			Items []decisionItem `json:"items"`
-		}
-		decisionIndex = map[string]decisionItem{}
-		if json.Unmarshal(decisionItemsJSON, &f) != nil {
-			return // a broken bed is an empty registry: everything passes through
-		}
-		for _, it := range f.Items {
-			decisionIndex[it.ID] = it
-		}
+		decisionIndex = parseDecisionItems(decisionItemsJSON)
 	})
 	return decisionIndex
+}
+
+// parseDecisionItems fails loud on a malformed embedded registry: silently
+// degrading to an empty map would turn every item gate into a pass-through.
+func parseDecisionItems(raw []byte) map[string]decisionItem {
+	var f struct {
+		Items []decisionItem `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		panic("decision_items.json is malformed: " + err.Error())
+	}
+	index := make(map[string]decisionItem, len(f.Items))
+	for _, it := range f.Items {
+		index[it.ID] = it
+	}
+	return index
 }
 
 func decisionItemFor(id string) (decisionItem, bool) {

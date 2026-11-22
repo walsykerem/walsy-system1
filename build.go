@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Exactly seven build target ids: six cross-compile pairs plus native.
+// Six cross-compile pairs plus a native special case.
 var buildTargets = map[string][2]string{
 	"darwin/arm64":  {"darwin", "arm64"},
 	"darwin/amd64":  {"darwin", "amd64"},

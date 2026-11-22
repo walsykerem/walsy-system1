@@ -49,6 +49,7 @@ var steerTable = map[string]string{
 	"no-state":            "send a JSON state object with the decision text under \"state\".",
 	"no-key":              "configure the relay's model key, or decide locally.",
 	"unread-write":        "read the target path first, or state why it is new, then write.",
+	"unread-path":         "give a readable target path, or state why it is new, then write; the guard could not read this path.",
 	"repeat":              "change the arguments or say why the call must repeat; the identical call will not be sent again.",
 	"guard":               "read the target first or justify the write; the guard refused it.",
 }

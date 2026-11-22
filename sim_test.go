@@ -371,7 +371,7 @@ func TestSheetsCloseOnEscapeAndOutsideClick(t *testing.T) {
 func TestRemovalPrunesCombo(t *testing.T) {
 	s, c, _ := simHome(t)
 	simPost(t, c, s, "/ui/providers", url.Values{
-		"name": {"Sim Prune"}, "base": {"https://api.example.com/v1"}, "key_env": {"SIM_PRUNE_KEY"},
+		"name": {"Sim Prune"}, "base": {"https://api.example.com/v1"}, "keyEnv": {"SIM_PRUNE_KEY"},
 	})
 	simPost(t, c, s, "/ui/providers/models", url.Values{
 		"name": {"Sim Prune"}, "model": {"m1"}, "action": {"add"},

@@ -251,7 +251,7 @@ func TestEveryDecisionPointLive(t *testing.T) {
 			refused++
 		case "so-low-conf":
 			low++
-		case "so-degraded", "so-timeout", "so-error":
+		case "so-degraded":
 			degraded++
 		default:
 			t.Errorf("%s: reason %q is not a routing branch (label %q)", id, r.Reason, r.Label)
@@ -284,4 +284,19 @@ func itemIDs(index map[string]decisionItem) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// A malformed registry must fail loud, never degrade to an empty map that turns
+// every gate into a pass-through.
+func TestParseDecisionItems(t *testing.T) {
+	idx := parseDecisionItems([]byte(`{"items":[{"id":"a.b"}]}`))
+	if _, ok := idx["a.b"]; !ok {
+		t.Fatal("valid registry parsed to an empty index")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("malformed registry must panic, not degrade to empty")
+		}
+	}()
+	parseDecisionItems([]byte(`{`))
 }

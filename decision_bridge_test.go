@@ -1,12 +1,44 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+// frameGateWriter detects two clientOut writes in flight at once: the upstream
+// frame (main goroutine) releases the blocked client frame and waits a bounded
+// window for the client-reader goroutine to enter Write. With the bridge's
+// write mutex the client goroutine blocks instead and the window expires.
+type frameGateWriter struct {
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	release chan struct{}
+	client  chan struct{}
+	overlap bool
+}
+
+func (w *frameGateWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(`"blocked:`)) {
+		close(w.client)
+	} else {
+		close(w.release)
+		select {
+		case <-w.client:
+			w.overlap = true
+		case <-time.After(2 * time.Second):
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
 
 func gateFrame(method string, id int) []byte {
 	if method == "tools/call" {
@@ -201,5 +233,37 @@ func TestArgsSecretCheckedWithBody(t *testing.T) {
 	}
 	if reply.Error.Code != -32001 || !strings.Contains(reply.Error.Message, "secret") {
 		t.Fatalf("want diff-secret refusal, got code=%d msg=%q", reply.Error.Code, reply.Error.Message)
+	}
+}
+
+// The enforcing block reply and the forwarded upstream frame must never be in
+// clientOut at once: interleaved sub-PIPE_BUF writes would corrupt JSON-RPC
+// framing. See frameGateWriter for how overlap is observed.
+func TestBridgeStdioSerializesClientWrites(t *testing.T) {
+	t.Setenv("WALSY_SO_MODE", "enforcing")
+	t.Setenv("HOME", t.TempDir())
+	routerReset()
+	defer routerReset()
+
+	pr, pw := io.Pipe()
+	gate := &frameGateWriter{release: make(chan struct{}), client: make(chan struct{})}
+	// The blocked client frame is released only once the upstream frame's write
+	// has started, so a client reply entering Write at the same time proves the
+	// two writes were concurrent.
+	go func() {
+		<-gate.release
+		_, _ = pw.Write([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"/tmp/neverread-xyz.txt","content":"x"}}}` + "\n"))
+		_ = pw.Close()
+	}()
+
+	upOut := bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":9,"result":{}}` + "\n"))
+	var toServer bytes.Buffer
+	bridgeStdio(pr, gate, &toServer, upOut)
+
+	if gate.overlap {
+		t.Fatal("two clientOut writes overlapped: the bridge must serialize them")
+	}
+	if !bytes.Contains(gate.buf.Bytes(), []byte(`"id":5`)) {
+		t.Fatalf("blocked reply not delivered: %q", gate.buf.Bytes())
 	}
 }

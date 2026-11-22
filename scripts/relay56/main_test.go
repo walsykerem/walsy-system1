@@ -29,6 +29,16 @@ func TestCheckForwardRejectsBlockAndAcceptsEcho(t *testing.T) {
 	fail = 0
 }
 
+// An empty expectation must fail instead of printing PASS for a forward.
+func TestCheckForwardWithoutWantedArgFails(t *testing.T) {
+	fail = 0
+	checkForward("vacuous", map[string]any{"method": "tools/call", "params": map[string]any{"path": "/x"}}, "")
+	if fail != 1 {
+		t.Fatalf("empty wantArg: fail=%d want 1", fail)
+	}
+	fail = 0
+}
+
 // An empty assertion must fail instead of printing PASS for nothing.
 func TestCheckWithoutWantedTextFails(t *testing.T) {
 	fail = 0

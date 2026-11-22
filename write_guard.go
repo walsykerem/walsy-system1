@@ -24,6 +24,7 @@ const (
 var writeVerbs = []string{
 	"write", "edit", "create", "patch", "append",
 	"delete", "remove", "move", "rename", "mkdir", "rm", "mv",
+	"update", "put", "insert", "set", "save",
 }
 
 var pathArgs = []string{
@@ -96,33 +97,53 @@ func (g *writeGuard) check(tool string, args json.RawMessage) (string, bool) {
 	if g.seen == nil {
 		g.paths, g.seen = map[string]struct{}{}, map[string]int{}
 	}
-	path := argumentPath(args)
+	paths := argumentPaths(args)
 	if !isWriteTool(tool) {
-		if path != "" && len(g.paths) < guardMaxPaths {
+		// Record every path the call named, bounded like the write cap.
+		for _, path := range paths {
+			if len(g.paths) >= guardMaxPaths {
+				break
+			}
 			g.paths[path] = struct{}{}
 		}
 		return "", false
 	}
-	if path == "" {
+	if len(paths) == 0 {
 		// A write whose target cannot be read is not provably new: block it
 		// instead of waving it through.
 		return "write with no readable path: name the target path, or state why the path cannot be read", true
 	}
 	// Only writes carry the runaway-repeat guard: repeating a read is normal.
-	g.seen[key]++
-	if g.seen[key] > guardRepeatLimit {
-		// Reset so the next attempt is judged on its own, not locked out.
-		delete(g.seen, key)
-		return "repeated identical call " + strconv.Itoa(guardRepeatLimit) +
-			" times: change the arguments or say why it must repeat", true
+	// The seen map is capped like paths, so distinct blocked writes never grow
+	// it without bound; a key already present keeps counting past the cap.
+	if n, ok := g.seen[key]; ok {
+		n++
+		if n > guardRepeatLimit {
+			// Reset so the next attempt is judged on its own, not locked out.
+			delete(g.seen, key)
+			return "repeated identical call " + strconv.Itoa(guardRepeatLimit) +
+				" times: change the arguments or say why it must repeat", true
+		}
+		g.seen[key] = n
+	} else if len(g.seen) < guardMaxPaths {
+		g.seen[key] = 1
 	}
-	for seen := range g.paths {
-		if samePath(seen, path) {
-			return "", false
+	// Judge every path the call names: a rename whose dest was never read must
+	// block even if its source was.
+	for _, path := range paths {
+		touched := false
+		for seen := range g.paths {
+			if samePath(seen, path) {
+				touched = true
+				break
+			}
+		}
+		if !touched {
+			return "write to a path this session never touched: " + path +
+				": read it first, or state why it is new", true
 		}
 	}
-	return "write to a path this session never touched: " + path +
-		": read it first, or state why it is new", true
+	return "", false
 }
 
 // guardReasonCode is the short code the audit log can hold; the full text
@@ -146,7 +167,7 @@ func writeContent(args json.RawMessage) (string, bool) {
 	if json.Unmarshal(args, &m) != nil {
 		return "", false
 	}
-	for _, k := range []string{"content", "new_content", "newContent", "text", "data"} {
+	for _, k := range []string{"content", "new_content", "newContent", "text", "data", "patch", "diff", "body"} {
 		if v, ok := m[k].(string); ok {
 			return v, true
 		}
@@ -154,17 +175,31 @@ func writeContent(args json.RawMessage) (string, bool) {
 	return "", false
 }
 
+// argumentPath returns the first path-valued argument, for callers that need a
+// single target (e.g. the diff precheck).
 func argumentPath(args json.RawMessage) string {
-	var m map[string]any
-	if json.Unmarshal(args, &m) != nil {
+	paths := argumentPaths(args)
+	if len(paths) == 0 {
 		return ""
 	}
+	return paths[0]
+}
+
+// argumentPaths returns every path-valued argument in pathArgs order, so a call
+// that names several targets (a rename's source and dest) has each one judged
+// rather than only the first.
+func argumentPaths(args json.RawMessage) []string {
+	var m map[string]any
+	if json.Unmarshal(args, &m) != nil {
+		return nil
+	}
+	var out []string
 	for _, k := range pathArgs {
 		if v, ok := m[k].(string); ok && v != "" {
-			return normalizedPath(v)
+			out = append(out, normalizedPath(v))
 		}
 	}
-	return ""
+	return out
 }
 
 // toolSegments splits snake/kebab and camelCase before lowercasing, so

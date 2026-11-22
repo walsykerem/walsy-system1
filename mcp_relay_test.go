@@ -140,11 +140,8 @@ func TestUnknownMethodPassthrough(t *testing.T) {
 func TestSystemOneRouteURLNoRelayLayer(t *testing.T) {
 	raw := []byte(`{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}}}}`)
 
+	t.Setenv("SYSTEMONE_ROUTE_URL", "") // ignore any ambient value the developer exported
 	unset := addRouteCapability(raw)
-	if v, ok := os.LookupEnv("SYSTEMONE_ROUTE_URL"); ok {
-		t.Fatalf("test env polluted: SYSTEMONE_ROUTE_URL=%q", v)
-	}
-
 	t.Setenv("SYSTEMONE_ROUTE_URL", "http://127.0.0.1:9/custom")
 	set := addRouteCapability(raw)
 	if !bytes.Equal(unset, set) {

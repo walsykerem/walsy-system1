@@ -278,7 +278,7 @@
     </div>
 
     {{range .Providers}}
-    {{if not .Demo}}{{template "providerSheet" .}}{{end}}
+    {{template "providerSheet" .}}
     {{end}}
   </main>
   {{end}}

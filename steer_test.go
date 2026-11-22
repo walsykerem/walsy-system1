@@ -17,7 +17,7 @@ var (
 	// classify maps SO failures to these codes.
 	classifyReturn = regexp.MustCompile(`return "(transient|permanent|unknown|ok)"`)
 	// guardReasonCode maps write-guard refusals to these codes.
-	guardReturn = regexp.MustCompile(`return "(unread-write|repeat|guard)"`)
+	guardReturn = regexp.MustCompile(`return "(unread-write|unread-path|repeat|guard)"`)
 	// d.Choice comparisons give the so-<choice> family its labels.
 	choiceCompare = regexp.MustCompile(`d\.Choice == "([a-z]+)"`)
 	// diffSteer's cases are the diff-* reason codes written by the write gate.

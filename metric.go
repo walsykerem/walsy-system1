@@ -15,14 +15,9 @@ var metricOut io.Writer = os.Stderr
 type metric struct {
 	Seq          int    `json:"seq"`
 	PID          int    `json:"pid"`
-	TS           string `json:"ts,omitempty"`
-	DurMS        int64  `json:"dur_ms,omitempty"`
-	Tool         string `json:"tool,omitempty"`
 	Route        string `json:"route,omitempty"`
-	MissReason   string `json:"miss_reason,omitempty"`
 	Decision     string `json:"decision,omitempty"`
 	UpstreamExit string `json:"upstream_exit,omitempty"` // "error" only; never a secret
-	Model        string `json:"model,omitempty"`
 	ListenAddr   string `json:"listen_addr,omitempty"`
 	Reason       string `json:"reason_code,omitempty"`
 	Covered      bool   `json:"covered,omitempty"`

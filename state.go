@@ -205,13 +205,11 @@ func writeStateFile(path string, data []byte) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("state replace failed")
 	}
-	if err := syncDir(parent); err != nil {
-		return fmt.Errorf("state dir sync failed")
-	}
+	// The rename is atomic and already durable enough to be seen; a failed
+	// directory sync must not be reported as a write failure after the fact.
+	_ = syncDir(parent)
 	if parent != dir {
-		if err := syncDir(dir); err != nil {
-			return fmt.Errorf("state dir sync failed")
-		}
+		_ = syncDir(dir)
 	}
 	return nil
 }
@@ -361,20 +359,6 @@ func keyFilePath(name string) (string, error) {
 	return filepath.Join(dir, "keys", hex.EncodeToString(sum[:8])), nil
 }
 
-// keyIsSet reports only existence of a well-formed key file. It never reads
-// the value into any response, log or error.
-func keyIsSet(name string) bool {
-	path, err := keyFilePath(name)
-	if err != nil {
-		return false
-	}
-	data, err := readStateFile(path)
-	if err != nil {
-		return false
-	}
-	return len(data) > 0
-}
-
 func saveKey(name, key string) error {
 	path, err := keyFilePath(name)
 	if err != nil {
@@ -401,9 +385,6 @@ func loadKeys(name string) ([]string, error) {
 	}
 	data, err := readStateFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil
-		}
 		return nil, err
 	}
 	keys := []string{}

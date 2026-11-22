@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -149,5 +150,58 @@ func TestWriteContentAcceptsEmpty(t *testing.T) {
 	}
 	if _, ok := writeContent(json.RawMessage(`{"path":"/tmp/x"}`)); ok {
 		t.Fatal("args without any content key must not be treated as a write")
+	}
+}
+
+// A body carried under a non-content key (patch/diff/body) must still be
+// scanned, or tools that use those keys escape the diff precheck entirely.
+func TestWriteContentScansPatchBody(t *testing.T) {
+	for _, k := range []string{"patch", "diff", "body"} {
+		args := json.RawMessage(`{"path":"/tmp/x","` + k + `":"@@ -1 +1 @@"}`)
+		if body, ok := writeContent(args); !ok || body != "@@ -1 +1 @@" {
+			t.Errorf("key %q: body=%q ok=%v want the body scanned", k, body, ok)
+		}
+	}
+}
+
+// The seen map is capped like the paths map: distinct writes must not grow it
+// without bound.
+func TestWriteGuardSeenBounded(t *testing.T) {
+	g := newWriteGuard()
+	for i := 0; i < guardMaxPaths+64; i++ {
+		args := json.RawMessage(`{"path":"/tmp/seen-` + strconv.Itoa(i) + `.txt"}`)
+		g.check("write_file", args)
+	}
+	g.mu.Lock()
+	n := len(g.seen)
+	g.mu.Unlock()
+	if n > guardMaxPaths {
+		t.Fatalf("seen grew to %d, cap %d", n, guardMaxPaths)
+	}
+}
+
+// Every path arg is judged, not only the first: a rename whose dest was never
+// read must block even when its source was.
+func TestWriteGuardChecksEveryPath(t *testing.T) {
+	g := newWriteGuard()
+	g.check("read_file", json.RawMessage(`{"path":"/tmp/src.txt"}`))
+	rename := json.RawMessage(`{"source":"/tmp/src.txt","dest":"/tmp/dest.txt"}`)
+	if _, blocked := g.check("rename_file", rename); !blocked {
+		t.Fatal("rename whose dest was never read must block")
+	}
+	g.check("read_file", json.RawMessage(`{"path":"/tmp/dest.txt"}`))
+	if _, blocked := g.check("rename_file", rename); blocked {
+		t.Fatal("rename with every path read must pass")
+	}
+}
+
+// A read-only tool whose name merely contains a write verb ("readwrite") must
+// not infer write.unread, while a real write tool still does.
+func TestInferItemWriteVerbBoundary(t *testing.T) {
+	if got := inferItem("tools/call", "readwrite", "", "docs/plan.md"); got != "" {
+		t.Fatalf("readwrite must not infer a write item, got %q", got)
+	}
+	if got := inferItem("tools/call", "write_file", "", "docs/plan.md"); got != "write.unread" {
+		t.Fatalf("write_file must infer write.unread, got %q", got)
 	}
 }

@@ -201,3 +201,32 @@ func TestProxyHTTPFailureEchoesID(t *testing.T) {
 		t.Fatalf("failure must echo id 42, got %s", res.body)
 	}
 }
+
+// An upstream body at the 8 MiB cap is truncated by LimitReader, so it must
+// answer an error frame instead of returning the cut body as a complete reply.
+func TestProxyHTTPOversizedUpstream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxHTTPFrame+1))
+	}))
+	defer up.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":11,"method":"tools/list"}`)
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	res := proxyHTTP(context.Background(), up.URL, body, r)
+	if res.status != http.StatusOK {
+		t.Fatalf("want 200, got %d", res.status)
+	}
+	var out struct {
+		ID    json.RawMessage `json:"id"`
+		Error struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(res.body, &out) != nil {
+		t.Fatalf("oversized reply is not JSON: %q", res.body)
+	}
+	if string(out.ID) != "11" || out.Error.Code != -32001 || out.Error.Message != "upstream response too large" {
+		t.Fatalf("want id 11 with -32001 overflow error, got %s", res.body)
+	}
+}

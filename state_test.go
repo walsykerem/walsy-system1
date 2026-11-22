@@ -94,8 +94,8 @@ func TestStateFileModesAndPersistence(t *testing.T) {
 	if len(combo) != 2 || combo[0].Model != "m2" || combo[1].Model != "m1" {
 		t.Fatalf("reloaded combo order = %v", combo)
 	}
-	if !keyIsSet("Evren System One") {
-		t.Fatal("key not set after save")
+	if data, err := readStateFile(keyPath); err != nil || len(data) == 0 {
+		t.Fatalf("key not set after save: %v", err)
 	}
 
 	var comboOut map[string][]comboStepJSON
@@ -549,6 +549,84 @@ func TestFailedWriteLeavesNoTempFile(t *testing.T) {
 	}
 	if len(models["P"]) != 1 || models["P"][0] != "m1" {
 		t.Fatalf("state after failed write = %v, want previous m1", models)
+	}
+}
+
+// TestSheetModelReplacementPrunesCombo guards: a model dropped through the JSON
+// sheet API must also leave the saved combo, exactly as the form path prunes on
+// remove. The second sheet body has a non-nil models list, so it replaces the
+// stored list rather than preserving it.
+func TestSheetModelReplacementPrunesCombo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s, _ := dashboardTestServer(t)
+
+	if code := postJSONTest(t, s.URL+"/api/providers/sheet", sheetProviderRequest{
+		Name: "Evren System One", Models: []string{"m1", "m2"},
+	}, nil); code != http.StatusOK {
+		t.Fatalf("sheet add: %d", code)
+	}
+	if code := postJSONTest(t, s.URL+"/api/combo", map[string]any{"steps": []comboStepJSON{
+		{Provider: "Evren System One", Model: "m1"},
+		{Provider: "Evren System One", Model: "m2"},
+	}}, nil); code != http.StatusOK {
+		t.Fatalf("combo save: %d", code)
+	}
+	if combo, err := loadCombo(); err != nil || len(combo) != 2 {
+		t.Fatalf("combo before prune = %v (%v)", combo, err)
+	}
+
+	if code := postJSONTest(t, s.URL+"/api/providers/sheet", sheetProviderRequest{
+		Name: "Evren System One", Models: []string{"m1"},
+	}, nil); code != http.StatusOK {
+		t.Fatalf("sheet replace: %d", code)
+	}
+	combo, err := loadCombo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(combo) != 1 || combo[0].Provider != "Evren System One" || combo[0].Model != "m1" {
+		t.Fatalf("combo after sheet drop = %v, want only m1", combo)
+	}
+}
+
+// TestComboRunStepsHonorWeightAndValidate guards: the run endpoint's inline steps
+// must keep the submitted weight (the priority order) and apply the same validity
+// checks the save endpoint does. A dropped weight would let the first-listed step
+// win instead of the higher-weighted one.
+func TestComboRunStepsHonorWeightAndValidate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+	if err := saveCustomProvider("RUN/A", up.URL+"/a", "A_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCustomProvider("RUN/B", up.URL+"/b", "B_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := dashboardTestServer(t)
+
+	var out ComboOutcome
+	code := postJSONTest(t, s.URL+"/api/combo/run", comboRequest{Steps: &[]comboStepJSON{
+		{Provider: "RUN/A", Model: "m1", Weight: 1},
+		{Provider: "RUN/B", Model: "m2", Weight: 9},
+	}}, &out)
+	if code != http.StatusOK {
+		t.Fatalf("run status = %d", code)
+	}
+	if out.Winner != "RUN/B/m2" {
+		t.Fatalf("winner = %q, want RUN/B/m2 (submitted weight not honored)", out.Winner)
+	}
+
+	code = postJSONTest(t, s.URL+"/api/combo/run", comboRequest{Steps: &[]comboStepJSON{
+		{Provider: "RUN/A", Model: "bad\tmodel"},
+	}}, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("invalid model status = %d, want 400", code)
 	}
 }
 

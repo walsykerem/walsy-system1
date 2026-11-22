@@ -93,11 +93,34 @@ func finalAudit(state string) auditVerdict {
 // risk, or says it was not checked, covers nothing.
 func riskCovered(key string, done map[string]bool) bool {
 	for d := range done {
-		if strings.Contains(d, key) && hasEvidence(d) && !deniesWork(d) {
+		if mentionsKey(d, key) && hasEvidence(d) && !deniesWork(d) {
 			return true
 		}
 	}
 	return false
+}
+
+// mentionsKey requires the risk key to sit on word boundaries, so a short key
+// like "test" is not covered by an unrelated "tested".
+func mentionsKey(s, key string) bool {
+	for idx := strings.Index(s, key); idx >= 0; {
+		before := idx == 0 || !isWordByte(s[idx-1])
+		end := idx + len(key)
+		after := end == len(s) || !isWordByte(s[end])
+		if before && after {
+			return true
+		}
+		next := strings.Index(s[idx+1:], key)
+		if next < 0 {
+			return false
+		}
+		idx += 1 + next
+	}
+	return false
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // hasEvidence reports whether a done entry states an evidence verb rather than

@@ -22,7 +22,6 @@ type dashboardProvider struct {
 	Base        string   `json:"base"`
 	KeyEnv      string   `json:"key_env"`
 	Baked       bool     `json:"baked"`
-	Demo        bool     `json:"demo"`
 	Models      []string `json:"models"`
 	KeySet      bool     `json:"keySet"`
 	KeyCount    int      `json:"-"`
@@ -268,12 +267,14 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, v any) bool {
 // load-modify-save cycle, so parallel saves would lose updates.
 var stateMu sync.Mutex
 
-// unlockedPost lists POST routes that never write dashboard state. They probe
-// providers or run the toolchain, and holding the write lock would stall saves.
+// unlockedPost lists POST routes the router leaves unlocked. The probe/run
+// routes never write state; /ui/providers/keys takes stateMu itself for its
+// add/remove/clear actions so a 2s key TEST cannot stall every other save.
 var unlockedPost = map[string]bool{
-	"/api/combo/run": true,
-	"/ui/combo/run":  true,
-	"/ui/build":      true,
+	"/api/combo/run":     true,
+	"/ui/combo/run":      true,
+	"/ui/build":          true,
+	"/ui/providers/keys": true,
 }
 
 // isLoopbackName accepts only the names the dashboard is actually bound to.
@@ -354,9 +355,23 @@ func applyProviderSheet(req sheetProviderRequest, preserveModels bool) error {
 		if err != nil {
 			return errStateUnavailable
 		}
+		previous := all[req.Name]
 		all[req.Name] = models
 		if err := saveModels(all); err != nil {
 			return errStateWriteFailed
+		}
+		// A model the sheet dropped must leave the combo too, exactly as the
+		// form path prunes on remove (uiProviderModel).
+		kept := make(map[string]bool, len(models))
+		for _, m := range models {
+			kept[m] = true
+		}
+		for _, m := range previous {
+			if !kept[m] {
+				if err := pruneCombo(req.Name, m); err != nil {
+					return errStateWriteFailed
+				}
+			}
 		}
 	}
 	// An empty key field means "keep" unless the user explicitly asks to clear.
@@ -455,11 +470,12 @@ func handleComboRun(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case req.Steps != nil:
 		for _, s := range *req.Steps {
-			if s.Provider == "" || !providerExists(view, s.Provider) {
+			if s.Provider == "" || isDemoName(s.Provider) || !providerExists(view, s.Provider) ||
+				(s.Model != "" && !validModel(s.Model)) {
 				writeAPIError(w, "invalid step")
 				return
 			}
-			steps = append(steps, stateStep{Provider: s.Provider, Model: s.Model})
+			steps = append(steps, stateStep{Provider: s.Provider, Model: s.Model, Weight: s.Weight})
 		}
 	case len(req.Names) > 0:
 		for _, name := range req.Names {

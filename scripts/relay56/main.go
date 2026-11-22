@@ -196,6 +196,11 @@ func check(name, got string, want ...string) {
 // be the upstream echo of the same tools/call with the same argument, and must
 // carry no error. A blocked call answers with an error instead, so it fails.
 func checkForward(name string, m map[string]any, wantArg string) {
+	if wantArg == "" {
+		fmt.Printf("FAIL %-14s no expectation given\n", name)
+		fail++
+		return
+	}
 	if m == nil {
 		fmt.Printf("FAIL %-14s no reply\n", name)
 		fail++
@@ -225,6 +230,14 @@ func checkForward(name string, m map[string]any, wantArg string) {
 func checkDisk(name, path, forbidden string) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Printf("FAIL %-14s on disk: unreadable (%v)\n", name, err)
+			fail++
+			return
+		}
+		// A refusal must not create the file, so absence is the success
+		// condition these calls assert; a wrong path looks the same, so each
+		// call site removes the file first to make the state deterministic.
 		fmt.Printf("PASS %-14s on disk: absent (%v)\n", name, err)
 		return
 	}
@@ -295,6 +308,7 @@ func main() {
 	// carrying the same key shape is refused at the argument level.
 	c = spawn(ep)
 	handshake(c, 1)
+	_ = os.Remove("/tmp/relay56-e.txt")
 	check("args-secret", msg(c.send(call(2, "run_command", map[string]any{
 		"command": "echo '-----BEGIN RSA PRIVATE KEY-----' > /tmp/relay56-e.txt",
 	}))), "keep the secret", "blocked")

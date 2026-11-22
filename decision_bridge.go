@@ -331,23 +331,67 @@ func mirrorCanary(mirrorURL string, request []byte) {
 	}()
 }
 
+// maxStdioFrame bounds one stdio frame so an unterminated or oversized frame
+// cannot buffer without bound. It matches the HTTP body bound.
+const maxStdioFrame = maxHTTPFrame
+
+// readFrame reads one newline-terminated frame, capped at maxStdioFrame bytes.
+// A frame past the cap is dropped with errFrameTooLarge rather than buffered.
+func readFrame(br *bufio.Reader) ([]byte, error) {
+	buf := make([]byte, 0, 4096)
+	for {
+		chunk, err := br.ReadSlice('\n')
+		buf = append(buf, chunk...)
+		if len(buf) > maxStdioFrame {
+			return nil, errFrameTooLarge
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return buf, err
+	}
+}
+
 // bridgeStdio is the fail-safe stdio interceptor. Advisory client frames are
 // forwarded byte-for-byte before any decision work; enforcing frames are
 // gated first. Initialize results get the MCP marker added.
 func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, upstreamOut io.Reader) {
 	d := newDecisionBridge()
 	enforcing := soMode() == "enforcing"
+	// clientOut has two writers: the enforcing block reply (client-reader
+	// goroutine) and the forwarded upstream frame (main goroutine). Interleaved
+	// writes larger than PIPE_BUF would corrupt the JSON-RPC framing, so both
+	// writes are serialized.
+	var outMu sync.Mutex
+	// Advisory decision work runs on one worker off the read loop, so a slow
+	// SO call never stalls the frames behind it. Enforcing gating stays inline
+	// because a refusal must be answered before the frame is forwarded.
+	advCh := make(chan []byte, 64)
+	advDone := make(chan struct{})
+	if !enforcing {
+		go func() {
+			defer close(advDone)
+			for frame := range advCh {
+				d.inspectClient(frame)
+				d.advisoryHooks(frame)
+			}
+		}()
+	} else {
+		close(advDone)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		br := bufio.NewReader(clientIn)
 		for {
-			frame, err := br.ReadBytes('\n')
+			frame, err := readFrame(br)
 			if len(frame) > 0 {
 				relayLog("client", frame)
 				if enforcing {
 					if resp, blocked := d.enforcingGate(frame); blocked {
+						outMu.Lock()
 						_, _ = clientOut.Write(resp)
+						outMu.Unlock()
 						if err != nil {
 							break
 						}
@@ -357,8 +401,10 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 				// Forward first in advisory: never hold a client frame hostage.
 				_, _ = upstreamIn.Write(frame)
 				if !enforcing {
-					d.inspectClient(frame)
-					d.advisoryHooks(frame)
+					select {
+					case advCh <- append([]byte(nil), frame...):
+					default: // a full queue drops the advisory copy, never the frame
+					}
 				}
 			}
 			if err != nil {
@@ -369,16 +415,21 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 	}()
 	br := bufio.NewReader(upstreamOut)
 	for {
-		frame, err := br.ReadBytes('\n')
+		frame, err := readFrame(br)
 		if len(frame) > 0 {
 			relayLog("server", frame)
-			_, _ = clientOut.Write(d.inspectServer(frame))
+			out := d.inspectServer(frame)
+			outMu.Lock()
+			_, _ = clientOut.Write(out)
+			outMu.Unlock()
 		}
 		if err != nil {
 			break
 		}
 	}
 	<-done // don't return until client frames are fully forwarded
+	close(advCh)
+	<-advDone
 }
 
 func (d *decisionBridge) inspectClient(frame []byte) {

@@ -12,6 +12,10 @@ go run . -transport dashboard -listen 8787   # http://127.0.0.1:8787
 Default transport is `stdio`; existing clients are unchanged. Other transports:
 `stdio`, `unix`, `http`. `-dashboard` is an alias for `-transport dashboard`.
 
+With `-transport http` and an empty `-listen`, the port comes from the
+`MCP_PROXY_PORT` env var when set, otherwise the OS picks a free loopback port
+(`127.0.0.1:0`); the chosen address is reported in the existing stderr metric.
+
 The dashboard's BUILD TARGET panel cross-compiles a static `CGO_ENABLED=0`
 binary for darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, windows/amd64
 or windows/arm64 into `dist/`. Until a target is saved, it uses this machine's

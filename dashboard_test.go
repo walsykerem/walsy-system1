@@ -75,7 +75,7 @@ func TestDashboardHasNoDemoProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range out.Providers {
-		if p.Demo || strings.HasPrefix(p.Name, "DEMO/") {
+		if strings.HasPrefix(p.Name, "DEMO/") {
 			t.Fatalf("demo provider still seeded: %+v", p)
 		}
 	}

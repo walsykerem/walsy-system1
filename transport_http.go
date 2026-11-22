@@ -171,6 +171,12 @@ func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Reques
 	if err != nil {
 		return fail
 	}
+	// A body at the cap was cut by LimitReader, not completed: answer with an
+	// error frame instead of returning a silently truncated body as success.
+	if int64(len(out)) == maxHTTPFrame {
+		return proxyResult{status: http.StatusOK,
+			body: rpcError(requestID(body), -32001, "upstream response too large"), headers: resp.Header}
+	}
 	return proxyResult{status: resp.StatusCode, body: out, headers: resp.Header}
 }
 

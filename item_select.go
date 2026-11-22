@@ -26,9 +26,14 @@ var itemRules = []itemRule{
 	}},
 	// A write verb aimed at a named file/path is a write before the read.
 	{item: "write.unread", match: func(_, tool, _, t string) bool {
-		write := containsAny(tool, "write", "edit", "create", "delete", "rename", "patch")
+		// Whole-segment match: a read-only name like "readwrite" must not count.
+		write := isWriteTool(tool)
 		if !write {
-			write = containsAny(t, "write ", "writing ", "overwrite", "edit ", "editing ",
+			// Prose fallback over phase+state only: the text starts with the tool
+			// name (already judged above), so stripping it stops "readwrite"
+			// satisfying "write " through substring matching.
+			prose := strings.TrimPrefix(t, tool+" ")
+			write = containsAny(prose, "write ", "writing ", "overwrite", "edit ", "editing ",
 				"create ", "creating ", "delete ", "deleting ", "rename ", "renaming ", "patch ")
 		}
 		return write && containsAny(t, "file", "path", "dir", "/", ".go", ".md",

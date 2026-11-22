@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,127 +41,6 @@ func TestCacheCanonicalDeterminism(t *testing.T) {
 	}
 }
 
-func TestCacheSingleflightCoalescing(t *testing.T) {
-	var g group
-	var calls int64
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var wg sync.WaitGroup
-	results := make([]cachedDecision, 10)
-	errs := make([]error, 10)
-
-	// Leader registers then blocks inside fn, so followers deterministically join it.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		results[0], errs[0] = g.do("same", func() (cachedDecision, error) {
-			atomic.AddInt64(&calls, 1)
-			close(started)
-			<-release
-			return cachedDecision{Choice: "yes"}, nil
-		})
-	}()
-	<-started
-
-	arrived := make(chan struct{}, 9)
-	for i := 1; i < 10; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			arrived <- struct{}{}
-			results[i], errs[i] = g.do("same", func() (cachedDecision, error) {
-				atomic.AddInt64(&calls, 1)
-				return cachedDecision{Choice: "wrong"}, nil
-			})
-		}(i)
-	}
-	for i := 1; i < 10; i++ {
-		<-arrived
-	}
-	close(release)
-	wg.Wait()
-	if got := atomic.LoadInt64(&calls); got != 1 {
-		t.Fatalf("fn called %d times, want 1", got)
-	}
-	for i := range results {
-		if errs[i] != nil || results[i].Choice != "yes" {
-			t.Fatalf("caller %d: %+v err=%v", i, results[i], errs[i])
-		}
-	}
-}
-
-func TestCacheSingleflightPanicRecover(t *testing.T) {
-	var g group
-	_, err := g.do("panic", func() (cachedDecision, error) {
-		panic("boom")
-	})
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("panic not recovered as error: %v", err)
-	}
-}
-
-func TestCacheSingleflightIdentityCheck(t *testing.T) {
-	var g group
-	c1 := &groupCall{}
-	c2 := &groupCall{}
-	g.m = map[string]*groupCall{"k": c1}
-	g.finish("k", c2)
-	g.mu.Lock()
-	_, ok := g.m["k"]
-	g.mu.Unlock()
-	if !ok {
-		t.Fatal("stale finish deleted a different call")
-	}
-	g.finish("k", c1)
-	g.mu.Lock()
-	_, ok = g.m["k"]
-	g.mu.Unlock()
-	if ok {
-		t.Fatal("identity-matched finish did not delete call")
-	}
-}
-
-func TestCacheSingleflightForgetStale(t *testing.T) {
-	var g group
-	oldStarted := make(chan struct{})
-	releaseOld := make(chan struct{})
-	oldDone := make(chan struct{})
-	go func() {
-		defer close(oldDone)
-		g.do("k", func() (cachedDecision, error) {
-			close(oldStarted)
-			<-releaseOld
-			return cachedDecision{Choice: "old"}, nil
-		})
-	}()
-	<-oldStarted
-	g.forget("k")
-
-	newStarted := make(chan struct{})
-	releaseNew := make(chan struct{})
-	newDone := make(chan struct{})
-	go func() {
-		defer close(newDone)
-		g.do("k", func() (cachedDecision, error) {
-			close(newStarted)
-			<-releaseNew
-			return cachedDecision{Choice: "new"}, nil
-		})
-	}()
-	<-newStarted
-
-	close(releaseOld)
-	<-oldDone
-	g.mu.Lock()
-	_, stillThere := g.m["k"]
-	g.mu.Unlock()
-	if !stillThere {
-		t.Fatal("stale leader finish removed the new in-flight call")
-	}
-	close(releaseNew)
-	<-newDone
-}
-
 func TestCacheLRUEviction(t *testing.T) {
 	c := newDecisionCache()
 	c.cap = 2
@@ -177,22 +55,6 @@ func TestCacheLRUEviction(t *testing.T) {
 	}
 	if _, ok := c.lookup("b"); ok {
 		t.Fatal("oldest cell survived eviction")
-	}
-}
-
-func TestCacheTwoSeparateCounters(t *testing.T) {
-	c := newDecisionCache()
-	c.store("k", cachedDecision{Choice: "yes", ConfBucket: "0.9"})
-	c.lookup("k")
-	c.recordProviderPrefix(512, 2048)
-
-	router := c.stats()
-	kv := c.providerStats()
-	if router.Hits != 1 {
-		t.Fatalf("router ledger wrong: %+v", router)
-	}
-	if kv.MatchPrefix != 1 || kv.PrefixLen != 512 || kv.PromptLen != 2048 {
-		t.Fatalf("provider KV ledger wrong: %+v", kv)
 	}
 }
 

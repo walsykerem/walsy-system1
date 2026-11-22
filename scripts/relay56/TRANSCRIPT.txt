@@ -1,8 +1,8 @@
 # relay56 live transcript
-timestamp: 2026-11-22T16:05:34Z
-harness: scripts/relay56/main.go sha256=688460bd19b4774c6a377339327dccde14ba16b5cf147a67a9220d78a5e5cc5b
-harness test: scripts/relay56/main_test.go sha256=badecf29b617506667b7bcb0d6508f36adf87651296f42ec119904ecad711011
-binary: b68259e4327c501e68b15c849360a8b4362f864f6c1bda87f4ea5adfe8965f8f  walsy-system1
+timestamp: 2026-11-22T17:33:13Z
+harness: scripts/relay56/main.go sha256=8e8be464037c8f51aca9633503f15e13b3fc48031dd2346aec5d1bb69a4ee411
+harness test: scripts/relay56/main_test.go sha256=29d5953965b4a7bbc08630fb118fde22aab2baa8b8b3168c79cc80ee6b182317
+binary: c16fa26faa7718753b779120e857cc813f206de574c0b05fe14292731f10a82b  walsy-system1
 command: RELAY56_BIN=/Users/keremurhan/walsy-system1/walsy-system1 GOCACHE=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache go run ./scripts/relay56
 --- run
 PASS unread-write   blocked: write to a path this session never touched: /tmp/relay56-a.txt: read it first, or state why it is new

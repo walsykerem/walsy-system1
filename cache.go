@@ -185,27 +185,11 @@ type cacheCell struct {
 	dec cachedDecision
 }
 
-// cacheStats is the ROUTER decision-cache ledger only.
-type cacheStats struct {
-	Hits   int
-	Misses int
-}
-
-// providerKVStats is the PROVIDER prefix-cache ledger. Deliberately a separate
-// type and a separate decisionCache field - never merged with cacheStats.
-type providerKVStats struct {
-	MatchPrefix int
-	PrefixLen   int
-	PromptLen   int
-}
-
 type decisionCache struct {
-	mu     sync.Mutex
-	cap    int
-	ll     *list.List
-	idx    map[string]*list.Element
-	router cacheStats
-	kv     providerKVStats
+	mu  sync.Mutex
+	cap int
+	ll  *list.List
+	idx map[string]*list.Element
 }
 
 func newDecisionCache() *decisionCache {
@@ -217,10 +201,8 @@ func (c *decisionCache) lookup(key string) (cachedDecision, bool) {
 	defer c.mu.Unlock()
 	if el, ok := c.idx[key]; ok {
 		c.ll.MoveToFront(el)
-		c.router.Hits++
 		return el.Value.(*cacheCell).dec, true
 	}
-	c.router.Misses++
 	return cachedDecision{}, false
 }
 
@@ -247,87 +229,4 @@ func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 		delete(c.idx, old.Value.(*cacheCell).key)
 		c.ll.Remove(old)
 	}
-}
-
-func (c *decisionCache) stats() cacheStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.router
-}
-
-// recordProviderPrefix touches ONLY the provider KV ledger.
-func (c *decisionCache) recordProviderPrefix(prefixLen, promptLen int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.kv.MatchPrefix++
-	if prefixLen > c.kv.PrefixLen {
-		c.kv.PrefixLen = prefixLen
-	}
-	if promptLen > c.kv.PromptLen {
-		c.kv.PromptLen = promptLen
-	}
-}
-
-func (c *decisionCache) providerStats() providerKVStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.kv
-}
-
-// --- singleflight (~15 lines of stdlib) ------------------------------------
-
-type groupCall struct {
-	wg  sync.WaitGroup
-	val cachedDecision
-	err error
-}
-
-type group struct {
-	mu sync.Mutex
-	m  map[string]*groupCall
-}
-
-// finish is identity-checked: a stale leader cannot delete a newer call.
-func (g *group) finish(key string, c *groupCall) {
-	g.mu.Lock()
-	if g.m[key] == c {
-		delete(g.m, key)
-	}
-	g.mu.Unlock()
-}
-
-// do coalesces concurrent callers on one key. Followers read val/err only after
-// wg.Wait(). A leader panic becomes an error; a follower's ctx cannot poison it.
-func (g *group) do(key string, fn func() (cachedDecision, error)) (val cachedDecision, err error) {
-	g.mu.Lock()
-	if g.m == nil {
-		g.m = make(map[string]*groupCall)
-	}
-	if c, ok := g.m[key]; ok {
-		g.mu.Unlock()
-		c.wg.Wait()
-		return c.val, c.err
-	}
-	c := &groupCall{}
-	c.wg.Add(1)
-	g.m[key] = c
-	g.mu.Unlock()
-	defer func() {
-		if r := recover(); r != nil {
-			c.err = fmt.Errorf("singleflight panic: %v", r)
-			err = c.err
-		}
-		c.wg.Done()
-		g.finish(key, c)
-	}()
-	c.val, c.err = fn()
-	return c.val, c.err
-}
-
-// forget drops a leader that exceeded the SO budget; its later finish is
-// harmless because finish() is identity-checked.
-func (g *group) forget(key string) {
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
 }

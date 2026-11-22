@@ -51,7 +51,6 @@ type uiPage struct {
 	Base        string
 	DefaultBase string
 	CanReset    bool
-	Demo        bool
 	KeySet      bool
 	// Add-provider form echo: a refused save keeps what was typed and the
 	// details element open instead of wiping the form.
@@ -279,7 +278,6 @@ func providerSheetPage(r *http.Request) (uiPage, bool) {
 		Base:        provider.Base,
 		DefaultBase: provider.DefaultBase,
 		CanReset:    provider.CanReset,
-		Demo:        provider.Demo,
 		KeySet:      provider.KeySet,
 		SheetMode:   true,
 	}, true
@@ -304,7 +302,10 @@ func uiProviderKey(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "add":
-		switch err := addKey(name, form.Get("key")); {
+		stateMu.Lock()
+		err := addKey(name, form.Get("key"))
+		stateMu.Unlock()
+		switch {
 		case errors.Is(err, errKeyDuplicate):
 			uiGo(w, r, target, "KEY ALREADY SAVED")
 			return
@@ -317,6 +318,8 @@ func uiProviderKey(w http.ResponseWriter, r *http.Request) {
 		}
 		uiGo(w, r, target, "KEY ADDED")
 	case "test":
+		// Read-only probe: run it without stateMu so its 2s client cannot stall
+		// every other dashboard write.
 		index, err := strconv.Atoi(form.Get("index"))
 		if err != nil {
 			uiGo(w, r, target, "INVALID KEY")
@@ -325,13 +328,23 @@ func uiProviderKey(w http.ResponseWriter, r *http.Request) {
 		uiGo(w, r, target, testProviderKey(name, index))
 	case "remove":
 		index, err := strconv.Atoi(form.Get("index"))
-		if err != nil || removeKeyAt(name, index-1) != nil {
+		if err != nil {
+			uiGo(w, r, target, "INVALID KEY")
+			return
+		}
+		stateMu.Lock()
+		removeErr := removeKeyAt(name, index-1)
+		stateMu.Unlock()
+		if removeErr != nil {
 			uiGo(w, r, target, "INVALID KEY")
 			return
 		}
 		uiGo(w, r, target, "KEY REMOVED")
 	case "clear":
-		if err := saveKey(name, ""); err != nil {
+		stateMu.Lock()
+		err := saveKey(name, "")
+		stateMu.Unlock()
+		if err != nil {
 			uiGo(w, r, target, "STATE WRITE FAILED")
 			return
 		}

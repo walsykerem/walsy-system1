@@ -92,6 +92,11 @@ func scrubText(s string) string {
 	for _, f := range fields {
 		if skipNext {
 			skipNext = false
+			// A header value starting with a scheme word (Authorization: Bearer x)
+			// hides the secret one token further along, so keep skipping.
+			if strings.ToLower(strings.Trim(f, ":,;\"'")) == "bearer" {
+				skipNext = true
+			}
 			continue
 		}
 		lower := strings.ToLower(strings.Trim(f, ":,;\"'"))
@@ -100,6 +105,10 @@ func scrubText(s string) string {
 			continue
 		}
 		if i := strings.IndexByte(f, '='); i >= 0 && dropKey(f[:i]) {
+			continue
+		}
+		if strings.HasSuffix(f, ":") && dropKey(strings.TrimSuffix(f, ":")) {
+			skipNext = true
 			continue
 		}
 		out = append(out, f)
