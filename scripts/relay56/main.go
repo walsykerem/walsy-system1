@@ -341,6 +341,16 @@ func main() {
 	}
 	c.close()
 
+	// 3c) a destructive shell command with no file body is refused at the
+	// argument level: an rm -rf has nothing to diff against disk.
+	c = spawn(ep)
+	handshake(c, 1)
+	check("args-destructive", msg(c.send(call(2, "run_command", map[string]any{
+		"command": "rm -rf /tmp/relay56-rm",
+	}))), "wholesale", "blocked")
+	checkReason("args-destructive", c.home, "diff-dangerous-command")
+	c.close()
+
 	// 4) a generic "no" label passes the call through unchanged.
 	c = spawn(ep)
 	handshake(c, 1)

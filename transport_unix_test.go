@@ -93,3 +93,57 @@ func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 	}
 	c.Close()
 }
+
+// The accept loop serves at most unixMaxConns connections at once: a client
+// beyond the cap waits until a slot frees instead of spawning a goroutine.
+func TestServeUnixConcurrencyCap(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	started := make(chan struct{}, unixMaxConns*2)
+	release := make(chan struct{})
+	done := make(chan struct{})
+	defer close(done)
+	dial := func() (net.Conn, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-done:
+		}
+		return nil, io.EOF // passthrough: no upstream
+	}
+	go serveUnix(l, dial)
+	conns := make([]net.Conn, 0, unixMaxConns+1)
+	for i := 0; i < unixMaxConns+1; i++ {
+		c, err := net.Dial("tcp", l.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+	for i := 0; i < unixMaxConns; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d dials started", i, unixMaxConns)
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("concurrency cap exceeded: more than unixMaxConns dials ran at once")
+	case <-time.After(100 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a freed slot did not admit the queued client")
+	}
+}

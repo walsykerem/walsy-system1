@@ -2,12 +2,28 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 )
+
+// A single frame that never terminates before the byte cap must stop the tools
+// server without producing a reply or allocating without bound.
+func TestToolsServerRejectsOversizedFrame(t *testing.T) {
+	lr := &frameLimitReader{r: strings.NewReader(strings.Repeat("a", maxToolsFrame+1))}
+	if _, err := io.Copy(io.Discard, lr); err != errFrameTooLarge {
+		t.Fatalf("frame cap must return errFrameTooLarge, got %v", err)
+	}
+	frame := `{"id":1,"method":"tools/call","params":"` + strings.Repeat("a", maxToolsFrame+1)
+	out := &strings.Builder{}
+	runToolsServer(strings.NewReader(frame), out)
+	if out.Len() != 0 {
+		t.Fatalf("oversized frame produced output: %q", out.String())
+	}
+}
 
 func toolsSession(t *testing.T, frames ...string) []map[string]any {
 	t.Helper()

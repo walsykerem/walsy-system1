@@ -65,19 +65,24 @@ func normalizedPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// samePath treats a relative path as equal to any absolute path ending in it,
-// so a client's cwd never has to match the relay's. A bare filename and a
-// pathed one are never assumed equal: that would let a write to an unread
-// directory ride on a same-named file elsewhere.
+// samePath reports whether a write target (b) names a path this session already
+// touched (a). Two full paths match on a shared suffix, so the client's cwd
+// never has to match the relay's. In the mixed case only a full-path read
+// licenses a bare write: a bare read never licenses a pathed write, which would
+// let a write into an unread directory ride on a same-named file elsewhere.
 func samePath(a, b string) bool {
 	if a == b {
 		return true
 	}
 	sepA, sepB := strings.Contains(a, "/"), strings.Contains(b, "/")
-	if sepA && sepB {
+	switch {
+	case sepA && sepB:
 		return strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a)
+	case sepA:
+		return strings.HasSuffix(a, "/"+b)
+	default:
+		return false
 	}
-	return filepath.Base(a) == filepath.Base(b)
 }
 
 // check returns a block reason for a write to an unseen path or a runaway
@@ -162,9 +167,10 @@ func argumentPath(args json.RawMessage) string {
 	return ""
 }
 
-func isWriteTool(tool string) bool {
-	// Split snake/kebab and camelCase before lowercasing: "write_file" and
-	// "writeFile" both match, "confirm_plan" (which holds "rm") does not.
+// toolSegments splits snake/kebab and camelCase before lowercasing, so
+// "write_file"/"writeFile" both yield "write" while "confirm_plan" (which holds
+// "rm") yields "confirm"+"plan" only.
+func toolSegments(tool string) []string {
 	var b strings.Builder
 	runes := []rune(tool)
 	for i, r := range runes {
@@ -174,10 +180,29 @@ func isWriteTool(tool string) bool {
 		}
 		b.WriteRune(r)
 	}
-	for _, seg := range strings.FieldsFunc(strings.ToLower(b.String()), func(r rune) bool {
+	return strings.FieldsFunc(strings.ToLower(b.String()), func(r rune) bool {
 		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
-	}) {
+	})
+}
+
+func isWriteTool(tool string) bool {
+	for _, seg := range toolSegments(tool) {
 		for _, v := range writeVerbs {
+			if seg == v {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// commandVerbs name the tools that run a shell command, so the destructive-arg
+// scan only judges those and not an ordinary write whose body mentions "rm".
+var commandVerbs = []string{"run", "command", "bash", "shell", "exec", "terminal", "sh", "cmd"}
+
+func isCommandTool(tool string) bool {
+	for _, seg := range toolSegments(tool) {
+		for _, v := range commandVerbs {
 			if seg == v {
 				return true
 			}

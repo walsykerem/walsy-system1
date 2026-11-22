@@ -196,9 +196,10 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 			return rpcError(f.ID, -32001, "blocked: "+reason), true
 		}
 		args := toolArgs(f.Params)
-		// The raw-args secret scan always runs, so metadata alongside a file body
-		// (e.g. api_key next to content) cannot escape the diff-only path.
-		if v := argsSecretCheck(args); v.Refuse {
+		// The raw-args scan always runs, so metadata alongside a file body
+		// (e.g. api_key next to content) cannot escape the diff-only path, and a
+		// destructive shell command with no body is refused here.
+		if v := argsGuardCheck(tool, args); v.Refuse {
 			routerAudit("diffguard", "tool", tool, "reason", v.Code)
 			return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
 		}
@@ -285,7 +286,7 @@ func (d *decisionBridge) advisoryHooks(request []byte) {
 		}
 		// Advisory cannot block, but it must audit the same secret shapes
 		// enforcing would refuse, so the default mode stays observable.
-		if v := argsSecretCheck(toolArgs(f.Params)); v.Refuse {
+		if v := argsGuardCheck(tool, toolArgs(f.Params)); v.Refuse {
 			routerAudit("diffguard", "mode", "advisory", "tool", tool, "reason", v.Code)
 		}
 		if body, ok := writeContent(toolArgs(f.Params)); ok {

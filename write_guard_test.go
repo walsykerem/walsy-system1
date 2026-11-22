@@ -38,6 +38,22 @@ func TestWriteGuardMatchesRelativeToAbsolute(t *testing.T) {
 	}
 }
 
+// A bare read (no directory) must not license a write to a same-named file in
+// another directory: that write would land in a directory never read. The
+// reverse still holds: a full-path read licenses the same file named bare.
+func TestWriteGuardBareReadDoesNotLicensePathedWrite(t *testing.T) {
+	g := newWriteGuard()
+	g.check("read_file", guardArgs("a.go"))
+	if _, blocked := g.check("write_file", guardArgs("/repo/sub/a.go")); !blocked {
+		t.Fatal("bare read licensed a pathed write into an unread directory")
+	}
+	h := newWriteGuard()
+	h.check("read_file", guardArgs("/repo/sub/a.go"))
+	if _, blocked := h.check("write_file", guardArgs("a.go")); blocked {
+		t.Fatal("pathed read must license the same file named bare")
+	}
+}
+
 func TestWriteGuardRepeatLimit(t *testing.T) {
 	g := newWriteGuard()
 	args := json.RawMessage(`{"path":"/tmp/r.txt","text":"same"}`)

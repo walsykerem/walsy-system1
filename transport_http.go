@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -137,8 +138,20 @@ type proxyResult struct {
 	headers http.Header
 }
 
+// requestID reads the JSON-RPC id from a frame so an error reply can echo it
+// instead of answering every failure with id:null.
+func requestID(body []byte) json.RawMessage {
+	var f struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(body, &f) != nil {
+		return nil
+	}
+	return f.ID
+}
+
 func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Request) proxyResult {
-	fail := proxyResult{status: http.StatusOK, body: rpcError(nil, -32000, "upstream unavailable")}
+	fail := proxyResult{status: http.StatusOK, body: rpcError(requestID(body), -32000, "upstream unavailable")}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream, bytes.NewReader(body))
 	if err != nil {
 		return fail

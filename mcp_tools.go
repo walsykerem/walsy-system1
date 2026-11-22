@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,13 +9,40 @@ import (
 	"strings"
 )
 
+// maxToolsFrame bounds one stdin frame, so an oversized frame cannot make the
+// tools server allocate without bound. It reuses the HTTP body bound.
+const maxToolsFrame = maxHTTPFrame
+
+// frameLimitReader counts the bytes read since the last reset, so one frame is
+// capped. The caller resets n before each decode.
+type frameLimitReader struct {
+	r io.Reader
+	n int
+}
+
+var errFrameTooLarge = errors.New("tools frame too large")
+
+func (l *frameLimitReader) Read(p []byte) (int, error) {
+	if l.n >= maxToolsFrame {
+		return 0, errFrameTooLarge
+	}
+	if len(p) > maxToolsFrame-l.n {
+		p = p[:maxToolsFrame-l.n]
+	}
+	n, err := l.r.Read(p)
+	l.n += n
+	return n, err
+}
+
 // runToolsServer is walsy-system1's own MCP stdio server: it exposes the
 // dashboard state and the relay audit log as two read-only tools, so the proxy
 // is a visible MCP entry instead of only wrapping someone else's server.
 func runToolsServer(in io.Reader, out io.Writer) {
-	dec := json.NewDecoder(bufio.NewReader(in))
+	lr := &frameLimitReader{r: in}
+	dec := json.NewDecoder(lr)
 	enc := json.NewEncoder(out)
 	for {
+		lr.n = 0
 		var req struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`

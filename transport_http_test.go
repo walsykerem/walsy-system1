@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -169,5 +170,34 @@ func TestHTTPUnreadableBodyRejected(t *testing.T) {
 	mcpHTTPHandler().ServeHTTP(rec, r)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unreadable body: status = %d, want 400", rec.Code)
+	}
+}
+
+// requestID reads the JSON-RPC id so an error reply can echo it, not id:null.
+func TestRequestIDReadsFrameID(t *testing.T) {
+	if id := requestID([]byte(`{"jsonrpc":"2.0","id":7,"method":"x"}`)); string(id) != "7" {
+		t.Fatalf("want id 7, got %s", id)
+	}
+	if id := requestID([]byte(`{"id":"abc"}`)); string(id) != `"abc"` {
+		t.Fatalf("want \"abc\", got %s", id)
+	}
+	if id := requestID([]byte("not json")); id != nil {
+		t.Fatalf("unparsable body must yield a nil id, got %s", id)
+	}
+}
+
+// An unreachable upstream must answer with the request's own id, not id:null.
+func TestProxyHTTPFailureEchoesID(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":42,"method":"tools/list"}`)
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	res := proxyHTTP(context.Background(), "http://127.0.0.1:1/mcp", body, r)
+	if res.status != http.StatusOK {
+		t.Fatalf("want 200, got %d", res.status)
+	}
+	var out struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(res.body, &out) != nil || string(out.ID) != "42" {
+		t.Fatalf("failure must echo id 42, got %s", res.body)
 	}
 }

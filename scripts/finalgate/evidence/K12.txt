@@ -1,16 +1,16 @@
 # scripts/verify.sh run
-timestamp: 2026-11-22T15:25:49Z
+timestamp: 2026-11-22T16:13:44Z
 command: GOCACHE=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache scripts/verify.sh
 --- output
 == 1/8 gofmt ==
 == 2/8 go vet ==
 == 3/8 go test -race ==
-ok  	walsy-system1	5.121s
+ok  	walsy-system1	5.703s
 ?   	walsy-system1/scripts/finalgate	[no test files]
-ok  	walsy-system1/scripts/relay56	2.429s
+ok  	walsy-system1/scripts/relay56	1.436s
 == 4/8 go build ==
 == 5/8 lrecon digest ==
-lrecon digest: d803a281fc7ed238ee6a98a3f09b3d0a8f7fad45f8627f7308dfcad3ac835194
+lrecon digest: b68259e4327c501e68b15c849360a8b4362f864f6c1bda87f4ea5adfe8965f8f
 lrecon kind: macho
 == 6/8 non-ascii scan ==
 ascii clean: 74 files

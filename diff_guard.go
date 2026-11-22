@@ -32,6 +32,11 @@ var diffSecretPatterns = []*regexp.Regexp{
 // diffSecretAssign matches a credential key assigned a quoted or bare literal.
 var diffSecretAssign = regexp.MustCompile(`(?i)\\?["']?\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|token|aws_secret_access_key|aws_access_key_id)\b\\?["']?\s*[:=]\s*("([^"]*)"|'([^']*)'|([^\s,;#]{6,}))`)
 
+// destructiveCommand shapes a shell command that removes or overwrites data
+// wholesale, where there is no file body to diff. The leading class includes a
+// quote, because the raw JSON arguments wrap the command in one.
+var destructiveCommand = regexp.MustCompile("(?i)(^|[\\s;&|(\"'])(rm\\s+-[a-z]*[rf]|mkfs(\\.[a-z0-9]+)?\\b|dd\\s+[^|;]*\\bof=|shred\\b|truncate\\s+(-s\\s*)?0\\b)")
+
 // diffSecurityCheck is the write gate's security precheck: it scans only the
 // lines the write ADDS, so a file that already carries a secret does not block
 // every later edit. It also refuses an emptying write and a pure deletion.
@@ -82,6 +87,27 @@ func argsSecretCheck(args json.RawMessage) diffVerdict {
 	return diffVerdict{}
 }
 
+// argsDestructiveCheck refuses a shell command that deletes or overwrites data
+// wholesale. It only judges command tools, so an ordinary write whose body
+// mentions "rm" is not refused.
+func argsDestructiveCheck(tool string, args json.RawMessage) diffVerdict {
+	if isCommandTool(tool) && destructiveCommand.MatchString(string(args)) {
+		return diffVerdict{Refuse: true, Code: "diff-dangerous-command", Steer: diffSteer("diff-dangerous-command", "")}
+	}
+	return diffVerdict{}
+}
+
+// argsGuardCheck is the argument-level precheck for a call that carries no file
+// body to diff: a credential shape anywhere, or a destructive shell command.
+func argsGuardCheck(tool string, args json.RawMessage) diffVerdict {
+	if v := argsSecretCheck(args); v.Refuse {
+		return v
+	}
+	return argsDestructiveCheck(tool, args)
+}
+
+// destructiveCommand matches a shell command that removes or overwrites data
+// wholesale, the class with no file body to diff.
 // diffSecretKind names what refused, without echoing the secret itself.
 func diffSecretKind(line string) string {
 	for _, re := range diffSecretPatterns {
@@ -174,6 +200,8 @@ func diffSteer(code, detail string) string {
 		return "this write empties " + detail + ": delete the file deliberately, or write the content it should hold."
 	case "diff-destructive":
 		return "this diff only removes lines from " + detail + ": confirm the deletion is intended, or split it into a smaller reviewed change."
+	case "diff-dangerous-command":
+		return "this command deletes or overwrites files wholesale: do it deliberately outside the relay, or narrow it to the exact paths and files you mean."
 	}
 	return ""
 }

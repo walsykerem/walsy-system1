@@ -166,6 +166,31 @@ func TestRouterAuditRedaction(t *testing.T) {
 	}
 }
 
+// A loop of initialize frames may refill the budget only routerMaxRefills
+// times; past that the budget stays spent, so the refill path is bounded.
+func TestRouterBudgetRefillsAreBounded(t *testing.T) {
+	routerReset()
+	defer routerReset()
+	spendAll := func() {
+		for {
+			if _, _, spent := routerBudgetSpend(); !spent {
+				return
+			}
+		}
+	}
+	for i := 0; i < routerMaxRefills; i++ {
+		routerBudgetReset()
+		if _, _, spent := routerBudgetSpend(); !spent {
+			t.Fatalf("refill %d must restore the budget", i)
+		}
+		spendAll()
+	}
+	routerBudgetReset()
+	if _, _, spent := routerBudgetSpend(); spent {
+		t.Fatal("refill past the cap must not restore the budget")
+	}
+}
+
 func TestRouterBudgetSpendTable(t *testing.T) {
 	cases := []struct {
 		name   string

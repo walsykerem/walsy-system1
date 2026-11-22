@@ -31,14 +31,15 @@ type routerBreaker struct {
 }
 
 type routerPolicy struct {
-	init       bool
-	budgetMax  int
-	budgetLeft int
-	deny       map[string]bool
-	mirror     string
-	threshold  int
-	cooldown   time.Duration
-	breakers   map[string]routerBreaker
+	init          bool
+	budgetMax     int
+	budgetLeft    int
+	budgetRefills int
+	deny          map[string]bool
+	mirror        string
+	threshold     int
+	cooldown      time.Duration
+	breakers      map[string]routerBreaker
 }
 
 var (
@@ -109,12 +110,21 @@ func routerBudgetSpend() (left, max int, spent bool) {
 	return routerState.budgetLeft, routerState.budgetMax, true
 }
 
+// routerMaxRefills bounds how many new sessions may refill the retry budget, so
+// looping initialize cannot make the per-session throttle unbounded.
+const routerMaxRefills = 8
+
 // routerBudgetReset refills the budget at its documented boundary: a new MCP
-// session (initialize) or process start. There is no timed/automatic refill.
+// session (initialize) or process start. Refills are bounded by routerMaxRefills;
+// past that the budget stays spent.
 func routerBudgetReset() {
 	routerMu.Lock()
 	defer routerMu.Unlock()
 	routerInitLocked()
+	if routerState.budgetRefills >= routerMaxRefills {
+		return
+	}
+	routerState.budgetRefills++
 	routerState.budgetLeft = routerState.budgetMax
 }
 

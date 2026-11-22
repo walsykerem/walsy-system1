@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+// A destructive shell command is refused on a command tool even without a
+// file body to diff. An ordinary write whose body merely mentions "rm" is not.
+func TestArgsDestructiveCheck(t *testing.T) {
+	if v := argsDestructiveCheck("run_command", json.RawMessage(`{"command":"rm -rf /tmp/x"}`)); !v.Refuse || v.Code == "" {
+		t.Fatalf("rm -rf on a command tool must be refused, got %+v", v)
+	}
+	if v := argsDestructiveCheck("bash", json.RawMessage(`{"command":"dd if=/dev/zero of=/tmp/x"}`)); !v.Refuse {
+		t.Fatal("dd of= must be refused on a command tool")
+	}
+	if v := argsDestructiveCheck("write_file", json.RawMessage(`{"path":"/tmp/x","content":"rm -rf /"}`)); v.Refuse {
+		t.Fatal("a write whose content mentions rm must not be refused")
+	}
+	if v := argsDestructiveCheck("run_command", json.RawMessage(`{"command":"ls -la"}`)); v.Refuse {
+		t.Fatal("a benign command must not be refused")
+	}
+}
+
 func TestDiffSecurityCheck(t *testing.T) {
 	longOld := ""
 	for i := 0; i < diffDeleteLines+1; i++ {

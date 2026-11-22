@@ -35,16 +35,24 @@ func listenUnix(path string) (net.Listener, error) {
 	return l, nil
 }
 
-// serveUnix accepts clients until the listener closes. dial supplies one
-// upstream connection per client; nil is a transparent no-op (drain + EOF),
-// never a 503 or a synthetic error frame.
+// unixMaxConns caps concurrent served connections, so a burst of accepted
+// sockets cannot spawn goroutines without bound. Beyond the cap the accept
+// loop waits; new clients queue in the listen backlog.
+const unixMaxConns = 64
+
+// serveUnix accepts clients until the listener closes, at most unixMaxConns at
+// once. dial supplies one upstream connection per client; nil is a transparent
+// no-op (drain + EOF), never a 503 or a synthetic error frame.
 func serveUnix(l net.Listener, dial func() (net.Conn, error)) {
+	sem := make(chan struct{}, unixMaxConns)
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			return
 		}
+		sem <- struct{}{}
 		go func() {
+			defer func() { <-sem }()
 			defer c.Close()
 			if dial == nil {
 				_, _ = io.Copy(io.Discard, c) // no upstream: transparent no-op
