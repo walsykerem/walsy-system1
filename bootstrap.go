@@ -10,8 +10,10 @@ import (
 // binary with the requested transport. stdio needs an upstream command to
 // proxy, so it falls back to the self-contained tools server instead of
 // printing a command that dies at startup.
-// Only process wiring is emitted: no keys, tokens or other secrets.
-func opencodeMCPSnippet(name, transport string, upstream []string) string {
+// Named -listen/-upstream values are emitted before positional upstream args;
+// empty values are suppressed. Only process wiring is emitted: no keys, tokens
+// or other secrets.
+func opencodeMCPSnippet(name, transport, listen, upstreamAddr string, upstream []string) string {
 	if name == "" {
 		name = "system1"
 	}
@@ -25,8 +27,14 @@ func opencodeMCPSnippet(name, transport string, upstream []string) string {
 	if err != nil || !filepath.IsAbs(binary) {
 		binary = "walsy-system1"
 	}
-	command := make([]string, 0, len(upstream)+3)
+	command := make([]string, 0, len(upstream)+7)
 	command = append(command, binary, "-transport", transport)
+	if listen != "" {
+		command = append(command, "-listen", listen)
+	}
+	if upstreamAddr != "" {
+		command = append(command, "-upstream", upstreamAddr)
+	}
 	command = append(command, upstream...)
 	b, err := json.Marshal(map[string]any{
 		"mcp": map[string]any{

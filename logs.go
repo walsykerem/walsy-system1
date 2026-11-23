@@ -84,7 +84,7 @@ func usageCredits(usage map[string]any) (float64, bool) {
 // logCall records one outbound call. usage is an optional API usage object.
 func logCall(kind, outcome string, d time.Duration, reqB, respB int, usage map[string]any) {
 	now := time.Now()
-	credits, hasCredits := usageCredits(usage)
+	credits, _ := usageCredits(usage) // credits stay numeric in RAM only
 	e := LogEntry{
 		TS:      now.UnixMilli(),
 		At:      now.In(time.Local).Format("15:04:05"),
@@ -106,13 +106,14 @@ func logCall(kind, outcome string, d time.Duration, reqB, respB int, usage map[s
 	if len(logRing) > logRingSize {
 		logRing = logRing[len(logRing)-logRingSize:]
 	}
-	creditStr := ""
-	if hasCredits {
-		creditStr = strconv.FormatFloat(credits, 'f', -1, 64)
-	}
+	creditStr := strconv.FormatFloat(credits, 'f', -1, 64) // numeric amount only; never the usage object, key or answer
 	// Same source as relayLog: only coarse labels and numeric totals reach disk.
-	routerAudit("call", "method", kind, "status", outcome, "count", strconv.Itoa(reqB),
-		"latency_ms", strconv.FormatInt(d.Milliseconds(), 10), "credits", creditStr)
+	kv := []string{"method", kind, "status", outcome, "count", strconv.Itoa(reqB),
+		"latency_ms", strconv.FormatInt(d.Milliseconds(), 10), "credits", creditStr}
+	if kind == "systemone" {
+		kv = append(kv, "source", "so")
+	}
+	routerAudit("call", kv...)
 }
 
 // usageLine flattens an API usage object to "key=value" pairs, sorted and

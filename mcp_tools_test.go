@@ -282,3 +282,37 @@ func TestToolsAuditMissingFileIsEmpty(t *testing.T) {
 		t.Fatalf("missing audit file = %s", got)
 	}
 }
+
+func TestToolsAuditRejectsSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := home + "/" + routerDir
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := dir + "/audit-target.jsonl"
+	if err := os.WriteFile(target, []byte(`{"status":"ok"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, dir+"/"+routerAuditName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toolsAudit(10, false); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("symlink audit must fail closed, got err=%v", err)
+	}
+}
+
+func TestToolsAuditRejectsNonRegular(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := home + "/" + routerDir
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir+"/"+routerAuditName, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toolsAudit(10, false); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("directory audit must fail closed, got err=%v", err)
+	}
+}

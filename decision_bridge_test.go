@@ -206,7 +206,7 @@ func TestTransientNotCached(t *testing.T) {
 func TestGateKeyCanonicalizesVolatileFields(t *testing.T) {
 	cap := soCapability()
 	base := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":1,"messageRef":"m1","sessionId":"s1"}}`)
-	variant := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":999,"messageRef":"m999","sessionId":"s999"},"id":88,"jsonrpc":"2.0","method":"tools/call"}`)
+	variant := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":999,"messageRef":"m999","sessionId":"s999"},"id":88,"jsonrpc":"2.0"}`)
 	if a, b := gateKey(base, cap), gateKey(variant, cap); a != b {
 		t.Fatalf("volatile fields changed gateKey: %s != %s", a, b)
 	}
@@ -287,5 +287,112 @@ func TestN4MissingCapabilityFailClosed(t *testing.T) {
 	_, blocked := d.enforcingGate([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file"}}`))
 	if !blocked {
 		t.Fatal("enforcing must fail closed on missing capability")
+	}
+}
+
+// TestConfigDeclaredCapabilityNeverBackfillsMCP proves config.txt cannot mint
+// opt-ins into an MCP frame: consent must be explicit on the frame itself.
+func TestConfigDeclaredCapabilityNeverBackfillsMCP(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WALSY_SO_MODE", "")
+	writeSOConfigForTest(t, "so_mode=enforcing\nneed_label=true\nno_scratch=true\nsafe=true\nreversible=true\nauthority=true\ncalibrated=true\nopt_in=true\nphase=before-model\n", 0600)
+
+	raw := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file"}}`)
+	f, err := decodeFrame(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := unwrapParams(raw, f)
+	// Consent is never invented: config fields are not frame capabilities.
+	if explicitCapability(params) {
+		t.Fatalf("config-declared opt-ins must not satisfy capability gate: %s", params)
+	}
+	d := newDecisionBridge()
+	// The frame carries no opt-ins, so enforcing must fail closed.
+	if _, blocked := d.enforcingGate(raw); !blocked {
+		t.Fatal("config-declared opt-ins must not unblock an opt-in-free frame")
+	}
+	state := buildSOState(string(params))
+	if strings.Contains(state, `"opt_in":true`) || strings.Contains(state, `"phase":"before-model"`) {
+		t.Fatalf("SO state must not invent config-declared opt-in: %s", state)
+	}
+}
+
+// A generation change via syncHold clears the strong hold; the locked helper
+// must not report it for the old generation.
+func TestHoldStrongForGenerationChange(t *testing.T) {
+	d := &decisionBridge{}
+	d.setHold(7, 0.9)
+	if !d.holdStrongFor(7) {
+		t.Fatal("strong hold lost immediately after setHold")
+	}
+	d.syncHold(8)
+	if d.holdStrongFor(7) {
+		t.Fatal("stale generation must not inherit strong hold after syncHold")
+	}
+	if d.holdStrongFor(8) {
+		t.Fatal("syncHold cleared holdStrong on generation change")
+	}
+}
+
+// A Bearer token or key=value secret in a free-text string field must not
+// reach the mirror; ordinary text must survive intact.
+func TestScrubbedMirrorScrubsFreeTextSecrets(t *testing.T) {
+	req := []byte(`{"params":{"note":"Authorization: Bearer s3cr3t-abc","detail":"api_key=leak123 keepme","plain":"hello world"},"secret":"do-not-leak"}`)
+	got := string(scrubbedMirror(req))
+	if strings.Contains(got, "s3cr3t-abc") || strings.Contains(got, "leak123") {
+		t.Fatalf("secret leaked into mirror body: %s", got)
+	}
+	if strings.Contains(got, "do-not-leak") {
+		t.Fatalf("secret-keyed field survived into mirror body: %s", got)
+	}
+	if !strings.Contains(got, "hello world") || !strings.Contains(got, "keepme") {
+		t.Fatalf("ordinary text was lost: %s", got)
+	}
+}
+
+// FIX 2: a notification (no id) on a gated method must be consumed without a
+// reply; the same frame with an id still gets an error reply.
+func TestEnforcingGateNotificationNoReply(t *testing.T) {
+	resetRouterForTest(t)
+	t.Setenv("EVREN_API_KEY", "")
+	t.Setenv("WALSY_SO_MODE", soModeEnforcing)
+	t.Setenv("WALSY_ROUTER_DENY", "read_file")
+	routerReset()
+	d := newDecisionBridge()
+	notification := []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"read_file"}}`)
+	if resp, blocked := d.enforcingGate(notification); !blocked || len(resp) != 0 {
+		t.Fatalf("notification must be gated with no reply: blocked=%v resp=%q", blocked, resp)
+	}
+	request := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"read_file"}}`)
+	resp, blocked := d.enforcingGate(request)
+	if !blocked || len(resp) == 0 {
+		t.Fatalf("request with id must get an error reply: blocked=%v resp=%q", blocked, resp)
+	}
+	var reply gateReply
+	if err := json.Unmarshal(resp, &reply); err != nil {
+		t.Fatalf("id reply not JSON: %v %q", err, resp)
+	}
+	if reply.Error.Code != -32001 {
+		t.Fatalf("id reply code = %d, want -32001", reply.Error.Code)
+	}
+}
+
+// FIX 2: an initialize notification still runs routerBudgetReset.
+func TestEnforcingGateInitializeNotificationRefills(t *testing.T) {
+	resetRouterForTest(t)
+	t.Setenv("EVREN_API_KEY", "")
+	t.Setenv("WALSY_SO_MODE", soModeEnforcing)
+	t.Setenv("WALSY_ROUTER_RETRY_BUDGET", "1")
+	routerReset()
+	d := newDecisionBridge()
+	initNotification := []byte(`{"jsonrpc":"2.0","method":"initialize","params":{}}`)
+	if resp, blocked := d.enforcingGate(initNotification); !blocked || len(resp) != 0 {
+		t.Fatalf("initialize notification must be gated with no reply: blocked=%v resp=%q", blocked, resp)
+	}
+	// The initialize notification refilled the budget; a capped first call passes.
+	call := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file",` + explicitCaps + `}}`)
+	if _, blocked := d.enforcingGate(call); blocked {
+		t.Fatal("first capped tool call after initialize notification must pass")
 	}
 }

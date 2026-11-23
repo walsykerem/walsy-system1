@@ -81,6 +81,10 @@ type uiPage struct {
 	// MsgOK marks a toast that follows a successful write, so a refusal and a
 	// confirmation do not look identical.
 	MsgOK bool
+	// Operator feedback is read-only: the mode banner names the active SO mode
+	// and the embedded feedback widget never accepts a mutation.
+	SOMode         string
+	ReadOnlyBanner bool
 }
 
 var uiTemplate = template.Must(template.New("index.html").ParseFS(dashboardAssets, "web/index.html"))
@@ -123,6 +127,8 @@ var uiWriteMessages = map[string]bool{
 	"ENDPOINT RESET":   true,
 	"PROVIDER SAVED":   true,
 	"PROVIDER REMOVED": true,
+	"PROMPT SAVED":     true,
+	"PROMPT REMOVED":   true,
 }
 
 func uiWroteState(msg string) bool {
@@ -167,8 +173,8 @@ func uiGo(w http.ResponseWriter, r *http.Request, path, msg string) {
 	http.Redirect(w, r, path, http.StatusSeeOther)
 }
 
-func uiPromptsSheet(w http.ResponseWriter) {
-	renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts()})
+func uiPromptsSheet(w http.ResponseWriter, r *http.Request) {
+	renderPage(w, uiPage{Title: "Prompts", PromptSheetMode: true, Prompts: loadPrompts(), Msg: r.URL.Query().Get("msg"), MsgMs: uiMsgMs(r)})
 }
 
 func uiPromptAdd(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +248,8 @@ func uiSteps(steps []stateStep) []uiStep {
 
 func uiHomePage(msg string) uiPage {
 	goos, goarch := effectiveBuildTarget()
-	p := uiPage{Title: "Providers / Combo", Msg: msg, BuildTarget: goos + "/" + goarch, Prompt: loadSystemPrompt()}
+	p := uiPage{Title: "Providers / Combo", Msg: msg, BuildTarget: goos + "/" + goarch, Prompt: loadSystemPrompt(),
+		SOMode: soMode(), ReadOnlyBanner: true}
 	view, err := providerView()
 	if err != nil {
 		p.Msg = msg + " STATE UNAVAILABLE"

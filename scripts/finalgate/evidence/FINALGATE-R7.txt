@@ -1,0 +1,26 @@
+K1   done    0.8753
+K2   done    0.8599
+K3   done    0.8483
+K4   done    0.8438
+K5   done    0.8438
+K6   done    0.8833
+K7   done    0.8948
+K8   done    0.8537
+K9   done    0.8702
+K10  done    0.8884
+K11  done    0.8716
+K12  done    0.8678
+K13  done    0.8450
+K15  done    0.8842
+K16  done    0.8505
+K14  done    0.8867
+K17  done    0.8310
+K18  done    0.8286
+K19  done    0.8211
+K20  done    0.8798
+K21  done    0.8404
+K23  done    0.8106
+K24  done    0.8916
+K22  done    0.8494
+AGGREGATE 0.8592 mean over 24 claims, min 0.8106, open 0
+VERDICT COMPLETE 24/24

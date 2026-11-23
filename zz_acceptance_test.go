@@ -15,7 +15,7 @@ import (
 // no live System One call, no key material in assertions or output.
 
 func TestAcceptanceGap1ClientWiringSnippet(t *testing.T) {
-	s := opencodeMCPSnippet("system1", "stdio", []string{"stdio", "echo"})
+	s := opencodeMCPSnippet("system1", "stdio", "", "", []string{"stdio", "echo"})
 	for _, want := range []string{"system1", "-transport", "stdio"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("snippet missing %q: %s", want, s)

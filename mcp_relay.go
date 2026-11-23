@@ -32,7 +32,8 @@ func decodeFrame(raw []byte) (frame, error) {
 		Result json.RawMessage `json:"result"`
 		Params json.RawMessage `json:"params"`
 	}
-	if _, err := strictObject(t, 1<<20, nil); err != nil {
+	// Inbound frames share the transport's 8 MiB budget; the 1 MiB cap is for SO replies only.
+	if _, err := strictObject(t, maxHTTPFrame, nil); err != nil {
 		return frame{}, err
 	}
 	if err := json.Unmarshal(t, &env); err != nil {

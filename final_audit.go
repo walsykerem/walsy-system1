@@ -18,12 +18,14 @@ type auditVerdict struct {
 }
 
 type auditState struct {
-	Todo            []string `json:"todo"`
-	Done            []string `json:"done"`
-	Risk            []string `json:"risk"`
-	Risks           []string `json:"risks"`
-	UnverifiedRisk  []string `json:"unverified_risk"`
-	UnverifiedRisks []string `json:"unverified_risks"`
+	Todo            []string        `json:"todo"`
+	Done            []string        `json:"done"`
+	Risk            []string        `json:"risk"`
+	Risks           []string        `json:"risks"`
+	UnverifiedRisk  []string        `json:"unverified_risk"`
+	UnverifiedRisks []string        `json:"unverified_risks"`
+	Who             json.RawMessage `json:"who"`  // owner metadata, shape-agnostic
+	When            json.RawMessage `json:"when"` // round metadata, shape-agnostic
 }
 
 // finalAudit checks a "done" claim against the state it came from. A todo

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ type provider struct {
 	Name   string
 	Base   string
 	KeyEnv string
+	Cost   int // optional per-call cost from the 4th registry column; lower is tried first
 }
 
 // bakedProviders: compile-time default registry (plan.md S1e, line 17).
@@ -80,9 +82,36 @@ func loadRegistryFromWithOverrides(path string) ([]provider, map[string]bool, er
 	if err != nil {
 		return nil, nil, err
 	}
+	enforcing := soMode() == soModeEnforcing
+	// shortcut: a costed loopback line defines the local probe pool and drops
+	// baked loopback slots; uncosted registries keep every baked slot. Upgrade:
+	// expose slot priority in the UI instead of inferring it from the cost column.
+	explicitLocal := false
+	for _, p := range lines {
+		if enforcing && soProviderOverrideDeniedLine(p) {
+			continue
+		}
+		if p.Cost > 0 && isLoopbackBase(p.Base) {
+			explicitLocal = true
+			break
+		}
+	}
 	out := bakedRegistry()
+	if explicitLocal {
+		kept := out[:0]
+		for _, p := range out {
+			if !isLoopbackBase(p.Base) {
+				kept = append(kept, p)
+			}
+		}
+		out = kept
+	}
 	overrides := make(map[string]bool)
 	for _, p := range lines {
+		if enforcing && soProviderOverrideDeniedLine(p) {
+			routerAudit("provider", "reason", soProviderOverrideDenied)
+			continue
+		}
 		overrides[p.Name] = true
 		replaced := false
 		for i := range out {
@@ -143,8 +172,8 @@ func parseRegistryLines(data []byte) ([]provider, error) {
 			return nil, fmt.Errorf("registry line has CR")
 		}
 		fields := strings.Split(line, ",")
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("registry line needs 3 fields")
+		if len(fields) != 3 && len(fields) != 4 {
+			return nil, fmt.Errorf("registry line needs 3 or 4 fields")
 		}
 		name := strings.TrimSpace(fields[0])
 		base := strings.TrimSpace(fields[1])
@@ -158,7 +187,15 @@ func parseRegistryLines(data []byte) ([]provider, error) {
 		if !validProviderBase(base) {
 			return nil, fmt.Errorf("registry endpoint rejected")
 		}
-		out = append(out, provider{Name: name, Base: base, KeyEnv: keyEnv})
+		cost := 0
+		if len(fields) == 4 {
+			var err error
+			cost, err = strconv.Atoi(strings.TrimSpace(fields[3]))
+			if err != nil || cost < 0 {
+				return nil, fmt.Errorf("registry cost rejected")
+			}
+		}
+		out = append(out, provider{Name: name, Base: base, KeyEnv: keyEnv, Cost: cost})
 	}
 	return out, nil
 }
@@ -175,7 +212,7 @@ func writeRegistryLines(lines []provider) error {
 	}
 	var b strings.Builder
 	for _, p := range lines {
-		if p.Name == "" || p.Base == "" || p.KeyEnv == "" || isDemoName(p.Name) ||
+		if p.Name == "" || p.Base == "" || p.KeyEnv == "" || p.Cost < 0 || isDemoName(p.Name) ||
 			len(p.Name) > maxProviderNameLen ||
 			strings.ContainsRune(p.Name+p.Base+p.KeyEnv, ',') || hasControl(p.Name+p.Base+p.KeyEnv) ||
 			!validProviderBase(p.Base) {
@@ -186,6 +223,10 @@ func writeRegistryLines(lines []provider) error {
 		b.WriteString(p.Base)
 		b.WriteByte(',')
 		b.WriteString(p.KeyEnv)
+		if p.Cost > 0 {
+			b.WriteByte(',')
+			b.WriteString(strconv.Itoa(p.Cost))
+		}
 		b.WriteByte('\n')
 	}
 	f, err := os.CreateTemp(dir, ".providers-*")
@@ -253,6 +294,19 @@ func removeRegistryEntry(name string) error {
 	return writeRegistryLines(out)
 }
 
+const soProviderOverrideDenied = "so-provider-override-denied"
+
+// soProviderOverrideDeniedLine reports a registry line that would replace a
+// baked provider or its SO credential in enforcing mode.
+func soProviderOverrideDeniedLine(p provider) bool {
+	for _, b := range bakedProviders {
+		if strings.EqualFold(b.Name, p.Name) {
+			return true
+		}
+	}
+	return strings.EqualFold(p.Base, bakedBase("Evren System One")) || strings.EqualFold(p.KeyEnv, "EVREN_API_KEY")
+}
+
 func bakedBase(name string) string {
 	if name == "Evren" {
 		return bakedBase("Evren System One")
@@ -298,6 +352,11 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func isLoopbackBase(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && isLoopbackHost(u.Hostname())
+}
+
 // pinTTL bounds how long a sticky provider stays trusted without a fresh
 // success. RAM only: restart -> empty -> config order.
 const pinTTL = 15 * time.Minute
@@ -318,6 +377,11 @@ func newPin(list []provider) *pin {
 func (p *pin) current() provider {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Clock expiry drops the sticky choice but never rotates engine identity.
+	if p.name != "" && !time.Now().Before(p.expires) {
+		p.name = ""
+		p.expires = time.Time{}
+	}
 	if p.name != "" && time.Now().Before(p.expires) {
 		for _, pr := range p.list {
 			if pr.Name == p.name {
@@ -333,7 +397,13 @@ func (p *pin) current() provider {
 
 func (p *pin) markSuccess(name string) {
 	p.mu.Lock()
-	if p.name != name {
+	want := p.name
+	if want == "" || !time.Now().Before(p.expires) {
+		if len(p.list) > 0 {
+			want = p.list[0].Name
+		}
+	}
+	if want != "" && want != name {
 		p.gen.Add(1)
 	}
 	p.name = name
@@ -362,6 +432,9 @@ func (p *pin) rotateOnFailure() provider {
 func rotationOrder(list []provider) []provider {
 	ordered := append([]provider(nil), list...)
 	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Cost != ordered[j].Cost {
+			return ordered[i].Cost < ordered[j].Cost
+		}
 		a := sha256.Sum256([]byte(ordered[i].Name))
 		b := sha256.Sum256([]byte(ordered[j].Name))
 		ha, hb := hex.EncodeToString(a[:]), hex.EncodeToString(b[:])

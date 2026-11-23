@@ -1,26 +1,40 @@
 // Command asciiscan flags any non-ASCII byte in the files verify.sh scans. It
 // is byte-accurate: only bytes >= 0x80 are reported, so tab (0x09) and printable
 // ASCII (0x20-0x7E) never trip it. Prints "ascii clean: N files" and exits
-// non-zero on the first non-ASCII byte of any file.
+// non-zero on the first non-ASCII byte of any file, or when a listed input path
+// is missing or not a regular file.
 package main
 
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 )
 
 func main() {
-	files := os.Args[1:]
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run scans every listed path and returns the process exit status. An unusable
+// path is an error, not a silent skip.
+func run(files []string, stdout, stderr io.Writer) int {
 	bad := false
 	for _, path := range files {
 		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			fmt.Fprintf(stderr, "asciiscan: %s: %v\n", path, err)
+			bad = true
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "asciiscan: %s: not a regular file\n", path)
+			bad = true
 			continue
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "non-ascii: %s: %v\n", path, err)
+			fmt.Fprintf(stderr, "non-ascii: %s: %v\n", path, err)
 			bad = true
 			continue
 		}
@@ -32,12 +46,13 @@ func main() {
 			}
 		}
 		if i >= 0 {
-			fmt.Fprintf(os.Stderr, "non-ascii: %s:%d\n", path, 1+bytes.Count(b[:i], []byte{'\n'}))
+			fmt.Fprintf(stderr, "non-ascii: %s:%d\n", path, 1+bytes.Count(b[:i], []byte{'\n'}))
 			bad = true
 		}
 	}
 	if bad {
-		os.Exit(1)
+		return 1
 	}
-	fmt.Printf("ascii clean: %d files\n", len(files))
+	fmt.Fprintf(stdout, "ascii clean: %d files\n", len(files))
+	return 0
 }

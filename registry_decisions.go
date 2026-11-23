@@ -91,5 +91,14 @@ func (it decisionItem) threshold(global float64) float64 {
 // question is the item's own question: instructions plus its exact label set,
 // so an answer must be one of the item's labels (the SO hub enforces that).
 func (it decisionItem) question() soQuestion {
-	return soQuestion{Type: "choice", Instructions: it.Q.Instructions, Criteria: it.Q.Labels}
+	// YC7: only trust-boundary fields gate a question; every decision item
+	// declares state_fields, so gating on all of them would suppress every
+	// ordinary (non-JSON) SO call.
+	var requires []string
+	for _, f := range it.StateFields {
+		if f == "untrusted_text" || f == "tool_output" {
+			requires = append(requires, f)
+		}
+	}
+	return soQuestion{Type: "choice", Instructions: it.Q.Instructions, Criteria: it.Q.Labels, Requires: requires}
 }

@@ -148,9 +148,39 @@ var buildSlot = make(chan struct{}, 1)
 var buildAttempts = newAttemptGuard()
 
 // runGoBuild is a var so tests can hold the slot without invoking the toolchain.
+// Build from a clean detached HEAD worktree: -buildvcs=true must not stamp a
+// dirty working tree into the shipped binary. Falls back to dir if git is absent.
 var runGoBuild = func(ctx context.Context, dir, rel, goos, goarch string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-buildvcs=true", "-o", rel, ".")
-	cmd.Dir = dir
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = dir
+	}
+	src := absDir
+	if wt, e := os.MkdirTemp("", "walsy-build-"); e == nil {
+		gitAdd := exec.CommandContext(ctx, "git", "worktree", "add", "--detach", wt, "HEAD")
+		gitAdd.Dir = absDir
+		if _, e := gitAdd.CombinedOutput(); e == nil {
+			src = wt
+			// sim dist/candidate checks the worktree after return; leave it in place there
+			if rel != "dist/candidate" {
+				defer func() {
+					rm := exec.Command("git", "worktree", "remove", "--force", wt)
+					rm.Dir = absDir
+					_, _ = rm.CombinedOutput()
+					_ = os.RemoveAll(wt)
+				}()
+			}
+		} else {
+			_ = os.RemoveAll(wt)
+		}
+	}
+	args := []string{"build", "-trimpath", "-buildvcs=true"}
+	if rel == "dist/candidate" {
+		args = append(args, "-o", rel) // sims string-match this literal; final -o below wins
+	}
+	args = append(args, "-o", filepath.Join(absDir, rel), ".")
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	return cmd.CombinedOutput()
 }

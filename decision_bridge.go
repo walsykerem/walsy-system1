@@ -3,11 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -26,16 +29,24 @@ import (
 // poisoning the cache. Never log raw payload, secret, conf, token or cost.
 
 type decisionBridge struct {
-	mu        sync.Mutex
-	cache     *shardedCache
-	pin       *pin
-	keySet    bool
-	marker    sync.Once
-	guard     *writeGuard
-	preflight *preflightCalibration
-	chain     *receiptChain
-	flight    *soFlightGroup
-	oraclePin []byte // RAM-only sha256(endpoint||x00||key), set at session start
+	mu               sync.Mutex
+	cache            *shardedCache
+	pin              *pin
+	keySet           bool
+	marker           sync.Once
+	guard            *writeGuard
+	preflight        *preflightCalibration
+	chainMu          sync.Mutex // guards chain and chainBad
+	chain            *receiptChain
+	chainBad         bool // loadReceiptChain failed closed: never append to a broken ledger
+	flight           *soFlightGroup
+	oraclePin        []byte // RAM-only sha256(endpoint||x00||key), set at session start
+	endpointSnapshot string // async receipts never read the mutable soEndpoint global
+
+	holdMu     sync.Mutex
+	holdGen    uint64
+	holdUntil  time.Time
+	holdStrong bool // only >0.8 arms hysteresis; a 0.80 boundary admit does not
 }
 
 func newDecisionBridge() *decisionBridge {
@@ -45,8 +56,34 @@ func newDecisionBridge() *decisionBridge {
 	if err != nil {
 		list = bakedRegistry()
 	}
+	chain := loadReceiptChain()
+	chainBad := chain == nil // never substitute a fresh ledger for a broken one
 	return &decisionBridge{cache: newShardedCache(), pin: newPin(list), keySet: keySet,
-		guard: newWriteGuard(), preflight: newPreflightCalibration(), chain: &receiptChain{}, flight: newSOFlightGroup(), oraclePin: oraclePin}
+		guard: newWriteGuard(), preflight: newPreflightCalibration(), chain: chain, chainBad: chainBad,
+		flight: newSOFlightGroup(), oraclePin: oraclePin, endpointSnapshot: soEndpoint}
+}
+
+// receiptChainWriteMu serialises the reload-and-append check so two bridges in
+// one process cannot both start from the same on-disk head.
+var receiptChainWriteMu sync.Mutex
+
+// appendChainReceipt reloads the persisted tail before appending: the ledger is
+// shared on disk across bridges, and a broken/unreadable chain fails closed.
+func (d *decisionBridge) appendChainReceipt(rec receipt) (string, error) {
+	receiptChainWriteMu.Lock()
+	defer receiptChainWriteMu.Unlock()
+	d.chainMu.Lock()
+	defer d.chainMu.Unlock()
+	if d.chainBad || d.chain == nil {
+		return "", errReceiptUnsafeFile
+	}
+	disk := loadReceiptChain()
+	if disk == nil {
+		d.chainBad = true
+		return "", errReceiptUnsafeFile
+	}
+	d.chain = disk
+	return d.chain.appendReceipt(rec)
 }
 
 const (
@@ -99,8 +136,8 @@ func writeField(h io.Writer, s string) {
 // gateKeyBytes binds a decision to a request's canonical form, capability
 // config, rubric/policy versions, model, conf-rule, registry digest and prompt
 // set. Volatile envelope identifiers are stripped before canonicalState.
-// shortcut: exact canonical key only; semantic/embedding tier stays CLOSED,
-// reopen only with a measured accuracy-vs-hit sweep.
+// shortcut: polite/filler words in the state text are folded, no embedding or
+// paraphrase tier; upgrade only with a measured accuracy-vs-hit sweep.
 func gateKeyBytes(request []byte, cap capabilityConfig) [32]byte {
 	var obj map[string]any
 	dec := json.NewDecoder(bytes.NewReader(request))
@@ -109,13 +146,19 @@ func gateKeyBytes(request []byte, cap capabilityConfig) [32]byte {
 		obj = nil
 	}
 	if obj != nil {
-		for _, k := range []string{"id", "jsonrpc", "method"} {
+		for _, k := range []string{"id", "jsonrpc"} {
 			delete(obj, k)
 		}
+		foldKeyState(obj)
 	}
 	b, _ := json.Marshal(obj)
 	h := sha256.New()
 	_, _ = h.Write([]byte(canonicalState(string(b))))
+	// B4: bind the surviving question set into the namespace. Requires stays
+	// local-only (json:"-"); only its applicability-derived names are hashed.
+	for _, name := range activeQuestionNames(string(b)) {
+		writeField(h, name)
+	}
 	c, _ := json.Marshal(cap)
 	writeField(h, string(c))
 	writeField(h, keyRubricVersion)
@@ -129,10 +172,48 @@ func gateKeyBytes(request []byte, cap capabilityConfig) [32]byte {
 	return out
 }
 
+// foldKeyState drops only exact polite/filler tokens from state text so a
+// rephrased request reuses its cell. Meaning-bearing words are never dropped.
+var keyStateFillers = map[string]bool{
+	"please": true, "kindly": true, "just": true, "simply": true,
+	"this": true, "that": true, "same": true, "the": true, "a": true, "an": true,
+}
+
+func foldKeyState(obj map[string]any) {
+	if s, ok := obj["state"].(string); ok {
+		words := strings.Fields(s)
+		out := words[:0]
+		for _, w := range words {
+			if !keyStateFillers[w] {
+				out = append(out, w)
+			}
+		}
+		obj["state"] = strings.Join(out, " ")
+	}
+	if params, ok := obj["params"].(map[string]any); ok {
+		foldKeyState(params)
+	}
+}
+
 // gateKey is the string wrapper kept for tests and callers that compare hex.
 func gateKey(request []byte, cap capabilityConfig) string {
 	k := gateKeyBytes(request, cap)
 	return hex.EncodeToString(k[:])
+}
+
+// activeQuestionNames returns the ids (plus Requires names) of the questions
+// that still apply to this raw request state, in stable order.
+func activeQuestionNames(state string) []string {
+	var names []string
+	for id, it := range loadDecisionItems() {
+		q := it.question()
+		if !questionApplicable(q, state) {
+			continue
+		}
+		names = append(names, id+":"+strings.Join(q.Requires, ","))
+	}
+	sort.Strings(names)
+	return names
 }
 
 // buildSOState prepares the envelope for SO. Consent is never invented: missing
@@ -140,7 +221,9 @@ func gateKey(request []byte, cap capabilityConfig) string {
 // data and stay out of the SO state entirely; they remain in the local UI.
 // A null return means the SO-bound skeleton could not be built safely; the
 // caller must fail open without a POST (a rune-capped state is never truncated).
-func buildSOState(request string) string {
+// buildSOStateDetailed keeps the typed ErrStateTruncated from capSOState so the
+// decide hub can reject an over-cap envelope before any SO POST.
+func buildSOStateDetailed(request string) (string, error) {
 	var obj map[string]any
 	if json.Unmarshal([]byte(request), &obj) != nil || obj == nil {
 		obj = map[string]any{}
@@ -155,14 +238,15 @@ func buildSOState(request string) string {
 	b, _ := json.Marshal(obj)
 	var e stateEnvelope
 	if json.Unmarshal([]byte(buildState(string(b))), &e) != nil {
-		return ""
+		return "", nil
 	}
 	// Prompt bodies never enter this state: only their ids and SHA-256 go on
 	// the wire, and the whole payload is rune-capped before any POST.
-	state, err := soStateFromEnvelope(e)
-	if err != nil || state == "" {
-		return ""
-	}
+	return soStateFromEnvelope(e)
+}
+
+func buildSOState(request string) string {
+	state, _ := buildSOStateDetailed(request)
 	return state
 }
 
@@ -171,6 +255,39 @@ func buildSOState(request string) string {
 // retried, not frozen into a fail-open cell.
 var terminalNegative = map[string]bool{
 	"so-low-conf": true, "so-no": true, "so-other": true, "registry-nonproceed": true,
+}
+
+// layer0SkipReason mirrors route's deterministic layer-0 exits so the bridge
+// can return them before route's ambiguous shadow probe reaches SO. Keeping the
+// probe for real decisions preserves FA5 calibration.
+func layer0SkipReason(state string) string {
+	var e stateEnvelope
+	if json.Unmarshal([]byte(state), &e) != nil {
+		return "no-state"
+	}
+	if !inScope(e) {
+		if !e.OptIn {
+			return "-32602"
+		}
+		return "layer0-scope"
+	}
+	f := layer0{NeedLabel: e.NeedLabel, NoScratch: e.NoScratch, Safe: e.Safe,
+		Reversible: e.Reversible, CleanRename: !staleRename(e.State)}
+	if !gate(f) {
+		return "layer0-gate"
+	}
+	if staticShortCircuit(e.State) {
+		return "layer0-static"
+	}
+	return ""
+}
+
+func skipResult(reason string) routeResult {
+	r := passResult(reason, false)
+	if r.Steer == "" {
+		r.Steer = SteerText(reason, r.Label)
+	}
+	return r
 }
 
 // cacheResult projects a terminal route result into the cell the bridge stores.
@@ -218,11 +335,27 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 		return passResult("no-key", false)
 	}
 	cap := soCapability()
-	state := buildSOState(string(request))
+	state, stateErr := buildSOStateDetailed(string(request))
+	if errors.Is(stateErr, ErrStateTruncated) {
+		return passResult("input_truncated", false)
+	}
 	p := preflightFromState(state)
+	if reason := layer0SkipReason(state); reason != "" {
+		r := skipResult(reason)
+		recordPreflight(p, r, d.preflight)
+		routerAudit("gate", "reason", reason)
+		// skip-audit is an allowlisted reason value; routerAudit drops unknown
+		// keys, so the corpus token travels in the reason field.
+		routerAudit("gate", "reason", "skip-audit")
+		if strings.HasPrefix(reason, "layer0-") {
+			d.emitReceiptDetailed(r, "", "", receiptDetails{Event: "skip", Force: true})
+		}
+		return r
+	}
 	gen := d.pin.generation()
+	d.syncHold(gen)
 	key := d.cacheKey(request, cap, gen)
-	if cached, hit := d.cache.lookup(key); hit {
+	if cached, hit := d.cache.lookupForDecision(key); hit {
 		r := cachedResult(cached)
 		recordPreflight(p, r, d.preflight)
 		admitStats.record(r.Decision == decPin)
@@ -231,14 +364,80 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 	r := d.flight.do(key, func() routeResult { return route(state, d.pin) })
 	// Shadow only: preflight NEVER changes r. Recorded after r is final.
 	recordPreflight(p, r, d.preflight)
+	// FA5: an ambiguous shadow verdict is still probed in advisory mode, but
+	// the probe stays in the calibration ring and never changes admission.
+	if p.Ambiguous && r.LastDecision.Choice == "" && soMode() != soModeEnforcing && state != "" {
+		adv := askSO(state)
+		if d.preflight != nil {
+			d.preflight.add("ambiguous", "so-"+adv.Choice)
+		}
+	}
 	admitStats.record(r.Decision == decPin)
+	admitConf := r.LastDecision.Conf
+	// FA8: once this bridge has admitted, a later below-cut re-vote on the same
+	// generation keeps the admit. Rotation clears the hold via syncHold.
+	// shortcut: only a >0.8 admit arms the hold; a 0.80 boundary admit stays
+	// reversible so conf 0.79 on a new state abstains (FA4). Upgrade: per-item
+	// hysteresis thresholds from the registry.
+	if r.Reason == "so-low-conf" && r.LastDecision.Conf >= 0.75 && d.holdStrongFor(gen) {
+		r = routeResult{Decision: decPin, Reason: "so-admit-hysteresis", Covered: true,
+			ConfBucket: confBucket(0.8), LastDecision: r.LastDecision}
+	}
+	// FA11: reason-coded ranking trace only; no raw confidence or probabilities.
+	if r.LastDecision.Choice != "" {
+		t := r.LastDecision.Trace
+		slog.Info("ranking_trace", "strategy", t.Strategy, "tier", t.Tier,
+			"comparable", t.Comparable, "score_kind", t.ScoreKind,
+			"decided_by", t.DecidedBy, "winner", t.Winner,
+			"runner_up", t.RunnerUp, "reason", t.Reason)
+	}
 	// Terminal admits and short-lived terminal abstains are cached; transient
-	// and degraded states never are. A pin that changed during computation must
-	// not write its answer under the old engine's key.
-	if (r.Decision == decPin || (r.Abstained && terminalNegative[r.Reason])) && d.pin.generation() == gen {
+	// and degraded states never are. Re-key after route: a successful admit may
+	// bump the pin generation while this call was in flight.
+	finalGen := d.pin.generation()
+	// A mid-flight engine swap invalidates the answer: neither the old nor the
+	// new generation may inherit a decision computed by the swapped-out engine.
+	// shortcut: only generation changes are guarded; a pin expiry alone is not a swap. Upgrade: track per-engine answer provenance.
+	if finalGen != gen {
+		return r
+	}
+	if r.Decision == decPin || (r.Abstained && terminalNegative[r.Reason]) {
 		d.cache.store(key, cacheResult(r))
+		if r.Decision == decPin {
+			d.setHold(finalGen, admitConf)
+		}
 	}
 	return r
+}
+
+func (d *decisionBridge) syncHold(gen uint64) {
+	d.holdMu.Lock()
+	defer d.holdMu.Unlock()
+	if d.holdGen != gen {
+		d.holdGen, d.holdUntil, d.holdStrong = gen, time.Time{}, false
+	}
+}
+
+func (d *decisionBridge) holdActive() bool {
+	d.holdMu.Lock()
+	defer d.holdMu.Unlock()
+	return time.Now().Before(d.holdUntil)
+}
+
+// holdStrongFor reads the hold flag under holdMu and binds it to gen, so a
+// syncHold that cleared the flag on a generation change cannot leak a stale
+// strong hold into this generation.
+func (d *decisionBridge) holdStrongFor(gen uint64) bool {
+	d.holdMu.Lock()
+	defer d.holdMu.Unlock()
+	return d.holdGen == gen && d.holdStrong && time.Now().Before(d.holdUntil)
+}
+
+func (d *decisionBridge) setHold(gen uint64, conf float64) {
+	d.holdMu.Lock()
+	defer d.holdMu.Unlock()
+	d.holdGen, d.holdUntil = gen, time.Now().Add(cacheTTLPositive)
+	d.holdStrong = conf > 0.8
 }
 
 // unwrapParams returns the params object of a JSON-RPC envelope so buildState
@@ -265,23 +464,98 @@ func unwrapParams(raw []byte, f frame) []byte {
 // decideFrame is the single decision hook: decode once, inject the trusted
 // method, route in-scope frames through decide, pass everything else through
 // without an SO call. Out-of-scope frames are reported, never gated.
+// The one-value form is kept for existing callers; decideFrameDetailed exposes
+// the typed SO answer so no second SO POST is needed for latency accounting.
 func (d *decisionBridge) decideFrame(raw []byte) routeResult {
-	// YC8 trust boundary: refuse a 1 MiB+ frame before any parse or SO call.
-	if len(raw) >= 1<<20 {
-		return passResult("frame-too-large", false)
+	r, _ := d.decideFrameDetailed(raw)
+	return r
+}
+
+func (d *decisionBridge) decideFrameDetailed(raw []byte) (routeResult, soDecision) {
+	// YC8 trust boundary: refuse a frame above the transport budget before any parse or SO call.
+	if len(raw) >= maxHTTPFrame {
+		return passResult("frame-too-large", false), soDecision{}
 	}
 	f, err := decodeFrame(raw)
 	if err != nil {
-		return passResult("no-state", false)
+		return passResult("no-state", false), soDecision{}
 	}
 	m := strings.ToLower(f.Method)
 	if m != "initialize" && m != "tools/call" {
 		routerAudit("gate", "reason", "layer0-scope", "method", f.Method)
-		return passResult("layer0-scope", false)
+		return passResult("layer0-scope", false), soDecision{}
 	}
-	r := d.decide(unwrapParams(raw, f))
-	d.emitReceipt(r, f.Method, toolName(f.Params))
-	return r
+	params := unwrapParams(raw, f)
+	keyHash := gateKeyBytes(params, soCapability())
+	r := d.decide(params)
+	tool := toolName(f.Params)
+	det := receiptDetails{
+		Force:     true, // every in-scope frame is chained, including local passes
+		GateKey:   hex.EncodeToString(keyHash[:]),
+		Item:      safeReceiptField(tool),
+		Phase:     safeReceiptField(jsonStringField(f.Params, "phase")),
+		Choice:    safeReceiptField(r.LastDecision.Choice),
+		AdmitDeny: "deny",
+		Outcome:   safeReceiptField(r.Reason),
+		LatencyMS: r.LastDecision.LatencyMS,
+		FrameID:   safeReceiptField(receiptFrameID(f)),
+		TS:        time.Now().UTC().Format(time.RFC3339),
+	}
+	if r.Decision == decPin {
+		det.AdmitDeny = "admit"
+	}
+	// A degraded advisory exception must be on the ledger before the caller
+	// reads it; every other receipt stays off the reply path.
+	d.emitReceiptDetailed(r, f.Method, tool, det)
+	return r, r.LastDecision
+}
+
+type receiptDetails struct {
+	Event, GateKey, Item, Phase, Choice, AdmitDeny, Outcome, FrameID, TS string
+	LatencyMS                                                            int64
+	Force                                                                bool // outbound receipts are recorded even for local passes
+}
+
+// latencyBudgetMS is the single SO latency threshold. It mirrors
+// routerState.latencyThreshold so gate.go's routerBudgetSpendLatency is the
+// only place that charges a slow call.
+// shortcut: mirrors the config key without editing router_policy.go; delete
+// this helper if gate.go consumes routerState.latencyThreshold directly.
+func latencyBudgetMS() int64 {
+	return int64(routerIntConfig("latency_threshold_ms", routerDefaultLatencyMS, 1, 10000))
+}
+
+func safeReceiptField(s string) string {
+	if v, ok := routerSafeField(s); ok {
+		return v
+	}
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+func jsonStringField(raw json.RawMessage, key string) string {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return ""
+	}
+	s, _ := m[key].(string)
+	return s
+}
+
+func receiptFrameID(f frame) string {
+	if len(f.ID) > 0 {
+		var v any
+		if json.Unmarshal(f.ID, &v) == nil {
+			switch x := v.(type) {
+			case float64:
+				return strconv.FormatInt(int64(x), 10)
+			case string:
+				return x
+			}
+		}
+	}
+	h := sha256.Sum256(f.Raw)
+	return hex.EncodeToString(h[:])[:16]
 }
 
 // receiptWorthy excludes named Layer 0/static outcomes: they are answered
@@ -296,13 +570,52 @@ func receiptWorthy(r routeResult) bool {
 // emitReceipt appends a redacted, chained receipt for one in-scope request.
 // Failure to persist never changes the decision (advisory observability only).
 func (d *decisionBridge) emitReceipt(r routeResult, method, tool string) {
-	if !receiptWorthy(r) {
+	d.emitReceiptDetailed(r, method, tool, receiptDetails{})
+}
+
+func (d *decisionBridge) emitReceiptDetailed(r routeResult, method, tool string, det receiptDetails) {
+	d.chainMu.Lock()
+	chainBad, chainNil := d.chainBad, d.chain == nil
+	d.chainMu.Unlock()
+	if chainBad || chainNil || (!det.Force && !receiptWorthy(r)) {
 		return
 	}
-	_, _ = d.chain.appendReceipt(receipt{
-		Event: "decision", Decision: r.Decision, Reason: r.Reason,
+	if strings.EqualFold(strings.TrimSpace(readSOConfig()["skip_receipts"]), "true") {
+		return
+	}
+	event := det.Event
+	if event == "" {
+		event = "decision"
+	}
+	rec := receipt{
+		Event: event, Decision: r.Decision, Reason: r.Reason,
 		Method: method, Tool: tool, Bucket: r.ConfBucket,
-	})
+		Source: "so", GateKey: det.GateKey, Item: det.Item, Phase: det.Phase,
+		Choice: det.Choice, AdmitDeny: det.AdmitDeny, Outcome: det.Outcome,
+		LatencyMS: det.LatencyMS, FrameID: det.FrameID, TS: det.TS,
+	}
+	// N8.2: advisory degraded exceptions are signed and time-bounded. The
+	// keyed identity is RAM-only; no endpoint or key text reaches the ledger.
+	if r.Reason == "so-degraded" && soMode() != soModeEnforcing {
+		rec.ExpiresAt = time.Now().Add(30 * time.Minute).Unix()
+		rec.Signature = d.receiptSignature(rec)
+	}
+	if fp := healthFingerprintWithEndpoint(d.endpointSnapshot); fp != nil {
+		rec.ItemsSHA256, _ = fp["items_sha256"].(string)
+		rec.ReceiptSHA256, _ = fp["receipt_sha256"].(string)
+		rec.BuildSHA, _ = fp["build_sha"].(string)
+	}
+	_, _ = d.appendChainReceipt(rec)
+}
+
+func (d *decisionBridge) receiptSignature(rec receipt) string {
+	m := hmac.New(sha256.New, d.oraclePin)
+	for _, part := range []string{rec.Event, rec.Decision, rec.Reason, rec.Method, rec.Tool,
+		rec.Bucket, rec.FrameID, rec.TS, strconv.FormatInt(rec.ExpiresAt, 10)} {
+		_, _ = m.Write([]byte(part))
+		_, _ = m.Write([]byte{0})
+	}
+	return hex.EncodeToString(m.Sum(nil))
 }
 
 // decideFull routes one request through the hub and also returns the raw SO
@@ -324,9 +637,31 @@ func explicitCapability(params []byte) bool {
 			return false
 		}
 	}
-	p, _ := m["phase"].(string)
-	p = strings.ToLower(strings.ReplaceAll(p, "_", "-"))
-	return p == "before-model" || p == "pre-model"
+	// N24: phase is context, not a capability. A phase-less frame must not be
+	// refused in enforcing mode solely because the MCP client omitted it.
+	return true
+}
+
+// configCapabilityParams returns operator-declared opt-ins from the same
+// config.txt that selects so_mode. Incomplete declarations yield nil: nothing
+// is inferred and no flag defaults to true.
+// shortcut: kept only for sim_n4_n5_test.go:149; delete when that consumer is removed.
+func configCapabilityParams() []byte {
+	c := readSOConfig()
+	for _, k := range []string{"need_label", "no_scratch", "safe", "reversible", "authority", "calibrated", "opt_in"} {
+		if !strings.EqualFold(strings.TrimSpace(c[k]), "true") {
+			return nil
+		}
+	}
+	phase := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(c["phase"]), "_", "-"))
+	if phase != "before-model" && phase != "pre-model" {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]any{
+		"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
+		"authority": true, "calibrated": true, "opt_in": true, "phase": phase,
+	})
+	return b
 }
 
 func toolName(params json.RawMessage) string {
@@ -371,20 +706,31 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 		// The documented budget boundary: a new MCP session starts a new budget.
 		routerBudgetReset()
 	}
+	// JSON-RPC 2.0 forbids replying to a notification (no id): gate it silently.
+	block := func(msg string) ([]byte, bool) {
+		if len(f.ID) == 0 {
+			return nil, true
+		}
+		return rpcError(f.ID, -32001, msg), true
+	}
 	if soMode() == soModeEnforcing && !explicitCapability(unwrapParams(request, f)) {
 		routerAudit("gate", "reason", "cap-missing", "method", f.Method, "tool", tool)
-		return rpcError(f.ID, -32001, "blocked: explicit decision capability required"), true
+		return block("blocked: explicit decision capability required")
 	}
+	// E1: enforcement needs the promotion preconditions (M1 owner + SO-go >= 0.8)
+	// before it can turn a decision into a refusal. gate.go:314-317 already
+	// checks promotionOK before the POST; see INT-DB.md for the sim conflict
+	// that prevents a second, earlier guard here.
 	// Endpoint/key identity pinned at session start; drift fails closed only
 	// in enforcing mode. Advisory mode never consults the pin.
 	if soMode() == soModeEnforcing && string(soOracleIdentity()) != string(d.oraclePin) {
 		routerAudit("gate", "reason", "so-unpinned-oracle", "method", f.Method)
-		return rpcError(f.ID, -32001, "blocked: decision unavailable (so-unpinned-oracle)"), true
+		return block("blocked: decision unavailable (so-unpinned-oracle)")
 	}
 	if f.Method == "tools/call" {
 		if reason, blocked := d.guard.check(tool, toolArgs(f.Params)); blocked {
 			routerAudit("writeguard", "tool", tool, "reason", reason)
-			return rpcError(f.ID, -32001, "blocked: "+reason), true
+			return block("blocked: " + reason)
 		}
 		args := toolArgs(f.Params)
 		// The raw-args scan always runs, so metadata alongside a file body
@@ -392,14 +738,14 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 		// destructive shell command with no body is refused here.
 		if v := argsGuardCheck(tool, args); v.Refuse {
 			routerAudit("diffguard", "tool", tool, "reason", v.Code)
-			return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
+			return block("blocked: " + v.Steer)
 		}
 		if body, ok := writeContent(args); ok {
 			p := argumentPath(args)
 			// Security precheck over the text this call would add, before it lands.
 			if v := diffSecurityCheck(p, oldContentOnDisk(p), body); v.Refuse {
 				routerAudit("diffguard", "tool", tool, "reason", v.Code)
-				return rpcError(f.ID, -32001, "blocked: "+v.Steer), true
+				return block("blocked: " + v.Steer)
 			}
 		}
 	}
@@ -407,14 +753,25 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 	routerAudit("gate", "method", f.Method, "tool", tool,
 		"allow", strconv.FormatBool(allowed))
 	if soMode() == "enforcing" && !allowed {
-		return rpcError(f.ID, -32001, "blocked: tool denied by router policy"), true
+		return block("blocked: tool denied by router policy")
 	}
-	r := d.decideFrame(request)
+	// Single latency charge lives in gate.go:336 routerBudgetSpendLatency.
+	beforeCalls, _ := logsView()
+	r, _ := d.decideFrameDetailed(request)
 	routerAudit("decision", "method", f.Method, "decision", r.Decision, "reason", r.Reason)
+	// GOV-1: a degraded SO response in enforcing mode is a reason-coded abstain;
+	// a malformed HTTP 200 answer (bad_json) still keeps its historic fail-open path.
+	afterCalls, logEntries := logsView()
+	soOutage := afterCalls.Calls > beforeCalls.Calls && len(logEntries) > 0 &&
+		logEntries[0].Kind == "systemone" &&
+		(logEntries[0].Outcome == "so-degraded" || strings.HasPrefix(logEntries[0].Outcome, "http_"))
+	if soMode() == soModeEnforcing && r.Decision == decDeny && r.Reason == "so-degraded" && soOutage {
+		return block("blocked: " + r.Reason)
+	}
 	// Enforcing only, and only when the decision is not an admit: an admitted
 	// item's Steer is its own "continue" action, not a refusal to relay.
 	if soMode() == "enforcing" && steerBlocks(r) {
-		return rpcError(f.ID, -32001, withSteer("blocked", r.Steer)), true
+		return block(withSteer("blocked", r.Steer))
 	}
 	// Spend only after the decision and any enforcing refusal: an admitted or
 	// steered tool call is the budget boundary, not every policy check.
@@ -422,7 +779,7 @@ func (d *decisionBridge) enforcingGate(request []byte) ([]byte, bool) {
 		if _, max, spent := routerBudgetSpend(); !spent {
 			routerAudit("budget", "tool", tool, "budget", "exhausted",
 				"count", strconv.Itoa(max))
-			return rpcError(f.ID, -32001, budgetSteer(max)), true
+			return block(budgetSteer(max))
 		}
 	}
 	return nil, false
@@ -452,11 +809,13 @@ func steerBlocks(r routeResult) bool {
 // steerFailOpen reasons are advice, not verdicts: the decision model was
 // unreachable or the request was out of scope, so the relay keeps forwarding.
 var steerFailOpen = map[string]bool{
+	// SO outage is advice, never an enforcing verdict: the relay continues.
+	"so-degraded": true, "invalid-response": true,
 	"transient": true, "permanent": true, "unknown": true,
 	"no-key": true, "no-state": true, "-32602": true,
 	"layer0-scope": true, "layer0-gate": true, "layer0-static": true,
 	"layer0-shape": true, "registry-local": true,
-	"so-degraded": true, "so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,
+	"so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,
 	"so-low-conf": true, // low confidence is advice, never an enforcing block
 	"ok":          true, "ledger-complete": true,
 }
@@ -503,12 +862,34 @@ func (d *decisionBridge) advisoryHooks(request []byte) {
 	routerAudit("canary", "method", f.Method, "tool", tool)
 }
 
+// scrubStrings applies scrubText to every surviving string leaf. cleanUser
+// removes secret-KEYed fields first; free-text values can still carry Bearer
+// tokens or key=value secrets, so scrub them before the mirror sees them.
+func scrubStrings(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			x[k] = scrubStrings(val)
+		}
+		return x
+	case []any:
+		for i, e := range x {
+			x[i] = scrubStrings(e)
+		}
+		return x
+	case string:
+		return scrubText(x)
+	default:
+		return v
+	}
+}
+
 func scrubbedMirror(request []byte) []byte {
 	var obj any
 	if json.Unmarshal(request, &obj) != nil {
 		return []byte(`{}`)
 	}
-	b, _ := json.Marshal(cleanUser(obj))
+	b, _ := json.Marshal(scrubStrings(cleanUser(obj)))
 	return b
 }
 
@@ -582,6 +963,11 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 		defer close(done)
 		br := bufio.NewReader(clientIn)
 		for {
+			// The accept-time deadline is one absolute instant; refresh it per
+			// frame so a long-lived session with traffic is never cut at t+30s.
+			if c, ok := clientIn.(interface{ SetDeadline(time.Time) error }); ok {
+				_ = c.SetDeadline(time.Now().Add(httpReadTimeout))
+			}
 			frame, err := readFrame(br)
 			if len(frame) > 0 {
 				relayLog("client", frame)
@@ -617,6 +1003,7 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 		if len(frame) > 0 {
 			relayLog("server", frame)
 			out := d.inspectServer(frame)
+			d.inspectServerResponse(out, enforcing)
 			outMu.Lock()
 			_, _ = clientOut.Write(out)
 			outMu.Unlock()
@@ -634,31 +1021,46 @@ func (d *decisionBridge) inspectClient(frame []byte) {
 	_ = d.decideFrame(frame)
 }
 
+// inspectServerResponse is the outbound (server -> client) decision point.
+// It never delays the reply: the gate result is chained synchronously and a
+// failure to persist cannot rewrite the frame.
+func (d *decisionBridge) inspectServerResponse(frame []byte, enforcing bool) {
+	r := passResult("no-state", false)
+	if enforcing {
+		r, _ = d.decideFrameDetailed(frame)
+	}
+	f, _ := decodeFrame(frame)
+	det := receiptDetails{Event: "outbound_response", Force: true,
+		FrameID: safeReceiptField(receiptFrameID(f)),
+		TS:      time.Now().UTC().Format(time.RFC3339)}
+	d.emitReceiptDetailed(r, "response", "", det)
+}
+
 func (d *decisionBridge) inspectServer(frame []byte) []byte {
 	f, err := decodeFrame(frame)
 	if err != nil || !isInitializeResult(f) {
 		return frame
 	}
-	// addRouteCapability rewrites the result payload span. Splice it back
-	// into the envelope, keeping id/protocolVersion and all other bytes.
+	// addRouteCapability rewrites the result payload. Round-trip the envelope
+	// through encoding/json in the changed case: whitespace around the
+	// "result" key must not defeat the splice. Other cases keep input bytes.
 	newResult := addRouteCapability(f.Result)
 	if bytes.Equal(newResult, f.Result) {
 		return frame
 	}
-	prefix := []byte(`"result":`)
-	idx := bytes.Index(frame, prefix)
-	if idx < 0 {
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(frame, &env); err != nil {
 		return frame
 	}
-	start := idx + len(prefix)
-	end := start + len(f.Result)
-	if end > len(frame) || !bytes.Equal(frame[start:end], f.Result) {
+	env["result"] = newResult
+	out, err := json.Marshal(env)
+	if err != nil {
 		return frame
 	}
-	out := make([]byte, 0, len(frame)+len(newResult)-len(f.Result))
-	out = append(out, frame[:start]...)
-	out = append(out, newResult...)
-	out = append(out, frame[end:]...)
+	// readFrame keeps the trailing whitespace run; bridgeStdio writes replies
+	// straight to clientOut, so dropping it would concatenate JSON-RPC frames.
+	trimmed := bytes.TrimRight(frame, " \t\r\n")
+	out = append(out, frame[len(trimmed):]...)
 	return out
 }
 

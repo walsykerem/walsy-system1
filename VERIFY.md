@@ -17,11 +17,13 @@ Parent: run `bash scripts/verify.sh` after all parallel agents finish. Do not ru
 1. `gofmt -l *.go scripts/*/*.go` — must output nothing
 2. `CGO_ENABLED=0 go vet ./...`
 3. `CGO_ENABLED=1 go test -race -count=1 ./...` — race detector needs cgo
-4. `CGO_ENABLED=0 go build -o walsy-system1 .`
-5. `lrecon --json ./walsy-system1` — print digest + kind only
-6. `python3` stdlib non-ASCII scan over `*.go` and `web/*` (README excluded)
+4. `CGO_ENABLED=0 go build -trimpath -buildvcs=true -o walsy-system1 .`
+5. `lrecon --json ./walsy-system1` consumed by `go run ./scripts/recondigest` — digest + kind only
+6. `go run ./scripts/asciiscan *.go web/*` — stdlib non-ASCII scan, no `python3` in product verification
 7. `CGO_ENABLED=0 go vet ./scripts/...`
-8. `echo PASS` — only if all above succeeded
+8. `shasum -a 256 -c decision_items.json.sha256.sig`
+9. `go run ./scripts/releasegate -so-final-complete 0.8` — needs `RELEASE_APPROVAL` and a provider key; subagents must not run it
+10. `echo PASS` — only if all above succeeded
 
 ## Records to fill after the full run
 

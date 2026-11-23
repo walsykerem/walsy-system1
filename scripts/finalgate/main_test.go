@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,23 @@ import (
 // exists rather than trusting plausible prose.
 func TestExcerptInlinesCitedArtifact(t *testing.T) {
 	t.Chdir("../..")
-	ex, err := excerpt(citation{"decision_bridge.go", 153, 153})
+	// Find the cited line by content: production edits move `decide: ` between
+	// line numbers; the invariant is that those exact bytes get inlined.
+	b, err := os.ReadFile("decision_bridge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := 0
+	for i, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, `"decide: "`) {
+			line = i + 1
+			break
+		}
+	}
+	if line == 0 {
+		t.Fatal(`decision_bridge.go: no line contains "decide: "`)
+	}
+	ex, err := excerpt(citation{"decision_bridge.go", line, line})
 	if err != nil {
 		t.Fatal(err)
 	}

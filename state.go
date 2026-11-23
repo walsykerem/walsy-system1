@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Resource ceilings for dashboard writes. Bounds are enforced at the API layer.
@@ -517,16 +518,57 @@ func validSOMode(v string) bool {
 	return v == soModeAdvisory || v == soModeEnforcing
 }
 
-// soMode fails open to advisory. Env overrides the file; unknown values are
-// ignored at both layers.
+// soModeStartupError refuses startup until an operator selects a mode
+// explicitly. soMode() keeps its fail-open string contract for in-process
+// callers; only main.go uses this check before any serve loop begins.
+func soModeStartupError() error {
+	cfg := readSOConfig()
+	envMode := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE")))
+	fileMode := strings.ToLower(strings.TrimSpace(cfg["so_mode"]))
+	mode := fileMode
+	if validSOMode(envMode) {
+		mode = envMode
+	}
+	if !validSOMode(mode) {
+		return fmt.Errorf("WALSY_SO_MODE unset or invalid (no so_mode in config.txt): set WALSY_SO_MODE=advisory|enforcing")
+	}
+	if mode == soModeEnforcing {
+		name := strings.TrimSpace(os.Getenv("WALSY_SO_APPROVER"))
+		if name == "" {
+			name = strings.TrimSpace(cfg["approver"])
+		}
+		if name == "" {
+			return fmt.Errorf("so_mode=enforcing requires a named approver (WALSY_SO_APPROVER or config approver)")
+		}
+	}
+	return nil
+}
+
+// soMode resolves the active mode. Env overrides the file; unknown values are
+// ignored at both layers. Selecting enforcing requires a named approver from
+// WALSY_SO_APPROVER or config.txt; without one the flip is audited as denied.
 func soMode() string {
-	if v := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE"))); validSOMode(v) {
-		return v
+	var v string
+	if e := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE"))); validSOMode(e) {
+		v = e
+	} else if f := strings.ToLower(strings.TrimSpace(readSOConfig()["so_mode"])); validSOMode(f) {
+		v = f
 	}
-	if v := readSOConfig()["so_mode"]; validSOMode(strings.ToLower(v)) {
-		return strings.ToLower(v)
+	if v == soModeEnforcing {
+		name := strings.TrimSpace(os.Getenv("WALSY_SO_APPROVER"))
+		if name == "" {
+			name = strings.TrimSpace(readSOConfig()["approver"])
+		}
+		if name == "" {
+			routerAudit("so_mode", "mode", "enforcing", "outcome", "denied")
+		} else {
+			routerAudit("so_mode", "mode", "enforcing", "approver", name)
+		}
 	}
-	return soModeAdvisory
+	if v == "" {
+		return soModeAdvisory
+	}
+	return v
 }
 
 // System prompts panel: named, user-editable notes appended to SO state as untrusted data.
@@ -563,12 +605,19 @@ func promptsPath() (string, error) {
 	return filepath.Join(dir, promptsFile), nil
 }
 
-// capSystemPrompt truncates by bytes and reports whether it trimmed input.
+// capSystemPrompt truncates at a rune boundary at or before the byte cap.
 func capSystemPrompt(s string) (string, bool) {
 	if len(s) <= maxSystemPrompt {
 		return s, false
 	}
-	return s[:maxSystemPrompt], true
+	cut := s[:maxSystemPrompt]
+	for len(cut) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(cut); r != utf8.RuneError || size > 1 {
+			return cut, true
+		}
+		cut = cut[:len(cut)-1]
+	}
+	return "", true
 }
 
 // escapePromptDelimiters neutralizes instruction-shaped tokens in untrusted text.

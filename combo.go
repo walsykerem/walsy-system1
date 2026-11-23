@@ -16,10 +16,12 @@ const comboDefaultTimeout = 1200 * time.Millisecond
 // ComboStep is one ordered failover entry. Base is the full URL; empty means skip.
 // Weight is a priority hint: zero or negative means 1, higher is tried first.
 // Key is the stored credential for the step; it is never copied into a result.
+// Cost is an optional per-call price; lower cost is tried first.
 type ComboStep struct {
 	Name   string
 	Base   string
 	Weight int
+	Cost   int
 	Key    string
 }
 
@@ -154,13 +156,18 @@ func comboProbeBody(name string) string {
 	return `{"model":` + strconv.Quote(model) + `,"messages":[{"role":"user","content":"ping"}]}`
 }
 
-// comboOrder returns step indices sorted by descending weight, stable for ties.
+// comboOrder returns step indices sorted by ascending cost then descending
+// weight, stable for ties.
 func comboOrder(steps []ComboStep) []int {
 	order := make([]int, len(steps))
 	for i := range order {
 		order[i] = i
 	}
 	sort.SliceStable(order, func(i, j int) bool {
+		ca, cb := steps[order[i]].Cost, steps[order[j]].Cost
+		if ca != cb {
+			return ca < cb
+		}
 		a, b := steps[order[i]].Weight, steps[order[j]].Weight
 		if a <= 0 {
 			a = 1

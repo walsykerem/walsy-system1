@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -18,19 +19,25 @@ type recon struct {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: recondigest <report.json>")
-		os.Exit(2)
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run returns the process exit status. A report without a digest is an error,
+// never an empty "lrecon digest:" line.
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: recondigest <report.json>")
+		return 2
 	}
-	b, err := os.ReadFile(os.Args[1])
+	b, err := os.ReadFile(args[0])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	var r recon
 	if err := json.Unmarshal(b, &r); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	digest := r.Digest
 	if digest == "" {
@@ -39,6 +46,11 @@ func main() {
 	if digest == "" {
 		digest = r.UUID
 	}
-	fmt.Println("lrecon digest:", digest)
-	fmt.Println("lrecon kind:", r.Kind)
+	if digest == "" {
+		fmt.Fprintln(stderr, "recondigest: no digest in report")
+		return 1
+	}
+	fmt.Fprintln(stdout, "lrecon digest:", digest)
+	fmt.Fprintln(stdout, "lrecon kind:", r.Kind)
+	return 0
 }

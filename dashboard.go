@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -553,6 +555,64 @@ func runComboSteps(view providersResponse, steps []stateStep) ComboOutcome {
 	return RunCombo(toComboSteps(view, steps), 0)
 }
 
+// soReleaseComplete asks the same SO endpoint the decision hub uses for a
+// typed "complete" verdict. A client-supplied verdict is never trusted.
+func soReleaseComplete() bool {
+	if soEndpoint == "" || baseRejectReason(soEndpoint) != "" {
+		return false
+	}
+	key := soAPIKey()
+	if key == "" {
+		return false
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "clef",
+		"state": "stable release gate: verify all four attestations",
+		"questions": map[string]soQuestion{
+			"release": {Type: "choice", Criteria: map[string]string{
+				"complete":   "every attestation verified",
+				"incomplete": "one or more attestations missing",
+			}},
+		},
+	})
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), soTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, soEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", key)
+	resp, err := soClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil || len(raw) > 1<<20 {
+		return false
+	}
+	var out struct {
+		Answers map[string]soAnswer `json:"answers"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return false
+	}
+	a, ok := out.Answers["release"]
+	return ok && strings.EqualFold(a.Choice, "complete") && a.Confidence >= 0.8
+}
+
+// feedbackMutationReject is the single guard for every feedback mutation path.
+func feedbackMutationReject(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "result": "MUTATION TOKEN REJECT"})
+}
+
 func NewDashboardHandler() http.Handler {
 	sourceDir := findSourceDir()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -669,6 +729,42 @@ func NewDashboardHandler() http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, healthFingerprint())
+		case "/api/feedback":
+			switch r.Method {
+			case http.MethodGet:
+				writeJSON(w, http.StatusOK, map[string]any{
+					"ok": true, "readonly": true, "so_mode": soMode(),
+				})
+			case http.MethodPost:
+				feedbackMutationReject(w)
+			default:
+				writeAPIError(w, "method not allowed")
+			}
+		case "/api/feedback/mutation", "/ui/feedback", "/api/feedback/token", "/api/operator/feedback":
+			if r.Method == http.MethodPost && sameOrigin(r) {
+				feedbackMutationReject(w)
+				return
+			}
+			writeAPIError(w, "method not allowed")
+		case "/api/release":
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
+				return
+			}
+			var rel struct {
+				Criteria map[string]bool `json:"criteria"`
+			}
+			if !decodeRequest(w, r, &rel) {
+				writeAPIError(w, "invalid request")
+				return
+			}
+			for _, name := range []string{"f1_build_equivalence", "verify_pass", "so_final_complete", "m1_approval"} {
+				if !rel.Criteria[name] {
+					writeJSON(w, http.StatusOK, map[string]any{"stable_release": false})
+					return
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"stable_release": soReleaseComplete()})
 		case "/api/providers":
 			if r.Method == http.MethodPost {
 				if !sameOrigin(r) {
@@ -725,6 +821,14 @@ func NewDashboardHandler() http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusNoContent)
 		case "/":
+			if r.Method == http.MethodPost {
+				// N1: JSON-RPC frames reach the same decision door as every other
+				// transport; the dashboard itself stays read-only.
+				body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
+				if err == nil && len(body) <= maxRequestBytes && bytes.Contains(body, []byte(`"jsonrpc"`)) {
+					_ = newDecisionBridge().decideFrame(body)
+				}
+			}
 			if r.Method != http.MethodGet {
 				writeAPIError(w, "method not allowed")
 				return
@@ -810,7 +914,7 @@ func NewDashboardHandler() http.Handler {
 				writeAPIError(w, "method not allowed")
 				return
 			}
-			uiPromptsSheet(w)
+			uiPromptsSheet(w, r)
 		case "/ui/prompts/add":
 			if r.Method != http.MethodPost || !sameOrigin(r) {
 				writeAPIError(w, "method or origin not allowed")

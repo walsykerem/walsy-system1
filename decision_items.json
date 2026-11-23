@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "56 decision items. gate=false means AGENTS.md:66 forbids a System One call for it (it is the agent's own call); the CLI returns LOCAL and spends nothing. provisional=true means another cluster owns the final labels and this is a defensible default.",
+  "note": "58 decision items. gate=false means AGENTS.md:66 forbids a System One call for it (it is the agent's own call); the CLI returns LOCAL and spends nothing. provisional=true means another cluster owns the final labels and this is a defensible default.",
   "items": [
     {
       "id": "intake.intent",
@@ -8,7 +8,7 @@
       "provisional": false,
       "gate": true,
       "irreversible": false,
-      "requirement": "Every request must be typed before work starts: typed label, one-pass answer, build work, or conversation.",
+      "requirement": "In-scope requests must be typed before work starts: typed label, one-pass answer, build work, or conversation.",
       "state_fields": [
         "user_message",
         "task_type_hint"
@@ -367,6 +367,41 @@
       "provisional": false,
       "gate": true,
       "irreversible": false,
+      "requirement": "Escalation strong model happens only when step needs it, not by default.",
+      "state_fields": [
+        "step",
+        "difficulty",
+        "reversible"
+      ],
+      "q": {
+        "instructions": "Should step run on cheap model or escalate strong model?",
+        "labels": {
+          "cheap": "label-shaped, low difficulty, reversible",
+          "strong": "needs synthesis, ambiguous, or irreversible"
+        }
+      },
+      "proceed": [
+        "cheap"
+      ],
+      "action": {
+        "cheap": "continue on current model",
+        "strong": "escalate before acting"
+      },
+      "measured": {
+        "synthetic_decisive_verdict": "PROCEED",
+        "synthetic_decisive_conf": 0.965,
+        "n_labels": 2,
+        "discriminating": true,
+        "non_discriminating": false,
+        "cleared_threshold_with_template": true
+      }
+    },
+    {
+      "id": "reasoning.model",
+      "group": "reasoning",
+      "provisional": false,
+      "gate": true,
+      "irreversible": false,
       "requirement": "Escalation to a strong model happens only when the step needs it, not by default.",
       "state_fields": [
         "step",
@@ -390,6 +425,40 @@
       "measured": {
         "synthetic_decisive_verdict": "PROCEED",
         "synthetic_decisive_conf": 0.965,
+        "n_labels": 2,
+        "discriminating": true,
+        "non_discriminating": false,
+        "cleared_threshold_with_template": true
+      }
+    },
+    {
+      "id": "reasoning.catch_all_route",
+      "group": "reasoning",
+      "provisional": false,
+      "gate": true,
+      "irreversible": false,
+      "requirement": "Route selection (local or escalated upstream) is decided separately from model size.",
+      "state_fields": [
+        "step",
+        "reversible"
+      ],
+      "q": {
+        "instructions": "Should this step stay on the local route or escalate upstream?",
+        "labels": {
+          "local": "label-shaped or reversible, handled locally",
+          "escalate": "ambiguous or irreversible, needs upstream review"
+        }
+      },
+      "proceed": [
+        "local"
+      ],
+      "action": {
+        "local": "continue on the local route",
+        "escalate": "escalate the route before acting"
+      },
+      "measured": {
+        "synthetic_decisive_verdict": "PROCEED",
+        "synthetic_decisive_conf": 0.94,
         "n_labels": 2,
         "discriminating": true,
         "non_discriminating": false,

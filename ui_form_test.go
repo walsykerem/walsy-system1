@@ -318,3 +318,51 @@ func TestAPIProvidersRejectsOtherMethods(t *testing.T) {
 		t.Fatalf("PUT /api/providers: status = %d, want 405", rec.Code)
 	}
 }
+
+// A saved/removed prompt redirects back to the sheet with a msg query; the
+// sheet must forward it into the toast and mark it a success, not an error.
+func TestUIPromptsSheetSuccessToast(t *testing.T) {
+	for _, msg := range []string{"PROMPT SAVED", "PROMPT REMOVED"} {
+		t.Run(msg, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			rec := httptest.NewRecorder()
+			NewDashboardHandler().ServeHTTP(rec, dashRequest(http.MethodGet, "/ui/prompts?msg="+url.QueryEscape(msg), nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, `<div class="toast toast-ok"`) {
+				t.Fatal("prompt sheet missing success toast")
+			}
+			if strings.Contains(body, "toast-error") {
+				t.Fatal("prompt success rendered as an error")
+			}
+			if !strings.Contains(body, msg) {
+				t.Fatalf("prompt sheet missing message %q", msg)
+			}
+			// PromptSheetMode is excluded from RefreshParent; a write toast here
+			// must not ask the home document to reload.
+			if strings.Contains(body, `postMessage('walsy-refresh|`) {
+				t.Fatal("prompt sheet must not refresh the parent")
+			}
+		})
+	}
+}
+
+// Unknown messages keep the error style; adding two write messages must not
+// turn every prompt-sheet toast green.
+func TestUIPromptsSheetUnknownMsgStaysError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	rec := httptest.NewRecorder()
+	NewDashboardHandler().ServeHTTP(rec, dashRequest(http.MethodGet, "/ui/prompts?msg=PROMPT+MYSTERY", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<div class="toast toast-error"`) {
+		t.Fatal("unknown prompt-sheet message not rendered as an error")
+	}
+	if strings.Contains(body, "toast-ok") {
+		t.Fatal("unknown prompt-sheet message rendered as success")
+	}
+}

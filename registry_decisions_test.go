@@ -12,11 +12,12 @@ import (
 
 // assertRegistryCount56 pins the exact registry size (shared by the decision
 // and sweep tests). Exact, not a floor: a dropped requirement is a data bug,
-// and a new one should be a deliberate change to this count.
+// and a new one should be a deliberate change to this count. FA11 added
+// standalone model + route items next to reasoning.model_route (58).
 func assertRegistryCount56(t *testing.T, items map[string]decisionItem) {
 	t.Helper()
-	if len(items) != 56 {
-		t.Fatalf("registry has %d items, want exactly 56", len(items))
+	if len(items) != 58 {
+		t.Fatalf("registry has %d items, want exactly 58", len(items))
 	}
 }
 
@@ -157,8 +158,10 @@ func TestRegistryItemAdmissionTable(t *testing.T) {
 			decPass, "registry-local", "", "decide locally from the registry item's proceed list; no model call is needed.", 0},
 		{"admitting label does not call a second model", `{"state":"classify the intent of: add a retry loop","method":"tools/call","item":"intake.intent","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`,
 			decPin, "so-admit", "build", "continue", 1},
+		// A label outside the generic question's set is a typed invalid-response,
+		// not a generic degraded answer: the refusal reason stays precise.
 		{"unknown item routes the generic question", `{"state":"classify this request","method":"tools/call","item":"no.such.item","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`,
-			decPass, "so-degraded", "", "name the label set and the concrete options, or decide locally; the model returned no usable label.", 1},
+			decPass, "invalid-response", "", "", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

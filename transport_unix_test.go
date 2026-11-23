@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,6 +57,33 @@ func TestServeUnixRoundTrip(t *testing.T) {
 	<-done
 }
 
+// unixDoneListener signals when serveUnix closes an accepted connection.
+// The server-side decision hook runs before that deferred Close, so waiting
+// on done also waits for the hook's read of global state to finish.
+type unixDoneListener struct {
+	net.Listener
+	done chan struct{}
+}
+
+func (l *unixDoneListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &unixDoneConn{Conn: c, done: l.done}, nil
+}
+
+type unixDoneConn struct {
+	net.Conn
+	done chan struct{}
+	once sync.Once
+}
+
+func (c *unixDoneConn) Close() error {
+	c.once.Do(func() { close(c.done) })
+	return c.Conn.Close()
+}
+
 // no upstream -> transparent no-op: client closes, server drains, no error frame.
 func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 	// macOS sun_path is 104 bytes; use a short deterministic path.
@@ -66,7 +94,8 @@ func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.Remove(path)
-	go serveUnix(l, nil)
+	done := make(chan struct{})
+	go serveUnix(&unixDoneListener{Listener: l, done: done}, nil)
 	defer l.Close()
 
 	c, err := net.Dial("unix", l.Addr().String())
@@ -92,6 +121,11 @@ func TestServeUnixNoUpstreamPassthrough(t *testing.T) {
 		t.Fatalf("server must drain and close with no error frame: n=%d err=%v body=%q", n, err, buf[:n])
 	}
 	c.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("serveUnix did not close accepted unix connection")
+	}
 }
 
 // The accept loop serves at most unixMaxConns connections at once: a client

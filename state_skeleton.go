@@ -4,11 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
 )
+
+// ErrStateTruncated marks an SO-bound state payload that exceeded the hard cap.
+// Callers map it to the typed "input_truncated" reason before routing.
+var ErrStateTruncated = errors.New("so state truncated")
 
 // maxSOStateChars is the hard per-request character cap on serialized SO state.
 // shortcut: 4096 runes is a local ceiling, raise only after a measured sweep of
@@ -77,7 +82,7 @@ func buildStateSkeleton(state string, promptBodies map[string]string) (StateSkel
 func capSOState(s string) (string, error) {
 	n := utf8.RuneCountInString(s)
 	if n > maxSOStateChars {
-		return "", fmt.Errorf("so state %d chars exceeds cap %d", n, maxSOStateChars)
+		return "", fmt.Errorf("%w: so state %d chars exceeds cap %d", ErrStateTruncated, n, maxSOStateChars)
 	}
 	return s, nil
 }

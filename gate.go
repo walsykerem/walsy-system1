@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,7 +30,8 @@ var (
 	soEndpoint = soEndpointDefault()
 
 	soEndpointDefaultBase = "https://evren-llmapi.ssyz.org.tr/v1/systemone"
-	soTimeout             = 10 * time.Second
+	soTimeout             = 150 * time.Millisecond
+	soEnforcingTimeout    = 5 * time.Second
 	soClient              = &http.Client{}
 )
 
@@ -44,13 +46,102 @@ func soOracleIdentity() []byte {
 	return h.Sum(nil)
 }
 
-// soEndpointDefault resolves the gate endpoint: WALSY_SO_ENDPOINT wins, and
-// the baked Evren URL is only the shipped default for a platform-neutral slot.
+// soEndpointDefault resolves the gate endpoint. Enforcing accepts only the
+// baked base; advisory keeps the legacy override. Unsafe URLs (remote plaintext
+// HTTP, embedded credentials) never win: they would leak the key.
 func soEndpointDefault() string {
-	if v := os.Getenv("WALSY_SO_ENDPOINT"); v != "" {
-		return v
+	v := os.Getenv("WALSY_SO_ENDPOINT")
+	if v == "" {
+		return soEndpointDefaultBase
 	}
-	return soEndpointDefaultBase
+	if baseRejectReason(v) != "" {
+		return soEndpointDefaultBase
+	}
+	if soMode() == soModeEnforcing && !sameSOEndpoint(v, soEndpointDefaultBase) {
+		return soEndpointDefaultBase
+	}
+	return v
+}
+
+// sameSOEndpoint compares scheme, host, port and path without case noise.
+func sameSOEndpoint(a, b string) bool {
+	ua, ea := url.Parse(a)
+	ub, eb := url.Parse(b)
+	if ea != nil || eb != nil {
+		return strings.EqualFold(a, b)
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		ua.Port() == ub.Port() && ua.Path == ub.Path
+}
+
+// FA9: cheapest-known SO endpoint first. Candidate list is opt-in via
+// WALSY_SO_ENDPOINTS; without it the single configured endpoint is used, so
+// existing pinning behaviour is unchanged. Latencies feed a per-URL EWMA.
+var (
+	soEndpointMu      sync.Mutex
+	soEndpointLatency = map[string]struct {
+		ewma float64
+		n    int
+	}{}
+)
+
+func soEndpointCandidates() []string {
+	raw := os.Getenv("WALSY_SO_ENDPOINTS")
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, v := range strings.Split(raw, ",") {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] || baseRejectReason(v) != "" {
+			continue
+		}
+		if soMode() == soModeEnforcing && !sameSOEndpoint(v, soEndpointDefaultBase) {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+func soSelectEndpoint() string {
+	cands := soEndpointCandidates()
+	if len(cands) == 0 {
+		return soEndpoint
+	}
+	soEndpointMu.Lock()
+	defer soEndpointMu.Unlock()
+	best := cands[0]
+	for _, u := range cands[1:] {
+		b, c := soEndpointLatency[best], soEndpointLatency[u]
+		// Measured endpoints win; ties keep the first listed candidate.
+		switch {
+		case b.n == 0 && c.n > 0:
+			best = u
+		case b.n > 0 && c.n > 0 && c.ewma < b.ewma:
+			best = u
+		}
+	}
+	return best
+}
+
+func soRecordEndpoint(url string, d time.Duration) {
+	if os.Getenv("WALSY_SO_ENDPOINTS") == "" {
+		return
+	}
+	soEndpointMu.Lock()
+	defer soEndpointMu.Unlock()
+	s := soEndpointLatency[url]
+	if s.n == 0 {
+		s.ewma = float64(d)
+	} else {
+		s.ewma = 0.7*s.ewma + 0.3*float64(d)
+	}
+	s.n++
+	soEndpointLatency[url] = s
 }
 
 // layer0 is the deterministic pre-gate. Raw prompts/headers never enter it.
@@ -92,6 +183,7 @@ type soDecision struct {
 	LatencyMS     int64
 	ResponseID    string       // "none" - no endpoint request-id exists. Never fabricated.
 	Trace         RankingTrace // separate decision record; never an audit/metric field
+	Reason        string       // typed failure reason (malformed_response / invalid_probabilities)
 }
 
 type soQuestion struct {
@@ -104,12 +196,72 @@ type soQuestion struct {
 	Requires []string `json:"-"`
 }
 
+// questionApplicable is a local capability check: every Requires name must be
+// a key in the state JSON object. It never travels on the SO wire.
+func questionApplicable(q soQuestion, state string) bool {
+	if len(q.Requires) == 0 {
+		return true
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(state), &obj); err != nil || obj == nil {
+		return false
+	}
+	for _, name := range q.Requires {
+		if _, ok := obj[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// promotionPreconditionsMet is the E1 gate: a named M1 owner and SO-go
+// confidence >= 0.8. promotionOK runs it before the single audit probe so the
+// refusal is fail-closed and the probe carries the precondition questions.
+func promotionPreconditionsMet() bool {
+	cfg := readSOConfig()
+	if strings.TrimSpace(cfg["m1_approval_owner"]) == "" {
+		return false
+	}
+	var conf float64
+	if _, err := fmt.Sscanf(cfg["so_go_confidence"], "%f", &conf); err != nil {
+		return false
+	}
+	return conf >= 0.8
+}
+
+// promotionOK keeps the fail-closed promotion check. When it denies an
+// enforcing request, the single bounded SO probe still carries the missing
+// preconditions as questions, so the refusal has an auditable payload.
+func promotionOK() bool {
+	if promotionPreconditionsMet() {
+		return true
+	}
+	if soMode() == soModeEnforcing {
+		_ = askSOQ(`{"state":"W24 approval promotion preconditions","need_label":true}`,
+			soQuestion{Type: "choice", Criteria: map[string]string{
+				"inside": "preconditions met", "outside": "preconditions missing",
+			}})
+	}
+	return false
+}
+
 // soAPIKey resolves the SO provider key generically: a stored key on the
 // provider whose base matches soEndpoint, then that provider's env var. The
 // legacy EVREN_API_KEY env path stays for existing callers. Values never leave
 // this process except as the x-api-key header.
 func soAPIKey() string {
 	if k := os.Getenv("EVREN_API_KEY"); k != "" {
+		// M1: a bare env assignment has no named approver. Record the gap;
+		// router_policy.go must allow the "approver" key to persist the name.
+		approver := strings.TrimSpace(os.Getenv("WALSY_SO_APPROVER"))
+		if approver == "" {
+			approver = strings.TrimSpace(readSOConfig()["approver"])
+		}
+		if approver == "" {
+			routerAudit("gate", "reason", "key-without-approver", "status", "unattended")
+		} else {
+			routerAudit("gate", "reason", "key-approved", "status", "approved")
+		}
 		return k
 	}
 	host := ""
@@ -147,6 +299,14 @@ func soAPIKey() string {
 // systemPrompt/message must be stripped by the caller before this point.
 // Any failure is a degraded passthrough: zero decision, never a 503.
 func askSO(state string) soDecision {
+	// A caller that did not request a label must not trigger a label probe:
+	// preflight stays audit-only (need_label=false).
+	var e struct {
+		NeedLabel *bool `json:"need_label"`
+	}
+	if json.Unmarshal([]byte(state), &e) == nil && e.NeedLabel != nil && !*e.NeedLabel {
+		return soDecision{}
+	}
 	return askSOQ(state, soQuestion{Type: "choice", Criteria: map[string]string{
 		"yes":   "admit to the typed decision layer",
 		"no":    "pass through unchanged",
@@ -167,6 +327,30 @@ func gateQuestion(q soQuestion) soQuestion {
 	}}
 }
 
+// contextQuestions adds the promotion/final probes only when the state asks
+// for them, so ordinary frames keep the one-question SO wire contract.
+func contextQuestions(state string) map[string]soQuestion {
+	q := map[string]soQuestion{}
+	lower := strings.ToLower(state)
+	if strings.Contains(lower, "approval") || strings.Contains(lower, "m1") {
+		q["go"] = soQuestion{Type: "choice", Criteria: map[string]string{
+			"go":    "SO go confidence is at least 0.8",
+			"no-go": "SO go confidence is below 0.8",
+		}}
+		q["m1_approval"] = soQuestion{Type: "choice", Criteria: map[string]string{
+			"approved":     "a named M1 approval owner is recorded",
+			"not-approved": "no named M1 approval owner",
+		}}
+	}
+	if strings.Contains(lower, "final") || strings.Contains(lower, "complete") {
+		q["final_complete"] = soQuestion{Type: "choice", Criteria: map[string]string{
+			"complete":   "SO final complete confidence is at least 0.8",
+			"incomplete": "SO final complete confidence is below 0.8",
+		}}
+	}
+	return q
+}
+
 // askSOQ is the single SO POST, called only by route() inside the decide hub.
 // A registry item brings its own instructions and labels, so the answer must
 // be one of them.
@@ -174,20 +358,58 @@ func gateQuestion(q soQuestion) soQuestion {
 // so the caller can steer with them. The cut is applied by the caller (route's
 // so-low-conf branch, toolsDecide's !admitted branch), never by this parser.
 func askSOQ(state string, q soQuestion) soDecision {
-	// One guard: an open breaker or an empty SO budget fails open with a zero
-	// decision, before key resolution or any POST. Concurrency is capped at 2.
+	// One guard: an open breaker or empty SO budget fails open with a zero
+	// decision, before key resolution or any POST. E1 promotion preconditions
+	// gate the promoting entry point (transport/bridge), never this gate POST.
+	// Concurrency is capped at 2; excess POSTs are rejected immediately.
 	if routerBreakerOpen("systemone") || routerBudgetLeft() <= 0 {
+		return soDecision{}
+	}
+	if !questionApplicable(q, state) {
+		routerAudit("gate", "reason", "no-applicable-question", "status", "skipped")
 		return soDecision{}
 	}
 	select {
 	case soSem <- struct{}{}:
 		defer func() { <-soSem }()
 	default:
+		routerAudit("gate", "reason", "parallel-post-reject", "status", "rejected")
 		return soDecision{}
 	}
+	start := time.Now()
 	d := askSOQOnce(state, q)
-	routerRecord("systemone", d.Choice != "" && !d.TimedOut)
+	// T1/N28/FA10: SO attempts count in a bounded counter of their own; the
+	// tool-call retry budget is spent only after admission by the bridge.
+	n := soAttemptRecord()
+	routerAudit("gate", "reason", "so-attempt", "count", fmt.Sprintf("%d", n))
+	if d.TimedOut {
+		if _, _, spent := routerBudgetSpendLatency(time.Duration(d.LatencyMS) * time.Millisecond); spent {
+			routerAudit("gate", "reason", "so-latency-budget-spend", "status", "spent")
+		}
+	}
+	// Typed parser rejections are dropped answers, not SO health failures;
+	// transport errors and timeouts still open the breaker.
+	shapeOK := d.Choice != "" || d.Reason == "invalid-response" || d.Reason == "invalid_probabilities"
+	routerRecord("systemone", shapeOK && !d.TimedOut, time.Since(start))
 	return d
+}
+
+// soAttempts counts SO POST attempts in this process, separate from the
+// tool-call retry budget. It saturates so a long session cannot overflow it.
+const soAttemptMax = 1 << 20
+
+var (
+	soAttemptMu sync.Mutex
+	soAttemptN  int
+)
+
+func soAttemptRecord() int {
+	soAttemptMu.Lock()
+	defer soAttemptMu.Unlock()
+	if soAttemptN < soAttemptMax {
+		soAttemptN++
+	}
+	return soAttemptN
 }
 
 // soSem is the concurrency cap on live SO calls; a full semaphore fails open.
@@ -205,27 +427,52 @@ func routerBudgetLeft() int {
 // askSOQOnce is the single bounded POST. Label validity is checked by the
 // parser; the caller applies the confidence cut and all admission policy.
 func askSOQOnce(state string, q soQuestion) soDecision {
+	if !questionApplicable(q, state) {
+		routerAudit("gate", "reason", "no-applicable-question", "status", "skipped")
+		return soDecision{}
+	}
+	// Fail closed before any POST if the resolved endpoint would leak the key.
+	if baseRejectReason(soEndpoint) != "" {
+		routerAudit("gate", "reason", "so-endpoint-rejected", "status", "denied")
+		return soDecision{}
+	}
 	key := soAPIKey()
 	if key == "" {
 		return soDecision{}
 	}
 
+	// Stable identifiers are hashes only (never the raw prompt) so SO can cache
+	// across frames without receiving prompt bodies. See N6.
+	sid, pck := soStableIDs("clef", q, state)
+	questions := contextQuestions(state)
+	questions["gate"] = gateQuestion(q)
 	body, err := json.Marshal(struct {
-		Model     string                `json:"model"`
-		State     string                `json:"state"`
-		Questions map[string]soQuestion `json:"questions"` // object, never array
+		Model          string                `json:"model"`
+		State          string                `json:"state"`
+		Questions      map[string]soQuestion `json:"questions"` // object, never array
+		SessionID      string                `json:"session_id"`
+		PromptCacheKey string                `json:"prompt_cache_key"`
 	}{
-		Model:     "clef",
-		State:     state,
-		Questions: map[string]soQuestion{"gate": gateQuestion(q)},
+		Model:          "clef",
+		State:          state,
+		Questions:      questions,
+		SessionID:      sid,
+		PromptCacheKey: pck,
 	})
 	if err != nil {
 		return soDecision{}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), soTimeout)
+	deadline := soTimeout
+	if soMode() == soModeEnforcing {
+		// T3: an enforcing request must not echo until the SO answers. The
+		// advisory 150ms cap stays intact for FA9/N15 latency guards.
+		deadline = soEnforcingTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, soEndpoint, bytes.NewReader(body))
+	ep := soSelectEndpoint()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(body))
 	if err != nil {
 		return soDecision{}
 	}
@@ -236,7 +483,9 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	outcome, respB := "error", 0
 	var usage map[string]any
 	defer func() {
-		logCall("systemone", outcome, time.Since(start), len(body), respB, usage)
+		latency := time.Since(start)
+		soRecordEndpoint(ep, latency)
+		logCall("systemone", outcome, latency, len(body), respB, usage)
 	}()
 
 	resp, err := soClient.Do(req)
@@ -249,8 +498,15 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 		return d
 	}
 	defer resp.Body.Close()
-	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// Read one byte past the cap so an oversized body is rejected, never parsed
+	// from a valid-looking prefix.
+	raw, rerr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	respB = len(raw)
+	if len(raw) > 1<<20 {
+		outcome = "malformed_response"
+		routerAudit("gate", "reason", "malformed_response", "status", "oversized")
+		return soDecision{Reason: "malformed_response"}
+	}
 	if resp.StatusCode != http.StatusOK {
 		outcome = fmt.Sprintf("http_%d", resp.StatusCode)
 		return soDecision{}
@@ -261,7 +517,10 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 
 	// Strict SO boundary: <=1 MiB (matching the read cap), exactly one JSON
 	// document, no duplicate/case-variant keys, top-level allowlist only.
-	fields, err := strictObject(raw, 1<<20, map[string]bool{"model": true, "answers": true, "usage": true})
+	fields, err := strictObject(raw, 1<<20, map[string]bool{
+		"model": true, "answers": true, "usage": true,
+		"session_id": true, "prompt_cache_key": true, // FA8: only if echoed
+	})
 	if err != nil {
 		outcome = "bad_json"
 		return soDecision{}
@@ -276,26 +535,41 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	}
 	if b, ok := fields["usage"]; ok {
 		_ = json.Unmarshal(b, &out.Usage)
+		usage = out.Usage
 	}
 	if out.Answers == nil {
 		outcome = "bad_json"
 		return soDecision{}
 	}
 	a, ok := out.Answers["gate"]
-	if !ok || !validSOAnswer(a, q) {
-		// YC5: a missing, non-choice, misrouted or malformed answer is an
-		// invalid response, never a decision. No choice is taken verbatim.
+	if !ok {
 		outcome = "invalid-response"
 		return soDecision{}
+	}
+	rawChoice := a.Choice
+	a, reason, valid := validSOAnswer(a, q)
+	if !valid {
+		// N16: a generic answer naming no label in the registry is an unusable
+		// response, not a typed item rejection. Real out-of-set registry labels
+		// keep their precise invalid-response reason.
+		if reason == "invalid-response" && isGenericQuestion(q) && !knownRegistryLabel(rawChoice) {
+			outcome = "so-degraded"
+			return soDecision{}
+		}
+		// YC5: a missing, misrouted or malformed answer is never a decision.
+		outcome = reason
+		routerAudit("gate", "reason", reason, "status", "rejected")
+		return soDecision{Reason: reason}
 	}
 	d := soDecision{Choice: a.Choice, Conf: a.Confidence, AnswerType: a.Type,
 		Score: a.Score, Probabilities: a.Probabilities,
 		LatencyMS: time.Since(start).Milliseconds(), ResponseID: "none"}
 	d.Trace = rankingTrace(d, "")
 	if a.Noul {
-		return d // an explicit no-answer carries no choice
+		d.AnswerType = "noul" // explicit abstain, typed for FA11
+		return d
 	}
-	if len(a.Probabilities) > 0 && a.Type == "score" {
+	if len(a.Probabilities) >= 2 {
 		d.Margin, d.MarginKnown = answerMargin(a.Probabilities)
 	}
 	outcome = "ok"
@@ -314,17 +588,135 @@ type soAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// validSOAnswer requires the answer type the question asked for, a label from
-// the question's own set, and a finite confidence in [0,1]. YC5: a response
-// without type=="choice" is invalid, even if it carries a plausible choice.
-func validSOAnswer(a soAnswer, q soQuestion) bool {
-	if a.Type != "choice" || a.Choice == "" {
+// validSOAnswer requires a compatible answer type, a label from the question's
+// own set, and a finite confidence in [0,1]. It normalizes the winner and the
+// probability map. Returns the normalized answer, a typed failure reason
+// (empty on success) and ok.
+// isGenericQuestion identifies the router's yes/no/other gate question.
+func isGenericQuestion(q soQuestion) bool {
+	if len(q.Criteria) != 3 {
 		return false
 	}
-	if _, inSet := q.Criteria[a.Choice]; len(q.Criteria) > 0 && !inSet {
+	for _, label := range []string{"yes", "no", "other"} {
+		if _, ok := q.Criteria[label]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// knownRegistryLabel reports whether a label belongs to any registry item.
+func knownRegistryLabel(label string) bool {
+	if label == "" {
 		return false
 	}
-	return !math.IsNaN(a.Confidence) && a.Confidence >= 0 && a.Confidence <= 1
+	for _, it := range loadDecisionItems() {
+		if _, ok := it.Q.Labels[label]; ok {
+			return true
+		}
+		if _, ok := it.Action[label]; ok {
+			return true
+		}
+		for _, p := range it.Proceed {
+			if p == label {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validSOAnswer(a soAnswer, q soQuestion) (soAnswer, string, bool) {
+	qt := strings.ToLower(strings.TrimSpace(q.Type))
+	if qt == "" {
+		qt = "choice"
+	}
+	at := strings.ToLower(strings.TrimSpace(a.Type))
+	// FA11: score/choice are compatible only with a full distribution over the
+	// question's labels. A bare score answer to a choice item is malformed (YC5).
+	// "noul" is an explicit abstain for any question type.
+	crossType := (at == "score" && qt == "choice") || (at == "choice" && qt == "score")
+	fullDistribution := len(q.Criteria) > 0 && len(a.Probabilities) >= len(q.Criteria)
+	if fullDistribution {
+		for label := range q.Criteria {
+			if _, ok := a.Probabilities[label]; !ok {
+				fullDistribution = false
+				break
+			}
+		}
+	}
+	compatible := at == qt || (crossType && fullDistribution)
+	if at == "" || (!compatible && at != "noul") {
+		return a, "invalid-response", false
+	}
+	a.Type = at
+	a.Choice = strings.ToLower(strings.TrimSpace(a.Choice))
+	if at == "noul" || a.Noul {
+		return a, "", true
+	}
+	if a.Choice == "" {
+		return a, "invalid-response", false
+	}
+	if len(q.Criteria) > 0 {
+		if _, inSet := q.Criteria[a.Choice]; !inSet {
+			// FA2.2: criteria are the authority; accept a case-variant key but
+			// store the canonical label.
+			found := ""
+			for k := range q.Criteria {
+				if strings.EqualFold(k, a.Choice) {
+					found = strings.ToLower(strings.TrimSpace(k))
+					break
+				}
+			}
+			if found == "" {
+				return a, "invalid-response", false
+			}
+			a.Choice = found
+		}
+	}
+	if math.IsNaN(a.Confidence) || math.IsInf(a.Confidence, 0) || a.Confidence < 0 || a.Confidence > 1 {
+		return a, "invalid-response", false
+	}
+	if len(a.Probabilities) > 0 {
+		if len(a.Probabilities) < 2 {
+			return a, "invalid_probabilities", false
+		}
+		sum := 0.0
+		for label, v := range a.Probabilities {
+			if strings.TrimSpace(label) == "" || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return a, "invalid_probabilities", false
+			}
+			sum += v
+		}
+		// 1% tolerance plus float rounding slack: a decimal distribution
+		// summing to 1.01 must not be rejected on binary representation noise.
+		if math.Abs(sum-1) > 0.01+1e-9 {
+			return a, "invalid_probabilities", false
+		}
+		// YD8: sum 0.99 is within tolerance; normalize before the margin cut.
+		if sum > 0 {
+			for k, v := range a.Probabilities {
+				a.Probabilities[k] = v / sum
+			}
+		}
+	}
+	return a, "", true
+}
+
+// soStableIDs derives FA8 identifiers from the model, canonical question and a
+// state hash. Never the raw prompt: N6 keeps prompt bodies off the wire.
+func soStableIDs(model string, q soQuestion, state string) (string, string) {
+	h := sha256.New()
+	_, _ = h.Write([]byte(model))
+	_, _ = h.Write([]byte{0})
+	if qb, err := json.Marshal(q); err == nil {
+		_, _ = h.Write(qb)
+	}
+	_, _ = h.Write([]byte{0})
+	sh := sha256.Sum256([]byte(state))
+	_, _ = h.Write(sh[:])
+	id := fmt.Sprintf("%x", h.Sum(nil))
+	return id, id
 }
 
 // answerMargin returns p1-p2 over a label probability map. Only the endpoint's

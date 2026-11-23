@@ -58,7 +58,13 @@ func (c *preflightCalibration) add(pre, final string) {
 		c.items[c.next] = pair
 		c.n++
 	} else {
-		delete(c.counts, c.items[c.next])
+		old := c.items[c.next]
+		if c.counts[old] > 0 {
+			c.counts[old]--
+			if c.counts[old] == 0 {
+				delete(c.counts, old)
+			}
+		}
 		c.items[c.next] = pair
 	}
 	c.counts[pair]++

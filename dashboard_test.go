@@ -729,3 +729,18 @@ func TestDashNotFoundAndHealthMethod(t *testing.T) {
 		t.Fatalf("POST /api/health = %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+// Malformed JSON on /api/release must answer 400, not 200 empty body.
+func TestDashboardReleaseMalformedJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	req := dashRequest(http.MethodPost, "/api/release", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	NewDashboardHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed /api/release status = %d, want 400; body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"ok":false`) {
+		t.Fatalf("malformed /api/release body missing error envelope: %q", rec.Body.String())
+	}
+}

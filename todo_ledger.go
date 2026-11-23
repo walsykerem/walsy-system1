@@ -16,8 +16,10 @@ type todoLedger struct {
 }
 
 type todoLedgerState struct {
-	Todo []string `json:"todo"`
-	Done []string `json:"done"`
+	Todo []string        `json:"todo"`
+	Done []string        `json:"done"`
+	Who  json.RawMessage `json:"who"`  // owner metadata, shape-agnostic
+	When json.RawMessage `json:"when"` // round metadata, shape-agnostic
 }
 
 // ledgerKey folds case and whitespace so "Write  tests" matches "write tests".

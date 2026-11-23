@@ -13,9 +13,19 @@
   {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode .PromptSheetMode)}}
   <header class="topbar">
     <div class="brand">WALSY<span class="slash">/</span>SYSTEM ONE</div>
-    <a class="topbar-link" href="#prompts">PROMPTS</a>
     <a class="topbar-link" href="#logs">LOGS</a>
+    <a class="topbar-link" href="#prompts">PROMPTS</a>
+    <a class="topbar-link" href="#feedback" aria-disabled="true">FEEDBACK (READ-ONLY)</a>
   </header>
+  {{if .ReadOnlyBanner}}<p class="mode-banner" role="status">SALT-OKUNUR / {{.SOMode}} / READ-ONLY</p>{{end}}
+  <section id="feedback" class="feedback-panel" aria-label="Feedback (read-only)">
+    <h2>FEEDBACK (READ-ONLY)</h2>
+    <textarea id="feedback-text" readonly disabled>Feedback is read-only.</textarea>
+    <label for="mutation-token">MUTATION TOKEN</label>
+    <input id="mutation-token" name="mutation_token" readonly disabled value="MUTATION TOKEN REJECT">
+    <p class="denial-alarm" role="status">SO -32001 DENIAL ALARM (armed)</p>
+    <p class="so-health" data-mode="{{.SOMode}}">SO HEALTH: {{.SOMode}} / DEGRADED MONITORED</p>
+  </section>
   <!-- Legacy DOM anchors: the keytest rule and prompt editor live in the PROMPTS sheet. -->
   <div class="logs-layout" hidden aria-hidden="true">
     <div class="system-prompt-panel"><textarea id="system-prompt" tabindex="-1"></textarea></div>

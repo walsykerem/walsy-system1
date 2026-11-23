@@ -87,17 +87,25 @@ func itoa(n int) string {
 }
 
 // With live checks on, the script still ends in a self-consistent verdict and
-// exits 0 iff nothing failed. A stopped dashboard is a SKIP, not a FAIL.
+// exits 0 iff nothing failed. A stopped dashboard is a SKIP, not a FAIL, but if
+// every check skipped there is no evidence for a PASS verdict.
 func TestCheckerSimScriptVerdict(t *testing.T) {
 	out, err := runSim(t, false)
 	if !strings.Contains(out, "checker-sim:") {
 		t.Fatalf("no verdict line:\n%s", out)
 	}
-	failed := false
+	failed, live := false, 0
 	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "PASS "), strings.HasPrefix(line, "FAIL "):
+			live++
+		}
 		if strings.HasPrefix(line, "FAIL ") {
 			failed = true
 		}
+	}
+	if live == 0 {
+		t.Skipf("dashboard unavailable; checker verdict inconclusive:\n%s", out)
 	}
 	if failed && err == nil {
 		t.Fatalf("FAIL printed but exit 0:\n%s", out)

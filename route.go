@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
+	"math"
 	"strings"
 )
 
@@ -10,6 +10,7 @@ import (
 const (
 	decPass = "pass"
 	decPin  = "pin"
+	decDeny = "deny"
 )
 
 // routeResult is the one routing output. Reason is a reason-code, never a
@@ -252,16 +253,50 @@ func passResult(reason string, abstained bool) routeResult {
 	return routeResult{Decision: decPass, Reason: reason, Abstained: abstained, Passthrough: true}
 }
 
+// enforcingUnavailable is GOV-1: a missing SO answer in enforcing mode is a
+// reason-coded abstain, never a fail-open pass.
+func enforcingUnavailable() routeResult {
+	recordDecisionReason("so-degraded")
+	return routeResult{Decision: decDeny, Reason: "so-degraded", Covered: true,
+		Abstained: true, Steer: withSteer("blocked", "SO unavailable in enforcing mode")}
+}
+
+// invalidSOProbabilities rejects a distribution that cannot be a probability
+// map: too few labels, a non-finite/out-of-range value, or a sum away from 1.
+// An absent map stays on the legacy confidence path.
+func invalidSOProbabilities(p map[string]float64) bool {
+	if len(p) == 0 {
+		return false
+	}
+	if len(p) < 2 {
+		return true
+	}
+	sum := 0.0
+	for _, v := range p {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 1 {
+			return true
+		}
+		sum += v
+	}
+	return math.Abs(sum-1) > 0.01
+}
+
 // inScope is the honest coverage intersection: an in-scope JSON-RPC method,
-// model-before, authoritative, opted-in and calibrated. Context-only and
-// post-tool phases never enter payday.
+// authoritative, opted-in and calibrated. A missing phase or an explicit
+// after-model/after-tool phase is past the decision point and stays out; an
+// unknown phase remains in scope so unusual-but-declared callers keep working.
 func inScope(e stateEnvelope) bool {
-	p := strings.ToLower(strings.ReplaceAll(e.Phase, "_", "-"))
 	m := strings.ToLower(strings.ReplaceAll(e.Method, "_", "-"))
 	if m != "initialize" && m != "tools/call" {
 		return false
 	}
-	return (p == "before-model" || p == "pre-model") && e.Authority && e.OptIn && e.Calibrated
+	ph := strings.ToLower(strings.ReplaceAll(e.Phase, "_", "-"))
+	switch ph {
+	case "", "after-model", "post-model", "after-tool", "post-tool",
+		"after-call", "post-call", "after-response", "post-response":
+		return false
+	}
+	return e.Authority && e.OptIn && e.Calibrated
 }
 
 // staticPass is the deterministic microsecond short-circuit.
@@ -293,6 +328,26 @@ func isLabelShaped(text string) bool {
 // passthrough; no 503, no fail-closed, no raw conf/secret in the result.
 // A non-admit answer always carries the one concrete next step, so a
 // below-0.8 verdict steers instead of sending the caller back to rediscover it.
+// ledgerMetadataMissing names the owner/round fields a done claim must carry.
+// Who/When are shape-agnostic; a missing or empty value is not an owner.
+func ledgerMetadataMissing(state string) []string {
+	var s todoLedgerState
+	if json.Unmarshal([]byte(state), &s) != nil {
+		return []string{"who", "when"}
+	}
+	var missing []string
+	for _, f := range []struct {
+		name string
+		raw  json.RawMessage
+	}{{"who", s.Who}, {"when", s.When}} {
+		v := strings.TrimSpace(string(f.raw))
+		if v == "" || v == `""` || v == "null" || v == "{}" || v == "[]" {
+			missing = append(missing, f.name)
+		}
+	}
+	return missing
+}
+
 func route(state string, p *pin) routeResult {
 	r := routeInner(state, p)
 	if r.Steer == "" && r.Decision != decPin {
@@ -317,6 +372,11 @@ func routeInner(state string, p *pin) routeResult {
 	}
 	f := layer0{NeedLabel: e.NeedLabel, NoScratch: e.NoScratch, Safe: e.Safe, Reversible: e.Reversible, CleanRename: !staleRename(e.State)}
 	if !gate(f) {
+		// FA5: an ambiguous shadow verdict still reaches SO for calibration.
+		// The admission outcome is unchanged: this stays a layer-0 pass.
+		if p := preflightFromState(state); p.Ambiguous {
+			_ = askSO(state)
+		}
 		return passResult("layer0-gate", false)
 	}
 	if staticShortCircuit(e.State) {
@@ -343,6 +403,12 @@ func routeInner(state string, p *pin) routeResult {
 				r.Steer = a.Steer
 				return r
 			}
+			if missing := ledgerMetadataMissing(e.State); len(missing) > 0 {
+				r := passResult("ledger-open", true)
+				r.Label = "do_more"
+				r.Steer = "do not claim done: missing " + strings.Join(missing, ", ") + " (owner and round for every covered item)"
+				return r
+			}
 			return routeResult{Decision: decPin, Reason: "ledger-complete", Covered: true, ConfBucket: confBucket(l.Verdict.Conf), Label: l.Verdict.Choice, Steer: item.Action[l.Verdict.Choice]}
 		case "":
 			return passResult("no-state", false)
@@ -365,7 +431,18 @@ func routeInner(state string, p *pin) routeResult {
 
 	var d soDecision
 	if isItem {
-		d = askSOQ(state, item.question())
+		q := item.question()
+		// YC7: a Requires gate is only checkable on a structured state. FA11
+		// typed probes carry free-form state, so keep their wire question
+		// unconditional; JSON states still suppress missing declared fields.
+		if strings.HasPrefix(strings.TrimSpace(state), "{") {
+			if !questionApplicable(q, state) {
+				return passResult("no-applicable-question", false)
+			}
+		} else {
+			q.Requires = nil
+		}
+		d = askSOQ(state, q)
 	} else {
 		d = askSO(state)
 	}
@@ -374,10 +451,28 @@ func routeInner(state string, p *pin) routeResult {
 	raw := d
 	withRaw := func(r routeResult) routeResult { r.LastDecision = raw; return r }
 	switch {
+	case d.Reason != "":
+		// Typed gate failures (malformed_response, invalid_probabilities) are
+		// terminal abstains with their own reason code, never so-degraded.
+		return withRaw(passResult(d.Reason, true))
+	case d.AnswerType == "noul":
+		// FA11: an explicit no-answer is a terminal abstain, never a degraded pass.
+		recordDecisionReason("so-noul")
+		return withRaw(passResult("so-noul", true))
 	case d.TimedOut:
-		return withRaw(passResult(classify(0, context.DeadlineExceeded), true))
+		if soMode() == soModeEnforcing {
+			return withRaw(enforcingUnavailable())
+		}
+		return withRaw(passResult("timeout", true))
 	case d.Choice == "":
+		if soMode() == soModeEnforcing {
+			return withRaw(enforcingUnavailable())
+		}
+		recordDecisionReason("so-degraded")
 		return withRaw(passResult("so-degraded", true)) // HTTP!=200, parse error or a label outside the item's set
+	case invalidSOProbabilities(d.Probabilities):
+		// W35: a broken distribution is an abstain, not an admit on confidence alone.
+		return withRaw(passResult("invalid_probabilities", true))
 	case !admits(d.Choice):
 		// Outside the item's proceed list nothing is admitted. A registry item's
 		// own action is the steer; the generic question's label rides through

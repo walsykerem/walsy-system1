@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,22 +25,33 @@ const (
 )
 
 // routerBreaker tracks recent failures for one tool or provider.
+const (
+	routerDefaultLatencyRing = 16
+	routerDefaultLatencyMS   = 100
+)
+
 type routerBreaker struct {
-	failures int
-	last     time.Time
-	halfOpen bool
+	failures     int
+	last         time.Time
+	halfOpen     bool
+	latencies    [routerDefaultLatencyRing]time.Duration
+	latencyIdx   int
+	latencyCount int
+	slowStreak   int
 }
 
 type routerPolicy struct {
-	init          bool
-	budgetMax     int
-	budgetLeft    int
-	budgetRefills int
-	deny          map[string]bool
-	mirror        string
-	threshold     int
-	cooldown      time.Duration
-	breakers      map[string]routerBreaker
+	init             bool
+	budgetMax        int
+	budgetLeft       int
+	budgetRefills    int
+	latencyRing      int
+	latencyThreshold time.Duration
+	deny             map[string]bool
+	mirror           string
+	threshold        int
+	cooldown         time.Duration
+	breakers         map[string]routerBreaker
 }
 
 var (
@@ -56,6 +68,7 @@ var routerAuditKeys = map[string]bool{
 	"method": true, "allow": true, "credits": true,
 	"source": true, "id": true, "nonce": true,
 	"prev": true, "head": true, "response_id": true,
+	"approver": true, "hash": true, "label": true,
 }
 
 // routerReset clears per-process counters. Tests call it between cases.
@@ -76,6 +89,8 @@ func routerInitLocked() {
 	routerState.budgetLeft = routerState.budgetMax
 	routerState.threshold = routerIntConfig("breaker_threshold", routerDefaultFailures, 1, 32)
 	routerState.cooldown = routerDurationConfig("breaker_cooldown", routerDefaultCooldown)
+	routerState.latencyRing = routerIntConfig("latency_ring_size", routerDefaultLatencyRing, 2, routerDefaultLatencyRing)
+	routerState.latencyThreshold = time.Duration(routerIntConfig("latency_threshold_ms", routerDefaultLatencyMS, 1, 10000)) * time.Millisecond
 	routerState.mirror = routerMirrorConfig()
 	for _, n := range strings.Split(routerConfigValue("deny"), ",") {
 		if name, ok := routerSafeField(strings.TrimSpace(n)); ok {
@@ -137,8 +152,41 @@ func routerBudgetOK() bool {
 	return spent
 }
 
-// routerRecord feeds the circuit breaker. Success closes the breaker.
-func routerRecord(tool string, ok bool) {
+// routerBudgetSpendLatency spends one extra retry token when an observed SO
+// call exceeds the latency threshold. It is additive to routerBudgetSpend.
+func routerBudgetSpendLatency(latency time.Duration) (left, max int, spent bool) {
+	routerMu.Lock()
+	defer routerMu.Unlock()
+	routerInitLocked()
+	if latency <= 0 || latency <= routerState.latencyThreshold || routerState.budgetLeft <= 0 {
+		return routerState.budgetLeft, routerState.budgetMax, false
+	}
+	routerState.budgetLeft--
+	return routerState.budgetLeft, routerState.budgetMax, true
+}
+
+// latencyMedian is the median of the samples currently in the rolling ring.
+func (b *routerBreaker) latencyMedian() time.Duration {
+	if b.latencyCount <= 0 {
+		return 0
+	}
+	samples := make([]time.Duration, 0, b.latencyCount)
+	for _, d := range b.latencies {
+		if d > 0 {
+			samples = append(samples, d)
+		}
+	}
+	if len(samples) == 0 {
+		return 0
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	return samples[len(samples)/2]
+}
+
+// routerRecord feeds the circuit breaker. Success closes the breaker. An
+// optional observed latency above the threshold opens it after a short run of
+// slow samples, without spending retry budget.
+func routerRecord(tool string, ok bool, observed ...time.Duration) {
 	routerMu.Lock()
 	defer routerMu.Unlock()
 	routerInitLocked()
@@ -146,12 +194,35 @@ func routerRecord(tool string, ok bool) {
 	if !safe {
 		return
 	}
-	if ok {
-		delete(routerState.breakers, name)
-		return
-	}
 	b := routerState.breakers[name]
 	now := time.Now()
+	if len(observed) > 0 && observed[0] > 0 {
+		b.latencies[b.latencyIdx] = observed[0]
+		b.latencyIdx = (b.latencyIdx + 1) % routerState.latencyRing
+		if b.latencyCount < routerState.latencyRing {
+			b.latencyCount++
+		}
+		if b.latencyMedian() > routerState.latencyThreshold {
+			b.slowStreak++
+		} else {
+			b.slowStreak = 0
+		}
+		if b.slowStreak >= routerState.threshold {
+			b.failures = routerState.threshold
+			b.last, b.halfOpen = now, false
+			routerState.breakers[name] = b
+			return
+		}
+	}
+	if ok {
+		if b.failures == 0 && b.slowStreak == 0 {
+			delete(routerState.breakers, name)
+		} else {
+			b.failures, b.halfOpen, b.last = 0, false, time.Time{}
+			routerState.breakers[name] = b
+		}
+		return
+	}
 	if b.failures == 0 || now.Sub(b.last) >= routerState.cooldown {
 		b.failures = 0
 	}
@@ -173,7 +244,9 @@ func routerBreakerOpen(tool string) bool {
 	}
 	b := routerState.breakers[name]
 	if b.failures < routerState.threshold {
-		return false
+		// Two slow median samples open the circuit: waiting for a full ring
+		// admits a burst of slow calls before the breaker reacts.
+		return b.latencyCount >= 2 && b.latencyMedian() > routerState.latencyThreshold
 	}
 	if b.halfOpen {
 		return true

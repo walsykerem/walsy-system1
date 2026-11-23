@@ -26,6 +26,9 @@ var errFrameTooLarge = errors.New("tools frame too large")
 // cacheDirName is the single temp folder for cache and System One scratch files.
 const cacheDirName = "walsy-system1-cache"
 
+// releaseAliases are the operator-facing release names exposed on MCP surfaces.
+const releaseAliases = "systemone, system one, Smart Router (System One)"
+
 func cacheDir() string { return filepath.Join(os.TempDir(), cacheDirName) }
 
 // prepareCacheDir wipes only the dedicated cache folder before an MCP stdin
@@ -75,15 +78,67 @@ func runToolsServer(in io.Reader, out io.Writer) {
 		if json.Unmarshal(raw, &req) != nil {
 			continue
 		}
-		d.decideFrame(raw)
+		_, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
 		if len(req.ID) == 0 {
 			continue // notification
 		}
-		_ = enc.Encode(toolsReply(req.ID, req.Method, req.Params))
+		_ = enc.Encode(toolsReply(req.ID, req.Method, req.Params, dec))
 	}
 }
 
-func toolsReply(id json.RawMessage, method string, params json.RawMessage) map[string]any {
+// toolsGateFrame lifts the declared system1_decide inputs out of arguments so
+// the single frame-level decide hook sees the same state the tool answers with.
+// Invoking that gated tool is itself the explicit opt-in, as in toolsDecide's
+// direct-call path; no consent is inferred for any other method.
+func toolsGateFrame(raw []byte, req struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+}) []byte {
+	if req.Method != "tools/call" || len(req.Params) == 0 {
+		return raw
+	}
+	var call struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if json.Unmarshal(req.Params, &call) != nil || call.Name != "system1_decide" || len(call.Arguments) == 0 {
+		return raw
+	}
+	var args, params map[string]json.RawMessage
+	if json.Unmarshal(call.Arguments, &args) != nil || json.Unmarshal(req.Params, &params) != nil {
+		return raw
+	}
+	for _, k := range []string{"item", "state", "phase"} {
+		if v, ok := args[k]; ok && len(v) > 0 {
+			params[k] = v
+		}
+	}
+	if _, ok := params["phase"]; !ok {
+		params["phase"] = json.RawMessage(`"before-model"`)
+	}
+	for _, k := range []string{"need_label", "no_scratch", "safe", "reversible", "authority", "calibrated", "opt_in"} {
+		if _, ok := params[k]; !ok {
+			params[k] = json.RawMessage("true")
+		}
+	}
+	pb, err := json.Marshal(params)
+	if err != nil {
+		return raw
+	}
+	var env map[string]json.RawMessage
+	if json.Unmarshal(raw, &env) != nil {
+		return raw
+	}
+	env["params"] = pb
+	b, err := json.Marshal(env)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+func toolsReply(id json.RawMessage, method string, params json.RawMessage, frameDec ...soDecision) map[string]any {
 	base := map[string]any{"jsonrpc": "2.0", "id": id}
 	switch method {
 	case "initialize":
@@ -103,7 +158,7 @@ func toolsReply(id json.RawMessage, method string, params json.RawMessage) map[s
 			base["error"] = map[string]any{"code": -32602, "message": "invalid params"}
 			return base
 		}
-		text, err := callTool(call.Name, call.Arguments)
+		text, err := callTool(call.Name, call.Arguments, frameDec...)
 		if err != nil {
 			base["error"] = map[string]any{"code": -32602, "message": err.Error()}
 			return base
@@ -134,7 +189,7 @@ var toolAuditDef = map[string]any{
 
 var toolDecideDef = map[string]any{
 	"name":        "system1_decide",
-	"description": "Ask the decision engine one registry item (decision_items.json id) with a state text. Returns the typed label, confidence, admission, the item's proceed labels and the action the caller must take. gate:false items answer locally with no model call; irreversible items admit only a proceed label. Never returns key material or the raw state.",
+	"description": "Ask the decision engine one registry item (decision_items.json id) with a state text. Returns the typed label, confidence, admission, the item's proceed labels and the action the caller must take. gate:false items answer locally with no model call; irreversible items admit only a proceed label. Never returns key material or the raw state. Release aliases: " + releaseAliases + ".",
 	"inputSchema": map[string]any{"type": "object", "required": []any{"item", "state"}, "properties": map[string]any{
 		"item":   map[string]any{"type": "string", "description": "decision_items.json item id, e.g. intake.intent"},
 		"state":  map[string]any{"type": "string", "description": "decision state text"},
@@ -143,7 +198,7 @@ var toolDecideDef = map[string]any{
 	}},
 }
 
-func callTool(name string, args json.RawMessage) (string, error) {
+func callTool(name string, args json.RawMessage, frameDec ...soDecision) (string, error) {
 	switch name {
 	case "system1_status":
 		return toolsStatus()
@@ -173,7 +228,7 @@ func callTool(name string, args json.RawMessage) (string, error) {
 		if a.Item == "" || a.State == "" {
 			return toolsError("item and state are required"), nil
 		}
-		return toolsDecide(a.Item, a.State, a.Phase, a.Strict), nil
+		return toolsDecide(a.Item, a.State, a.Phase, a.Strict, frameDec...), nil
 	}
 	return "", errors.New("unknown tool")
 }
@@ -198,7 +253,7 @@ func toolsError(msg string) string {
 // toolsDecide runs one registry item through the single decision hub. The raw
 // SO answer rides on routeResult.LastDecision; routeResult's bucket alone is
 // too coarse for the label/confidence this tool must return.
-func toolsDecide(item, state, phase string, strict bool) string {
+func toolsDecide(item, state, phase string, strict bool, frameDec ...soDecision) string {
 	it, ok := decisionItemFor(item)
 	if !ok {
 		return toolsError("unknown item")
@@ -210,16 +265,21 @@ func toolsDecide(item, state, phase string, strict bool) string {
 	if phase == "" {
 		phase = "before-model"
 	}
-	// shortcut: invoking system1_decide is the explicit capability for this
-	// tool request; add a per-client consent field when tools gain their own
-	// capability envelope.
-	req, _ := json.Marshal(map[string]any{
-		"state": state, "phase": phase, "item": item, "method": "tools/call",
-		"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
-		"authority": true, "calibrated": true, "opt_in": true,
-	})
 	thr := it.threshold(defaultThreshold())
-	_, d := newDecisionBridge().decideFull(req)
+	var d soDecision
+	if len(frameDec) > 0 {
+		// One decide hook per frame: reuse the typed SO answer already produced
+		// by decideFrameDetailed; a second call would double the SO POSTs.
+		d = frameDec[0]
+	} else {
+		// Direct callers without a frame-level decision keep the old path.
+		req, _ := json.Marshal(map[string]any{
+			"state": state, "phase": phase, "item": item, "method": "tools/call",
+			"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
+			"authority": true, "calibrated": true, "opt_in": true,
+		})
+		_, d = newDecisionBridge().decideFull(req)
+	}
 	if d.TimedOut {
 		return toolsError("model timeout")
 	}
@@ -308,12 +368,39 @@ func toolsAudit(limit int, errorsOnly bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(filepath.Join(home, routerDir, routerAuditName))
+	path := filepath.Join(home, routerDir, routerAuditName)
+	st, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return `{"count":0,"events":[]}`, nil
 		}
 		return "", err
+	}
+	if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
+		return "", fmt.Errorf("audit path %s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	tail := st.Size() > int64(maxToolsFrame)
+	if tail {
+		if _, err := f.Seek(-int64(maxToolsFrame), io.SeekEnd); err != nil {
+			return "", err
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", err
+	}
+	if tail {
+		// Seek starts mid-line; only lines after the first newline are whole.
+		if i := strings.IndexByte(string(data), '\n'); i >= 0 {
+			data = data[i+1:]
+		} else {
+			data = nil
+		}
 	}
 	lines := strings.Split(string(data), "\n")
 	found := make([]json.RawMessage, 0, limit)

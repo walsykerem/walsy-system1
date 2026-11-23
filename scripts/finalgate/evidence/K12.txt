@@ -1,21 +1,27 @@
 # scripts/verify.sh run
-timestamp: 2026-11-22T17:33:00Z
+timestamp: 2026-11-23T13:13:24Z
 command: GOCACHE=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache scripts/verify.sh
 --- output
-== 1/8 gofmt ==
-== 2/8 go vet ==
-== 3/8 go test -race ==
-ok  	walsy-system1	8.405s
+== 1/10 gofmt ==
+== 2/10 go vet ==
+== 3/10 go test -race ==
+ok  	walsy-system1	35.787s
+ok  	walsy-system1/scripts	10.837s
 ?   	walsy-system1/scripts/asciiscan	[no test files]
-ok  	walsy-system1/scripts/finalgate	1.470s
+ok  	walsy-system1/scripts/finalgate	2.558s
 ?   	walsy-system1/scripts/recondigest	[no test files]
-ok  	walsy-system1/scripts/relay56	1.832s
-== 4/8 go build ==
-== 5/8 lrecon digest ==
-lrecon digest: c16fa26faa7718753b779120e857cc813f206de574c0b05fe14292731f10a82b
+ok  	walsy-system1/scripts/relay56	2.269s
+?   	walsy-system1/scripts/releasegate	[no test files]
+== 4/10 go build ==
+== 5/10 lrecon digest ==
+lrecon digest: 67eb6da7689ccc0d0c12830431ea0f117048545920ad3fa814b54ffc5e567109
 lrecon kind: macho
-== 6/8 non-ascii scan ==
-ascii clean: 74 files
-== 7/8 subpackage vet ==
-== 8/8 verdict ==
+== 6/10 non-ascii scan ==
+ascii clean: 128 files
+== 7/10 subpackage vet ==
+== 8/10 decision_items signature ==
+decision_items.json: OK
+== 9/10 release gate ==
+release gate: PASS
+== 10/10 verdict ==
 PASS

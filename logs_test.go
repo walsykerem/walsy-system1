@@ -71,8 +71,7 @@ func TestLogTimestampsUseLocalClock(t *testing.T) {
 	if !ok {
 		t.Fatalf("At %q is not the local clock %q", entries[0].At, before.In(time.Local).Format("15:04:05"))
 	}
-	// Accept the minute before the call too: the test can straddle :00.
-	if want, prev := time.Now().In(time.Local).Format("15:04"), before.In(time.Local).Format("15:04"); total.Since[:5] != want && total.Since[:5] != prev {
-		t.Fatalf("Since %q not local now %q", total.Since, want)
+	if want := logSince.In(time.Local).Format("15:04:05"); total.Since != want {
+		t.Fatalf("Since %q not process start %q", total.Since, want)
 	}
 }

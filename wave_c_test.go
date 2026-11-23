@@ -120,9 +120,12 @@ func TestYC8StrictDecode(t *testing.T) {
 		t.Fatal("decodeFrame accepted a case-variant duplicate key")
 	}
 	d := &decisionBridge{}
-	r := d.decideFrame(bytes.Repeat([]byte("x"), 1<<20))
+	r := d.decideFrame(bytes.Repeat([]byte("x"), maxHTTPFrame+16))
 	if !r.Passthrough || r.Reason != "frame-too-large" {
 		t.Fatalf("oversized frame decision = %+v, want passthrough frame-too-large", r)
+	}
+	if _, err := decodeFrame([]byte(`{"method":"x","params":{"pad":"` + strings.Repeat("a", 2<<20) + `"}}`)); err != nil {
+		t.Fatalf("valid 2 MiB frame rejected by decodeFrame: %v", err)
 	}
 }
 

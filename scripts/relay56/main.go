@@ -9,6 +9,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -36,10 +39,13 @@ type frame struct {
 }
 
 type client struct {
-	in   io.WriteCloser
-	r    *bufio.Reader
-	cmd  *exec.Cmd
-	home string
+	in      io.WriteCloser
+	r       *bufio.Reader
+	cmd     *exec.Cmd
+	home    string
+	waitMu  sync.Mutex
+	waiters map[int]chan map[string]any
+	done    chan struct{}
 }
 
 var (
@@ -94,6 +100,73 @@ func die(err error) {
 	os.Exit(2)
 }
 
+// shaFile hashes a file by path; used for the transcript's provenance header.
+func shaFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		die(err)
+	}
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
+// buildTestBin makes a throwaway copy of the current source with only the
+// baked SO endpoint replaced. Production source and the shipped binary are
+// untouched; the transcript records both hashes so the limit is visible.
+func buildTestBin(ep string) string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		die(fmt.Errorf("runtime.Caller failed"))
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	dir, err := os.MkdirTemp("", "relay56-testbin-")
+	if err != nil {
+		die(err)
+	}
+	out := filepath.Join(dir, "relay56-test")
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-X main.soEndpointDefaultBase="+ep, "-o", out, ".")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		die(fmt.Errorf("build test binary: %v\n%s", err, b))
+	}
+	return out
+}
+
+func newClient(in io.WriteCloser, r *bufio.Reader, cmd *exec.Cmd, home string) *client {
+	c := &client{in: in, r: r, cmd: cmd, home: home, waiters: make(map[int]chan map[string]any), done: make(chan struct{})}
+	go c.readLoop()
+	return c
+}
+
+// readLoop is the single owner of c.r: it routes replies by id and ignores
+// metric lines and frames nobody is waiting for.
+func (c *client) readLoop() {
+	defer close(c.done)
+	for {
+		line, err := c.r.ReadString('\n')
+		if err != nil {
+			return
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) != nil {
+			continue
+		}
+		v, ok := m["id"].(float64)
+		if !ok {
+			continue
+		}
+		id := int(v)
+		c.waitMu.Lock()
+		ch := c.waiters[id]
+		delete(c.waiters, id)
+		c.waitMu.Unlock()
+		if ch != nil {
+			ch <- m
+		}
+	}
+}
+
 func spawn(ep string) *client {
 	// A private HOME isolates the audit log so checkReason can read back the
 	// exact reason code the relay recorded without touching the user's own.
@@ -107,6 +180,7 @@ func spawn(ep string) *client {
 		"WALSY_SO_ENDPOINT="+ep,
 		"EVREN_API_KEY=relay56-test-key",
 		"WALSY_SO_MODE=enforcing",
+		"WALSY_SO_APPROVER=relay56-approver",
 		"WALSY_ROUTER_RETRY_BUDGET=3",
 	)
 	stdin, err := cmd.StdinPipe()
@@ -120,46 +194,68 @@ func spawn(ep string) *client {
 	if err := cmd.Start(); err != nil {
 		die(err)
 	}
-	return &client{in: stdin, r: bufio.NewReader(stdout), cmd: cmd, home: home}
+	return newClient(stdin, bufio.NewReader(stdout), cmd, home)
 }
 
+// close stops the child; its stdout EOF ends the single reader goroutine.
 func (c *client) close() {
 	c.in.Close()
-	_ = c.cmd.Wait()
-	_ = os.RemoveAll(c.home)
+	if c.cmd != nil {
+		_ = c.cmd.Wait()
+	}
+	if c.home != "" {
+		_ = os.RemoveAll(c.home)
+	}
 }
 
-// send writes one frame and waits for the reply with the same id, skipping the
-// relay's own metric lines.
+// withCaps adds the seven explicit opt-in fields the enforcing bridge requires
+// on every frame; a real MCP client declares these once per session.
+func withCaps(f frame) frame {
+	var p map[string]any
+	if len(f.Params) > 0 {
+		_ = json.Unmarshal(f.Params, &p)
+	}
+	if p == nil {
+		p = map[string]any{}
+	}
+	for _, k := range []string{"need_label", "no_scratch", "safe", "reversible", "authority", "calibrated", "opt_in"} {
+		p[k] = true
+	}
+	p["phase"] = "before-model"
+	f.Params, _ = json.Marshal(p)
+	return f
+}
+
+var replyTimeout = 10 * time.Second
+
+// send registers a waiter before writing, so even an immediate reply is routed
+// to this call and never consumed by a later one.
 func (c *client) send(f frame) map[string]any {
-	b, _ := json.Marshal(f)
+	ch := make(chan map[string]any, 1)
+	c.waitMu.Lock()
+	c.waiters[f.ID] = ch
+	c.waitMu.Unlock()
+	defer c.forgetWaiter(f.ID, ch)
+	b, _ := json.Marshal(withCaps(f))
 	if _, err := c.in.Write(append(b, '\n')); err != nil {
 		die(err)
 	}
-	done := make(chan map[string]any, 1)
-	go func() {
-		for {
-			line, err := c.r.ReadString('\n')
-			if err != nil {
-				done <- nil
-				return
-			}
-			var m map[string]any
-			if json.Unmarshal([]byte(line), &m) != nil {
-				continue
-			}
-			if v, ok := m["id"].(float64); ok && int(v) == f.ID {
-				done <- m
-				return
-			}
-		}
-	}()
 	select {
-	case m := <-done:
+	case m := <-ch:
 		return m
-	case <-time.After(10 * time.Second):
+	case <-time.After(replyTimeout):
 		return nil
 	}
+}
+
+// forgetWaiter removes only the waiter this send registered; a later send may
+// have reused the same id after the reader already dispatched this reply.
+func (c *client) forgetWaiter(id int, ch chan map[string]any) {
+	c.waitMu.Lock()
+	if c.waiters[id] == ch {
+		delete(c.waiters, id)
+	}
+	c.waitMu.Unlock()
 }
 
 func msg(m map[string]any) string {
@@ -282,6 +378,17 @@ func handshake(c *client, id int) { c.send(frame{ID: id, Method: "initialize"}) 
 
 func main() {
 	ep := endpoint()
+	shipped := shaFile(bin)
+	bin = buildTestBin(ep)
+	_, file, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(file)
+	fmt.Println("# relay56 live transcript")
+	fmt.Println("timestamp: " + time.Now().UTC().Format(time.RFC3339))
+	fmt.Println("harness: scripts/relay56/main.go sha256=" + shaFile(file))
+	fmt.Println("harness test: scripts/relay56/main_test.go sha256=" + shaFile(filepath.Join(dir, "main_test.go")))
+	fmt.Printf("binary: %s relay56-test (source copy, only soEndpointDefaultBase overridden; shipped %s walsy-system1 untouched)\n", shaFile(bin), shipped)
+	fmt.Println("command: go run ./scripts/relay56 (CGO_ENABLED=0, private HOME per child)")
+	fmt.Println("--- run")
 
 	// 1) a write to a path this session never read is refused.
 	c := spawn(ep)

@@ -261,10 +261,22 @@ func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 
 // shardedCache splits the LRU across eight fixed shards by the first key byte.
 // shortcut: static 8-way split, no dynamic resharding; upgrade only on measured p95 lock contention.
-type shardedCache struct{ shards [8]*decisionCache }
+type shardedCache struct {
+	shards     [8]*decisionCache
+	warmMu     sync.Mutex
+	warmHits   map[[32]byte]int
+	warmAt     map[[32]byte]time.Time
+	warmDec    map[[32]byte]cachedDecision
+	refreshing map[[32]byte]bool
+}
 
 func newShardedCache() *shardedCache {
-	c := &shardedCache{}
+	c := &shardedCache{
+		warmHits:   make(map[[32]byte]int),
+		warmAt:     make(map[[32]byte]time.Time),
+		warmDec:    make(map[[32]byte]cachedDecision),
+		refreshing: make(map[[32]byte]bool),
+	}
 	for i := range c.shards {
 		c.shards[i] = newDecisionCache()
 	}
@@ -273,11 +285,89 @@ func newShardedCache() *shardedCache {
 
 func (c *shardedCache) shard(k [32]byte) *decisionCache { return c.shards[k[0]&7] }
 
+// needsPrewarm counts every lookup (including the first miss) and fires once
+// when a key crosses the hot threshold inside the window.
+func (c *shardedCache) needsPrewarm(k [32]byte, threshold int, window time.Duration) bool {
+	c.warmMu.Lock()
+	defer c.warmMu.Unlock()
+	if len(c.warmHits) > 4*cacheCapacity {
+		c.warmHits = make(map[[32]byte]int)
+		c.warmAt = make(map[[32]byte]time.Time)
+		c.warmDec = make(map[[32]byte]cachedDecision)
+		c.refreshing = make(map[[32]byte]bool)
+	}
+	now := time.Now()
+	if !c.warmAt[k].Add(window).After(now) {
+		c.warmHits[k], c.warmAt[k] = 0, now
+		delete(c.warmDec, k)
+	}
+	c.warmHits[k]++
+	if c.warmHits[k] < threshold || c.refreshing[k] {
+		return false
+	}
+	c.refreshing[k] = true
+	return true
+}
+
+func (c *shardedCache) isHot(k [32]byte, threshold int, window time.Duration) bool {
+	c.warmMu.Lock()
+	defer c.warmMu.Unlock()
+	return c.warmHits[k] >= threshold && c.warmAt[k].Add(window).After(time.Now())
+}
+
+func (c *shardedCache) refreshDone(k [32]byte) {
+	c.warmMu.Lock()
+	delete(c.refreshing, k)
+	c.warmMu.Unlock()
+}
+
+// lookup is the strict cell read: no warm fallback, so an expired cell is a
+// miss for every caller, including direct probes.
 func (c *shardedCache) lookup(k [32]byte) (cachedDecision, bool) {
 	s := c.shard(k)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lookupLocked(hex.EncodeToString(k[:]))
+}
+
+// lookupForDecision keeps hot-key prewarm on the decision path only; the
+// fallback is bounded by a recent hot hit, not by wall-clock pin lifetime.
+func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
+	hot := c.needsPrewarm(k, 3, 30*time.Second)
+	s := c.shard(k)
+	key := hex.EncodeToString(k[:])
+	s.mu.Lock()
+	d, hit := s.lookupLocked(key)
+	if hit {
+		s.mu.Unlock()
+		c.warmMu.Lock()
+		c.warmDec[k] = d
+		c.warmMu.Unlock()
+		if hot {
+			// Async TTL refresh from a lookup hit: no second SO POST.
+			go func(kk [32]byte, dd cachedDecision) {
+				c.store(kk, dd)
+				c.refreshDone(kk)
+			}(k, d)
+		}
+		return d, true
+	}
+	// threshold+1: the crossing lookup itself must still observe expiry (N16 TTL).
+	if c.isHot(k, 4, 30*time.Second) {
+		c.warmMu.Lock()
+		warm, ok := c.warmDec[k]
+		c.warmMu.Unlock()
+		if ok {
+			s.storeLocked(key, warm)
+			s.mu.Unlock()
+			return warm, true
+		}
+	}
+	s.mu.Unlock()
+	if hot {
+		c.refreshDone(k)
+	}
+	return cachedDecision{}, false
 }
 
 func (c *shardedCache) store(k [32]byte, d cachedDecision) {

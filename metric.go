@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +27,9 @@ type metric struct {
 	Passthrough  bool   `json:"passthrough,omitempty"`
 	ConfBucket   string `json:"conf_bucket,omitempty"`
 	Source       string `json:"source,omitempty"` // "preflight" on advisory shadow records only
+	Hash         string `json:"hash,omitempty"`   // coarse digest of the allowlisted record
+	Label        string `json:"label,omitempty"`  // coarse decision/reason label
+	LatencyMS    int64  `json:"latency_ms,omitempty"`
 }
 
 // confBucket coarsens a confidence to the allowlisted bucket. <0.8 is invalid
@@ -43,7 +48,21 @@ func confBucket(c float64) string {
 }
 
 // emitMetric writes exactly one JSON line; marshal failure emits nothing.
+// hash/label are derived from allowlisted fields only, so every record carries
+// them without changing the production call sites.
 func emitMetric(m metric) {
+	if m.Hash == "" {
+		if core, err := json.Marshal(m); err == nil {
+			sum := sha256.Sum256(core)
+			m.Hash = hex.EncodeToString(sum[:])[:12]
+		}
+	}
+	if m.Label == "" {
+		m.Label = m.Decision
+		if m.Label == "" {
+			m.Label = m.Reason
+		}
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return

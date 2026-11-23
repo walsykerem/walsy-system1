@@ -24,11 +24,15 @@ var (
 func main() {
 	flag.Parse()
 	if *flagPrintConfig {
-		fmt.Println(opencodeMCPSnippet("system1", *flagTransport, flag.Args()))
+		fmt.Println(opencodeMCPSnippet("system1", *flagTransport, *flagListen, *flagUpstream, flag.Args()))
 		return
 	}
 	if *flagDashboard {
 		*flagTransport = "dashboard" // -dashboard is an alias for -transport dashboard
+	}
+	if err := soModeStartupError(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 
 	switch *flagTransport {

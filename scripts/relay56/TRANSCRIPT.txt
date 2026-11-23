@@ -1,9 +1,9 @@
 # relay56 live transcript
-timestamp: 2026-11-22T17:33:13Z
-harness: scripts/relay56/main.go sha256=8e8be464037c8f51aca9633503f15e13b3fc48031dd2346aec5d1bb69a4ee411
+timestamp: 2026-11-23T12:44:49Z
+harness: scripts/relay56/main.go sha256=98d043f65d18e8799552d899fc44f9989004144b7471eda6227a3a0c89bc6cfb
 harness test: scripts/relay56/main_test.go sha256=29d5953965b4a7bbc08630fb118fde22aab2baa8b8b3168c79cc80ee6b182317
-binary: c16fa26faa7718753b779120e857cc813f206de574c0b05fe14292731f10a82b  walsy-system1
-command: RELAY56_BIN=/Users/keremurhan/walsy-system1/walsy-system1 GOCACHE=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache go run ./scripts/relay56
+binary: 2717bc1224df6ac0edbd10aa7fe1871e7851916a62aedd297043c1a255b3efb7 relay56-test (source copy, only soEndpointDefaultBase overridden; shipped 67eb6da7689ccc0d0c12830431ea0f117048545920ad3fa814b54ffc5e567109 walsy-system1 untouched)
+command: go run ./scripts/relay56 (CGO_ENABLED=0, private HOME per child)
 --- run
 PASS unread-write   blocked: write to a path this session never touched: /tmp/relay56-a.txt: read it first, or state why it is new
 PASS read-ok        forwarded unchanged (/tmp/relay56-b.txt)

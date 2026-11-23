@@ -26,7 +26,7 @@ func parseBootstrapSnippet(t *testing.T, raw string) bootstrapSnippet {
 }
 
 func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
-	raw := opencodeMCPSnippet("system1", "stdio", []string{"--flag", "value"})
+	raw := opencodeMCPSnippet("system1", "stdio", "", "", []string{"--flag", "value"})
 	if strings.Contains(strings.ToLower(raw), "environment") ||
 		strings.Contains(strings.ToLower(raw), "token") ||
 		strings.Contains(raw, "sk-") || strings.Contains(raw, testSecret) {
@@ -56,7 +56,7 @@ func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
 
 	// stdio cannot run without an upstream command, so the snippet must point
 	// at the self-contained tools server instead of a dead invocation.
-	raw = opencodeMCPSnippet("", "", nil)
+	raw = opencodeMCPSnippet("", "", "", "", nil)
 	got = parseBootstrapSnippet(t, raw)
 	srv, ok = got.MCP.Servers["system1"]
 	if !ok {
@@ -66,7 +66,7 @@ func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
 		t.Fatalf("empty-upstream command = %v, want -transport tools", srv.Command)
 	}
 
-	raw = opencodeMCPSnippet("system1", "tools", nil)
+	raw = opencodeMCPSnippet("system1", "tools", "", "", nil)
 	got = parseBootstrapSnippet(t, raw)
 	if cmd := got.MCP.Servers["system1"].Command; len(cmd) != 3 || cmd[2] != "tools" {
 		t.Fatalf("tools transport not honored: %v", cmd)
@@ -74,10 +74,33 @@ func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
 }
 
 func TestBootstrapSnippetRoundTripJSON(t *testing.T) {
-	raw := opencodeMCPSnippet("upstream", "stdio", []string{"npx", "-y", "@example/mcp"})
+	raw := opencodeMCPSnippet("upstream", "stdio", "", "", []string{"npx", "-y", "@example/mcp"})
 	got := parseBootstrapSnippet(t, raw)
 	cmd := got.MCP.Servers["upstream"].Command
 	if len(cmd) != 6 || cmd[len(cmd)-3] != "npx" || cmd[len(cmd)-2] != "-y" || cmd[len(cmd)-1] != "@example/mcp" {
 		t.Fatalf("upstream args not preserved: %v", cmd)
 	}
+}
+
+func assertBootstrapCommand(t *testing.T, raw, name string, want ...string) {
+	t.Helper()
+	cmd := parseBootstrapSnippet(t, raw).MCP.Servers[name].Command
+	if len(cmd) != len(want)+1 {
+		t.Fatalf("command = %v, want binary + %v", cmd, want)
+	}
+	for i, v := range want {
+		if cmd[i+1] != v {
+			t.Fatalf("command[%d] = %q, want %q", i+1, cmd[i+1], v)
+		}
+	}
+}
+
+func TestBootstrapSnippetUnixListenAndUpstream(t *testing.T) {
+	assertBootstrapCommand(t, opencodeMCPSnippet("system1", "unix", "/tmp/s1.sock", "/tmp/up.sock", nil), "system1",
+		"-transport", "unix", "-listen", "/tmp/s1.sock", "-upstream", "/tmp/up.sock")
+}
+
+func TestBootstrapSnippetHTTPListen(t *testing.T) {
+	assertBootstrapCommand(t, opencodeMCPSnippet("system1", "http", "127.0.0.1:8787", "", nil), "system1",
+		"-transport", "http", "-listen", "127.0.0.1:8787")
 }

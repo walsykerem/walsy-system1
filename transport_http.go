@@ -181,8 +181,15 @@ func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Reques
 }
 
 func (d *decisionBridge) advisoryHTTP(request []byte, f frame) {
-	_ = d.decideFrame(request)
+	r, _ := d.decideFrameDetailed(request)
 	d.advisoryHooks(request)
+	recordDecisionReason(r.Reason)
+	// Outbound (server -> client) mirror: the HTTP response is already written
+	// and flushed, so chain the decision for this direction without delaying it.
+	det := receiptDetails{Event: "outbound_response", Force: true,
+		FrameID: safeReceiptField(receiptFrameID(f)),
+		TS:      time.Now().UTC().Format(time.RFC3339)}
+	d.emitReceiptDetailed(r, "response", "", det)
 }
 
 // mcpHTTPHandler is the Streamable HTTP JSON-RPC endpoint. With no upstream it
@@ -194,6 +201,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 	d := newDecisionBridge()
 	enforcing := soMode() == "enforcing"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -216,6 +224,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 			http.Error(w, "request unreadable", http.StatusBadRequest)
 			return
 		}
+		relayLog("client", body)
 		f, derr := decodeFrame(body)
 		if derr != nil {
 			http.Error(w, "invalid JSON-RPC", http.StatusBadRequest)
@@ -228,11 +237,32 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 
 		if enforcing {
 			if resp, blocked := d.enforcingGate(body); blocked {
+				recordDenial("http-enforcing")
+				setMCPProtocolVersion(w, r)
+				mirrorSEP2243(w, r)
+				// Streamable HTTP: a gated notification (no id, no reply) is a 202
+				// with no body. Answering 200 + empty JSON body is unparseable.
+				if len(resp) == 0 {
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(resp)
+				return
+			}
+			// E1: promotion preconditions are checked after the single decide
+			// POST, so capability refusals keep their typed message and a
+			// blocked SO still holds the reply. Non-decision frames (initialize)
+			// are not promotion-gated.
+			if f.Method == "tools/call" && !promotionPreconditionsMet() {
+				routerAudit("gate", "reason", "promotion-missing", "status", "denied")
+				recordDenial("promotion-missing")
 				setMCPProtocolVersion(w, r)
 				mirrorSEP2243(w, r)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(resp)
+				_, _ = w.Write(rpcError(f.ID, -32001, "blocked: promotion preconditions missing"))
 				return
 			}
 		}
@@ -250,15 +280,36 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 				w.Header().Set(h, v)
 			}
 		}
+		// FA14.1: decision outcome headers. Advisory SO runs after Flush, so
+		// its result is unavailable here; report mode/elapsed and unknown
+		// cache/confidence rather than a fabricated raw confidence number.
+		w.Header().Set("X-Decision-Backend", soMode())
+		w.Header().Set("X-Decision-Cache", "unknown")
+		w.Header().Set("X-Decision-Confidence", "unknown")
+		w.Header().Set("X-Decision-Elapsed-MS", strconv.FormatInt(time.Since(started).Milliseconds(), 10))
 		w.WriteHeader(out.status)
+		relayLog("server", out.body)
 		_, _ = w.Write(out.body)
 		if fl, ok := w.(http.Flusher); ok {
 			fl.Flush()
 		}
-		// Response already flushed: the advisory SO call (bounded) can
-		// never delay the client. Errors/absence are passthrough, no 503.
+		// Advisory SO runs in a worker after the body is flushed. Keep the
+		// handler alive until it finishes, but cap the wait so a slow/blocked
+		// SO never holds the client past the deadline budget (F5/T2/N2.2).
+		// No Content-Length: net/http keeps the chunked body open until return,
+		// so callers reading to EOF observe the bounded advisory window.
 		if !enforcing {
-			d.advisoryHTTP(body, f)
+			done := make(chan struct{})
+			go func() {
+				d.advisoryHTTP(body, f)
+				close(done)
+			}()
+			// shortcut: 100ms observation window for advisory SO; raise only
+			// if a slow SO must finish before the client reply is sent.
+			select {
+			case <-done:
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 	})
 }
