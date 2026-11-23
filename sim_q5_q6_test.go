@@ -41,11 +41,11 @@ func w23_ReadReport(t *testing.T) string {
 
 func w23_ReadBinary(t *testing.T) ([]byte, *macho.File) {
 	t.Helper()
-	raw, err := os.ReadFile(simShippedBinary(t))
+	raw, err := os.ReadFile(simMachOBinary(t))
 	if err != nil {
 		t.Fatalf("read binary: %v", err)
 	}
-	_, digest := simReadDigest(t, "walsy-system1.digest.json")
+	_, digest := simReadDigest(t, simMachODigest())
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != digest.Target.FileSHA256 {
 		t.Fatalf("binary changed since digest: sha256=%s want %s", got, digest.Target.FileSHA256)

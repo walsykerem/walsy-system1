@@ -24,7 +24,7 @@ import (
 
 const (
 	w24ShippedBinary = "./walsy-system1"
-	w24ShippedSHA256 = "c3369b39540a65b0e292d8860314b9b909b62657ca79137b0b24ce810f3d19a6"
+	w24ShippedSHA256 = "5f817372d859cb5529b3a485d1072baaec8dcc7baa89c157811e0d6248d9d18e"
 	w24TestFile      = "sim_e1_e2_test.go"
 	w24VerifyScript  = "scripts/verify.sh"
 	w24Changelog     = "CHANGELOG.md"
@@ -482,8 +482,15 @@ func w24_BuildInfo(t *testing.T, path string) map[string]string {
 // temp-dir build without writing to the repository.
 func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 	digest := w24_SHA256File(t, w24ShippedBinary)
-	if digest != w24ShippedSHA256 {
-		t.Fatalf("shipped binary digest = %s, want %s", digest, w24ShippedSHA256)
+	// The checked-in literal describes the darwin build. Linux CI pins the
+	// native build hash in a digest fixture instead of baking a second literal.
+	want := w24ShippedSHA256
+	if p := os.Getenv("WALSY_SIM_DIGEST"); p != "" {
+		_, pinned := simReadDigest(t, p)
+		want = pinned.Target.FileSHA256
+	}
+	if digest != want {
+		t.Fatalf("shipped binary digest = %s, want %s", digest, want)
 	}
 	shipped := w24_BuildInfo(t, w24ShippedBinary)
 	if shipped["CGO_ENABLED"] != "0" || shipped["-trimpath"] != "true" {

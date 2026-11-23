@@ -71,11 +71,11 @@ func simQ3BadAESLines(report, wantSegment string) []string {
 // TestSimQ3 proves the report's aes_sbox segment claim against the real binary
 // using stdlib Mach-O parsing, then proves the checker rejects the old label.
 func TestSimQ3(t *testing.T) {
-	raw, err := os.ReadFile(simShippedBinary(t))
+	raw, err := os.ReadFile(simMachOBinary(t))
 	if err != nil {
 		t.Fatalf("read binary: %v", err)
 	}
-	_, digest := simReadDigest(t, "walsy-system1.digest.json")
+	_, digest := simReadDigest(t, simMachODigest())
 	sum := sha256.Sum256(raw)
 	if got := hex.EncodeToString(sum[:]); got != digest.Target.FileSHA256 {
 		t.Fatalf("binary changed since digest: sha256=%s want %s", got, digest.Target.FileSHA256)

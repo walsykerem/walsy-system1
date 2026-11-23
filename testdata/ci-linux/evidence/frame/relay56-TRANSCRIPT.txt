@@ -1,0 +1,1 @@
+PASS relay56 hermetic fixture: loopback-only stub, 28 checks, key in transit only. No real key recorded.

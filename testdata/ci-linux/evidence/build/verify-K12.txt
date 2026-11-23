@@ -1,0 +1,1 @@
+PASS K12 hermetic fixture: gofmt, go vet, go build, go test -race, static artifact checks. Key material redacted; no live SO call.

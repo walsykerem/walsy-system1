@@ -320,6 +320,11 @@ func TestSimFA15VerifyScriptHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// verify.sh pins a macOS temp path for its lrecon capture. Redirect only
+	// the harness copy so the real stages still run on Linux.
+	scriptBytes = []byte(strings.ReplaceAll(string(scriptBytes),
+		"/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy_verify_lrecon.json",
+		filepath.Join(home, "verifyrepo", "lrecon.json")))
 	fakeRoot := filepath.Join(home, "verifyrepo")
 	if err := os.MkdirAll(filepath.Join(fakeRoot, "scripts"), 0700); err != nil {
 		t.Fatal(err)

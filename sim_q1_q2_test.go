@@ -44,6 +44,25 @@ func simShippedBinary(t *testing.T) string {
 	return p
 }
 
+// simMachOBinary selects the Mach-O artifact the static Q3/Q5 checks parse.
+// Native darwin uses the shipped binary; Linux CI cross-builds one and names it
+// here so the same Mach-O assertions still run.
+func simMachOBinary(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("WALSY_SIM_MACHO_BINARY"); p != "" {
+		return p
+	}
+	return simShippedBinary(t)
+}
+
+// simMachODigest selects the digest describing the Mach-O artifact above.
+func simMachODigest() string {
+	if p := os.Getenv("WALSY_SIM_MACHO_DIGEST"); p != "" {
+		return p
+	}
+	return "walsy-system1.digest.json"
+}
+
 type simDigestTarget struct {
 	ContractVersion int `json:"contract_version"`
 	Target          struct {

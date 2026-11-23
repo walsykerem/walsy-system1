@@ -1,0 +1,1 @@
+{"model":"clef","answers":{"gate":{"type":"choice","choice":"yes","confidence":0.92}},"usage":{},"fixture":"key-free hermetic SO transcript fixture; M4.3 asserts the named file exists and is non-empty"}

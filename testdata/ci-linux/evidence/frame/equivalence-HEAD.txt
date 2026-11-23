@@ -1,0 +1,1 @@
+equivalence HEAD hermetic fixture: stdio and loopback HTTP transports echo the same canonical frame.

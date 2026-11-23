@@ -22,5 +22,21 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: go vet
         run: CGO_ENABLED=0 go vet ./...
+      - name: Hermetic build
+        run: CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+      - name: Cross-build Mach-O artifact for static Q3/Q5 checks
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -o "$RUNNER_TEMP/walsy-system1-darwin" .
+      - name: Point simulations at checked-in Linux fixtures
+        run: |
+          set -euo pipefail
+          {
+            echo "WALSY_SIM_ARCHMAP=$PWD/testdata/ci-linux"
+            echo "WALSY_RAPOR=$PWD/testdata/ci-linux/RAPOR.md"
+            echo "WALSY_SIM_DIGEST=$PWD/testdata/ci-linux/walsy-system1.digest.json"
+            echo "WALSY_SIM_MACHO_BINARY=$RUNNER_TEMP/walsy-system1-darwin"
+            echo "WALSY_SIM_MACHO_DIGEST=$PWD/testdata/ci-linux/walsy-system1-darwin.digest.json"
+          } >> "$GITHUB_ENV"
       - name: go test -race
+        env:
+          GOCACHE: ${{ runner.temp }}/gocache
         run: CGO_ENABLED=1 go test -race -count=1 ./...
