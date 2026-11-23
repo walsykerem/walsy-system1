@@ -319,6 +319,24 @@ func TestAPIProvidersRejectsOtherMethods(t *testing.T) {
 	}
 }
 
+// Only GET and POST are meaningful on the combo collection; PUT/DELETE/PATCH
+// used to fall through to the read path and answer 200.
+func TestAPIComboRejectsOtherMethods(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, m := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		rec := httptest.NewRecorder()
+		NewDashboardHandler().ServeHTTP(rec, dashRequest(m, "/api/combo", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s /api/combo: status = %d, want 405", m, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	NewDashboardHandler().ServeHTTP(rec, dashRequest(http.MethodGet, "/api/combo", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/combo: status = %d, want 200", rec.Code)
+	}
+}
+
 // A saved/removed prompt redirects back to the sheet with a msg query; the
 // sheet must forward it into the toast and mark it a success, not an error.
 func TestUIPromptsSheetSuccessToast(t *testing.T) {

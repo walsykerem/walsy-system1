@@ -621,6 +621,45 @@ func TestE2EFrontendSheetCloseAndOriginLinkPersistence(t *testing.T) {
 	}
 }
 
+// A sheet is a real modal: hashchange marks the background inert, and closing
+// back to #providers clears it so the origin URL is focusable again.
+func TestE2EFrontendSheetBackgroundInert(t *testing.T) {
+	srv, _ := feServer(t)
+	c := feClient(t)
+	home := feHome(t, c, srv)
+
+	start := strings.Index(home, "addEventListener('hashchange', function () {")
+	if start < 0 {
+		t.Fatal("home has no hashchange handler")
+	}
+	script := home[start:]
+	if end := strings.Index(script, "</script>"); end >= 0 {
+		script = script[:end]
+	}
+	handler := feBlock(script, "addEventListener('hashchange', function () {", "});")
+	if handler == "" {
+		t.Fatal("hashchange handler body missing")
+	}
+	if !strings.Contains(handler, "setBackgroundInert(open)") {
+		t.Error("hashchange does not toggle background inert")
+	}
+
+	fn := feBlock(home, "function setBackgroundInert(open) {", "\n    }")
+	if fn == "" {
+		t.Fatal("setBackgroundInert helper missing")
+	}
+	for _, want := range []string{
+		`querySelectorAll('header.topbar, main.grid > *')`,
+		`closest('.sheet-backdrop')`,
+		`setAttribute('inert', '')`,
+		`removeAttribute('inert')`,
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("setBackgroundInert missing %q", want)
+		}
+	}
+}
+
 func TestE2EFrontendSecretsNeverPrinted(t *testing.T) {
 	srv, home := feServer(t)
 	c := feClient(t)

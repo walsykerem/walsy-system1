@@ -999,6 +999,11 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 	}()
 	br := bufio.NewReader(upstreamOut)
 	for {
+		// Mirror the client read loop: a silent upstream must not hold a
+		// bridge slot forever (the unix transport caps opens at 64).
+		if c, ok := upstreamOut.(interface{ SetDeadline(time.Time) error }); ok {
+			_ = c.SetDeadline(time.Now().Add(httpReadTimeout))
+		}
 		frame, err := readFrame(br)
 		if len(frame) > 0 {
 			relayLog("server", frame)

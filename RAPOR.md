@@ -12,7 +12,7 @@ No live SO call was made while producing this report.
 | --- | --- | --- |
 | 20 | Supervising process | KeepAlive+RunAtLoad, -dashboard -listen 8787 |
 | 21 | Config parsing | empty so_mode fails open to advisory |
-| 22 | Mach-O constants | aes_sbox at 0x858c40 lives in __DATA,__noptrdata |
+| 22 | Mach-O constants | aes_sbox at 0x891440 lives in __DATA,__noptrdata |
 | 23 | Procedures | procedures are pclntab names only; Go names recovered from __gopclntab |
 
 ## Decision path (single surviving diagram)

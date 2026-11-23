@@ -20,14 +20,15 @@ import (
 // Static-only simulation for MANIFEST B22 items Q3 and Q4.
 // No target binary execution, no live process inspection, no real SO call.
 const (
-	simBinaryPath = "/Users/keremurhan/walsy-system1/walsy-system1"
-	simBinarySHA  = "aeb9598d8ed7b9c42d2c77caab41296363d0a5c3bf902813027327f3013bfb4d"
-	simAESOffset  = 0x8914e0
+	simAESOffset  = 0x891440
 	simAESBytes   = "637c777bf26b6fc5"
 	simAESSegment = "__DATA,__noptrdata"
 )
 
-var simSegmentRe = regexp.MustCompile(`__[A-Za-z0-9_]+,__[A-Za-z0-9_]+`)
+var (
+	simSegmentRe = regexp.MustCompile(`__[A-Za-z0-9_]+,__[A-Za-z0-9_]+`)
+	simHexRe     = regexp.MustCompile(`0x[0-9a-fA-F]+`)
+)
 
 func simReadReport(t *testing.T) string {
 	t.Helper()
@@ -42,10 +43,12 @@ func simReadReport(t *testing.T) string {
 	return string(b)
 }
 
-// simQ3BadAESLines flags any aes_sbox line that names a segment other than the
-// one the analyzed Mach-O actually carries the constant in. A line with no
-// segment name is accepted: Q3 allows deleting the label.
+// simQ3BadAESLines flags any aes_sbox line that names a segment or file offset
+// other than the ones the analyzed Mach-O actually carries the constant in. A
+// line with no segment name is accepted: Q3 allows deleting the label, but it
+// must still name the constant and its offset to exercise that control.
 func simQ3BadAESLines(report, wantSegment string) []string {
+	wantOffset := fmt.Sprintf("0x%x", simAESOffset)
 	var bad []string
 	for _, line := range strings.Split(report, "\n") {
 		if !strings.Contains(line, "aes_sbox") {
@@ -53,6 +56,13 @@ func simQ3BadAESLines(report, wantSegment string) []string {
 		}
 		if m := simSegmentRe.FindString(line); m != "" && m != wantSegment {
 			bad = append(bad, strings.TrimSpace(line))
+			continue
+		}
+		for _, off := range simHexRe.FindAllString(line, -1) {
+			if strings.ToLower(off) != wantOffset {
+				bad = append(bad, strings.TrimSpace(line))
+				break
+			}
 		}
 	}
 	return bad
@@ -61,13 +71,17 @@ func simQ3BadAESLines(report, wantSegment string) []string {
 // TestSimQ3 proves the report's aes_sbox segment claim against the real binary
 // using stdlib Mach-O parsing, then proves the checker rejects the old label.
 func TestSimQ3(t *testing.T) {
-	raw, err := os.ReadFile(simBinaryPath)
+	raw, err := os.ReadFile(simShippedBinary(t))
 	if err != nil {
 		t.Fatalf("read binary: %v", err)
 	}
+	_, digest := simReadDigest(t, "walsy-system1.digest.json")
 	sum := sha256.Sum256(raw)
-	if got := hex.EncodeToString(sum[:]); got != simBinarySHA {
-		t.Fatalf("binary changed since recon: sha256=%s want %s", got, simBinarySHA)
+	if got := hex.EncodeToString(sum[:]); got != digest.Target.FileSHA256 {
+		t.Fatalf("binary changed since digest: sha256=%s want %s", got, digest.Target.FileSHA256)
+	}
+	if digest.Target.Size != int64(len(raw)) {
+		t.Fatalf("digest target.size=%d, binary size=%d", digest.Target.Size, len(raw))
 	}
 	mf, err := macho.NewFile(bytes.NewReader(raw))
 	if err != nil {
@@ -104,15 +118,22 @@ func TestSimQ3(t *testing.T) {
 		}
 	}
 
-	oldLine := "0x88d4e0: 637c777bf26b6fc5 (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)"
+	oldLine := "0x891440: 637c777bf26b6fc5 (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)"
 	if got := simQ3BadAESLines(oldLine, simAESSegment); len(got) != 1 {
 		t.Fatalf("checker failed to reject old label: %v", got)
+	}
+	wrongOffset := strings.Replace(oldLine, "__TEXT,__rodata", simAESSegment, 1)
+	wrongOffset = strings.Replace(wrongOffset, "0x891440", "0x858c40", 1)
+	if got := simQ3BadAESLines(wrongOffset, simAESSegment); len(got) != 1 {
+		t.Fatalf("checker failed to reject stale offset: %v", got)
 	}
 	fixedLine := strings.Replace(oldLine, "__TEXT,__rodata", simAESSegment, 1)
 	if got := simQ3BadAESLines(fixedLine, simAESSegment); len(got) != 0 {
 		t.Fatalf("checker rejected corrected label: %v", got)
 	}
-	deletedLine := "AES S-box 637c777b f26b6fc5 at 0x88d4e0"
+	// Deleting only the segment label must still pass: the line keeps the
+	// aes_sbox marker and the verified offset, so the control is not vacuous.
+	deletedLine := "aes_sbox 637c777bf26b6fc5 at 0x891440 (no segment label)"
 	if got := simQ3BadAESLines(deletedLine, simAESSegment); len(got) != 0 {
 		t.Fatalf("checker rejected label deletion: %v", got)
 	}
@@ -196,7 +217,10 @@ func TestSimQ4(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("decode SO request: %v", err)
 		}
-		if req.Model != "clef" || req.State != "sim state" || req.Questions["gate"].Type != "choice" {
+		if req.Model != "clef" || !strings.HasPrefix(req.State, "sim state\n") ||
+			!strings.Contains(req.State, "\nso_session_id=") ||
+			!strings.Contains(req.State, "\nso_prompt_cache_key=") ||
+			req.Questions["gate"].Type != "choice" {
 			t.Errorf("unexpected SO request: %+v", req)
 		}
 		w.Header().Set("Content-Type", "application/json")

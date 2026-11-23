@@ -27,12 +27,53 @@ import (
 const (
 	w21_Heading    = "static map; advisory, fail-open by default"
 	w21_ReportDflt = "/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy-arch-map/RAPOR.md"
-	w21_Binary     = "/Users/keremurhan/walsy-system1/walsy-system1"
 	// Out-of-scope destructive shell call: enforcingGate refuses it, advisory forwards.
 	w21_Frame    = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"command":"rm -rf /tmp/simq"}}}`
 	w21_Upstream = `{"jsonrpc":"2.0","id":7,"result":{"simq":"upstream-echo"}}`
 	w21_NoBody   = `{"answers":{"gate":{"type":"choice","choice":"no","confidence":0.99}},"usage":{"evren":{"credits":1}}}`
 )
+
+// simShippedBinary resolves the binary from the package directory, not from a
+// baked absolute path.
+func simShippedBinary(t *testing.T) string {
+	t.Helper()
+	p, err := filepath.Abs("walsy-system1")
+	if err != nil {
+		t.Fatalf("resolve shipped binary path: %v", err)
+	}
+	return p
+}
+
+type simDigestTarget struct {
+	ContractVersion int `json:"contract_version"`
+	Target          struct {
+		Size       int64  `json:"size"`
+		FileSHA256 string `json:"file_sha256"`
+		HashScope  string `json:"hash_scope"`
+	} `json:"target"`
+}
+
+// simReadDigest uses the parent-owned digest fixture as the SHA source; tests
+// must not bake the binary hash into their own source.
+func simReadDigest(t *testing.T, path string) ([]byte, simDigestTarget) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read digest %s: %v", path, err)
+	}
+	var d simDigestTarget
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatalf("parse digest %s: %v", path, err)
+	}
+	sha := d.Target.FileSHA256
+	if len(sha) != 64 || strings.ToLower(sha) != sha {
+		t.Fatalf("digest %s: target.file_sha256 must be 64 lowercase hex chars, got %q", path, sha)
+	}
+	if _, err := hex.DecodeString(sha); err != nil {
+		t.Fatalf("digest %s: target.file_sha256 is not hex: %v", path, err)
+	}
+	return raw, d
+}
 
 func w21_ReportPath(t *testing.T) string {
 	t.Helper()
@@ -204,10 +245,7 @@ func Test_w21_Q2_NoVerbatimDigest(t *testing.T) {
 	}
 
 	sib := filepath.Join(filepath.Dir(path), "walsy-system1.digest.json")
-	sraw, err := os.ReadFile(sib)
-	if err != nil {
-		t.Fatalf("Q2: full digest sibling missing: %v", err)
-	}
+	sraw, dj := simReadDigest(t, sib)
 	if len(sraw) <= 200 || !strings.Contains(string(sraw), `"file_sha256"`) || !strings.Contains(string(sraw), `"contract_version"`) {
 		t.Fatalf("Q2: sibling digest is not a full JSON digest (%d bytes)", len(sraw))
 	}
@@ -215,18 +253,7 @@ func Test_w21_Q2_NoVerbatimDigest(t *testing.T) {
 	// Strict: the preserved digest must actually describe the shipped binary.
 	// Q2 deletes the truncated copy from RAPOR.md, so the sibling is now the
 	// only digest record; a stale sibling silently misidentifies the binary.
-	var dj struct {
-		ContractVersion int `json:"contract_version"`
-		Target          struct {
-			Size       int64  `json:"size"`
-			FileSHA256 string `json:"file_sha256"`
-			HashScope  string `json:"hash_scope"`
-		} `json:"target"`
-	}
-	if err := json.Unmarshal(sraw, &dj); err != nil {
-		t.Fatalf("Q2: sibling digest is not valid JSON: %v", err)
-	}
-	b, err := os.ReadFile(w21_Binary)
+	b, err := os.ReadFile(simShippedBinary(t))
 	if err != nil {
 		t.Fatalf("Q2: shipped binary unreadable: %v", err)
 	}

@@ -139,6 +139,61 @@ func TestFEUXLogsClearContract(t *testing.T) {
 	}
 }
 
+// Cold deep links must resolve from location.hash, not :target: Chrome has not
+// resolved :target while the inline script parses, so GET /#logs used to leave
+// the iframe at about:blank. Danger buttons need their own token and selector
+// to survive the later .btn background rule.
+func TestFEUXColdHashLoadAndDangerButton(t *testing.T) {
+	html := feuxFile(t, "index.html")
+	for _, needle := range []string{
+		`var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));`,
+		`if (t) loadSheetFrame(t);`,
+	} {
+		feuxHas(t, html, needle)
+	}
+	if strings.Contains(html, `if (document.querySelector(':target')) loadSheetFrame`) {
+		t.Error("cold load still relies on parse-time :target")
+	}
+
+	css := feuxFile(t, "style.css")
+	_, tail, ok := strings.Cut(css, ":root {")
+	if !ok {
+		t.Fatal(":root block missing")
+	}
+	root, _, _ := strings.Cut(tail, "}")
+	if !strings.Contains(root, "--danger:") {
+		t.Errorf("--danger not defined in :root: %q", root)
+	}
+	if !strings.Contains(css, ".btn.btn-danger {") || strings.Contains(css, "\n.btn-danger {") {
+		t.Error(".btn-danger must be scoped as .btn.btn-danger so .btn cannot override it")
+	}
+	feuxHas(t, feuxRender(t, "/ui/logs"), `class="btn btn-small btn-danger"`)
+}
+
+// On a 375px sheet the fixed origin link sits over the sheet title, so the
+// mobile sheet starts below it and stays within the viewport.
+func TestFEUXMobileSheetOffsetForOriginLink(t *testing.T) {
+	css := feuxFile(t, "style.css")
+	feuxHas(t, css, `body:has(.sheet-backdrop:target) .origin-link`)
+	i := strings.Index(css, "@media (max-width: 720px)")
+	if i < 0 {
+		t.Fatal("mobile media query missing")
+	}
+	query := css[i:]
+	if j := strings.Index(query, "\n}"); j >= 0 {
+		query = query[:j]
+	}
+	for _, want := range []string{
+		`body:has(.sheet-backdrop:target) .sheet`,
+		`margin-top: 44px`,
+		`max-height: calc(100dvh - 44px)`,
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("mobile query missing %q", want)
+		}
+	}
+}
+
 // Prompts add: the existing form is enhanced with the exact JSON contract
 // (name + text), no-store, and an in-place row insert. Plain POST remains the
 // no-JS fallback.

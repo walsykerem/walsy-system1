@@ -331,11 +331,22 @@
       var home = window.parent !== window ? window.parent : window;
       home.location.hash = '#providers';
     });
-    // Opening a sheet moves focus into it; the page behind is inert to the
-    // keyboard because only the open dialog keeps a tabbable control.
+    // Opening a sheet moves focus into it and makes the background inert so Tab
+    // stays in the dialog; the origin URL remains visible, just not focusable.
+    function setBackgroundInert(open) {
+      var keep = open && open.closest('.sheet-backdrop');
+      document.querySelectorAll('header.topbar, main.grid > *').forEach(function (el) {
+        if (keep && el !== keep && !keep.contains(el) && !el.contains(keep)) {
+          el.setAttribute('inert', '');
+        } else {
+          el.removeAttribute('inert');
+        }
+      });
+    }
     var opener = null;
     addEventListener('hashchange', function () {
       var open = document.querySelector(':target');
+      setBackgroundInert(open);
       var close = open && open.querySelector('.sheet-close');
       // preventScroll: focusing the close button must not move the page.
       if (close) {
@@ -390,7 +401,11 @@
       loadSheetFrame(document.querySelector(':target'));
     });
     // A deep link (#logs) arrives with the document, before hashchange fires.
-    if (document.querySelector(':target')) loadSheetFrame(document.querySelector(':target'));
+    // :target is unresolved while this inline script parses in Chrome, so read
+    // the hash directly for the cold-load case.
+    var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (t) loadSheetFrame(t);
+    setBackgroundInert(t);
     // Back/forward can restore this document from the browser's bfcache with
     // the lists it had before the last write; no request is made, so no header
     // helps. A restore is the one case where a full reload is the cheap fix.

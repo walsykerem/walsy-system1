@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -58,5 +60,31 @@ func TestResolveFailsClosed(t *testing.T) {
 	}
 	if err := resolve(claim{"K", "see decision_bridge.go:99999"}); err == nil {
 		t.Fatal("out-of-range cited line did not fail closed")
+	}
+}
+
+// The digest fixture is the SHA source for shipped claim evidence. Checking its
+// shape here keeps a malformed target.file_sha256 from passing a claim in
+// main.go; this test does not edit or re-score the claims themselves.
+func TestDigestFileSHAIs64Hex(t *testing.T) {
+	t.Chdir("../..")
+	b, err := os.ReadFile("walsy-system1.digest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Target struct {
+			FileSHA256 string `json:"file_sha256"`
+		} `json:"target"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil {
+		t.Fatal(err)
+	}
+	s := d.Target.FileSHA256
+	if len(s) != 64 || strings.ToLower(s) != s {
+		t.Fatalf("target.file_sha256 must be 64 lowercase hex chars, got %q", s)
+	}
+	if _, err := hex.DecodeString(s); err != nil {
+		t.Fatalf("target.file_sha256 is not hex: %v", err)
 	}
 }

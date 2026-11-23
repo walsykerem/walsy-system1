@@ -446,18 +446,17 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	sid, pck := soStableIDs("clef", q, state)
 	questions := contextQuestions(state)
 	questions["gate"] = gateQuestion(q)
+	// Live SO rejects top-level session_id/prompt_cache_key (HTTP 422). Keep
+	// the stable hashes on the wire inside state so the cache contract holds.
+	wireState := soWireState(state, sid, pck)
 	body, err := json.Marshal(struct {
-		Model          string                `json:"model"`
-		State          string                `json:"state"`
-		Questions      map[string]soQuestion `json:"questions"` // object, never array
-		SessionID      string                `json:"session_id"`
-		PromptCacheKey string                `json:"prompt_cache_key"`
+		Model     string                `json:"model"`
+		State     string                `json:"state"`
+		Questions map[string]soQuestion `json:"questions"` // object, never array
 	}{
-		Model:          "clef",
-		State:          state,
-		Questions:      questions,
-		SessionID:      sid,
-		PromptCacheKey: pck,
+		Model:     "clef",
+		State:     wireState,
+		Questions: questions,
 	})
 	if err != nil {
 		return soDecision{}
@@ -518,7 +517,7 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	// Strict SO boundary: <=1 MiB (matching the read cap), exactly one JSON
 	// document, no duplicate/case-variant keys, top-level allowlist only.
 	fields, err := strictObject(raw, 1<<20, map[string]bool{
-		"model": true, "answers": true, "usage": true,
+		"model": true, "answers": true, "usage": true, "id": true,
 		"session_id": true, "prompt_cache_key": true, // FA8: only if echoed
 	})
 	if err != nil {
@@ -701,6 +700,23 @@ func validSOAnswer(a soAnswer, q soQuestion) (soAnswer, string, bool) {
 		}
 	}
 	return a, "", true
+}
+
+// soWireState embeds the FA8 cache hashes without breaking states that are
+// JSON envelopes: those gain one inert string field. Plain-text states keep
+// the newline form. Live SO rejects the same keys at top level (HTTP 422).
+func soWireState(state, sid, pck string) string {
+	contract := fmt.Sprintf("so_session_id=%s\nso_prompt_cache_key=%s", sid, pck)
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(state), &obj) == nil && obj != nil {
+		if v, err := json.Marshal(contract); err == nil {
+			obj["so_cache_contract"] = v
+			if out, err := json.Marshal(obj); err == nil {
+				return string(out)
+			}
+		}
+	}
+	return state + "\n" + contract
 }
 
 // soStableIDs derives FA8 identifiers from the model, canonical question and a

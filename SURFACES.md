@@ -62,6 +62,19 @@ real-browser agent (F, Chrome on an isolated :8794 instance), then re-checked by
 - E9 hash navigation — PASS (back button restores closed state; combo POSTs return to `/` without the hash, accepted)
 - E10 MCP `-transport tools` — PASS (`system1_status`, `system1_audit`)
 
+## F — Logs and prompts (shipped; source-checked, not live-verified in round 9)
+
+- F1 `POST /api/logs/clear` — shipped (`dashboard.go:641`): same-origin POST
+  clears the in-memory ring and `audit.jsonl`, returns `{"ok":true}`; the LOGS
+  sheet's `CLEAR LOGS` button confirms first.
+- F2 `POST /api/prompts/add` — shipped (`dashboard.go:711`): same-origin JSON
+  `{name,text}` with both fields capped, returns `{"ok":true}`; `ADD PROMPT` in
+  the PROMPTS sheet keeps its plain POST fallback.
+- F3 LOGS sheet tail read (`logs.go:240,332`) — at most `logRingSize` newest
+  persisted rows from the last 1 MiB; a fresh load falls back to audit rows.
+- F4 Sheet toast forwarding (`logs.go:329-335`) — the redirect's `msg`/`MsgMs`
+  render as a timed toast inside the LOGS iframe; `LOGS CLEARED` is `toast-ok`.
+
 ## Fixes applied after the audits
 
 1. Success and failure toasts render with distinct classes (`toast-ok` / `toast-error`).
@@ -70,6 +83,7 @@ real-browser agent (F, Chrome on an isolated :8794 instance), then re-checked by
 4. Add Model filters while typing (one `input` listener; duplicate copies of that listener and of the provider-match logic removed).
 5. Dead `POST /ui/providers/sheet` route removed; JSON errors keep their status; `no-store` on JSON.
 6. Focus moves to the open sheet's close control (`aria-modal` on all three dialogs, duplicate `.sheet-note` rule and dead CSS removed).
+7. Dead provider `Demo`/`Message` plumbing removed (`ROUND5-AUDIT.md:43`, B1); no test asserts those fields.
 
 Re-checked in a real Chrome on the rebuilt binary (throwaway HOME, isolated port):
 C5 filters while typing with focus kept and no reload; A9 Escape keeps typed values
@@ -81,4 +95,3 @@ a rejected base still answers in-sheet `toast-error`. All PASS.
 
 - Build target buttons carry no `aria-pressed`; the `TARGET:` line states the choice.
 - Combo writes redirect to `/` and drop the hash.
-- A provider's `Message`/`Demo` fields are computed but not rendered (kept for the tests that assert them).

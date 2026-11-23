@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func keyHash(s string) string {
@@ -95,5 +96,30 @@ func TestDecisionCacheConcurrent(t *testing.T) {
 	}
 	if n := len(c.idx); n > c.cap {
 		t.Fatalf("final size %d > cap %d", n, c.cap)
+	}
+}
+
+// A warm hit serves the prewarmed decision without launching an async refresh,
+// so it must clear the in-flight flag set by the prewarm threshold.
+func TestWarmHitClearsRefreshFlag(t *testing.T) {
+	c := newShardedCache()
+	k := [32]byte{1}
+	d := cachedDecision{Choice: "yes", ConfBucket: "high", Reason: "warm"}
+	c.warmMu.Lock()
+	c.warmHits[k] = 4
+	c.warmAt[k] = time.Now()
+	c.warmDec[k] = d
+	c.refreshing[k] = true
+	c.warmMu.Unlock()
+
+	got, ok := c.lookupForDecision(k)
+	if !ok || got != d {
+		t.Fatalf("warm hit = %+v, %v; want %+v, true", got, ok, d)
+	}
+	c.warmMu.Lock()
+	refreshing := c.refreshing[k]
+	c.warmMu.Unlock()
+	if refreshing {
+		t.Fatal("warm hit left the refresh flag set")
 	}
 }

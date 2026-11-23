@@ -22,9 +22,7 @@ import (
 // The report is the artifact under test; the binary and the in-process handlers
 // are the ground truth used to check what the report is allowed to claim.
 const (
-	w23_BinaryPath = "/Users/keremurhan/walsy-system1/walsy-system1"
-	w23_BinarySHA  = "aeb9598d8ed7b9c42d2c77caab41296363d0a5c3bf902813027327f3013bfb4d"
-	w23_FuncCount  = 11126
+	w23_FuncCount  = 11128
 	w23_OldFUNAddr = 0x12ad0
 )
 
@@ -43,13 +41,17 @@ func w23_ReadReport(t *testing.T) string {
 
 func w23_ReadBinary(t *testing.T) ([]byte, *macho.File) {
 	t.Helper()
-	raw, err := os.ReadFile(w23_BinaryPath)
+	raw, err := os.ReadFile(simShippedBinary(t))
 	if err != nil {
 		t.Fatalf("read binary: %v", err)
 	}
+	_, digest := simReadDigest(t, "walsy-system1.digest.json")
 	sum := sha256.Sum256(raw)
-	if got := hex.EncodeToString(sum[:]); got != w23_BinarySHA {
-		t.Fatalf("binary changed since recon: sha256=%s want %s", got, w23_BinarySHA)
+	if got := hex.EncodeToString(sum[:]); got != digest.Target.FileSHA256 {
+		t.Fatalf("binary changed since digest: sha256=%s want %s", got, digest.Target.FileSHA256)
+	}
+	if digest.Target.Size != int64(len(raw)) {
+		t.Fatalf("digest target.size=%d, binary size=%d", digest.Target.Size, len(raw))
 	}
 	mf, err := macho.NewFile(bytes.NewReader(raw))
 	if err != nil {
@@ -164,7 +166,8 @@ func TestSimQ5(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
 			t.Errorf("decode SO body: %v", err)
 		}
-		if q.Model != "clef" || q.State != "sim pipeline state" {
+		if q.Model != "clef" || !strings.HasPrefix(q.State, "sim pipeline state\nso_session_id=") ||
+			!strings.Contains(q.State, "\nso_prompt_cache_key=") {
 			t.Errorf("unexpected SO body: %+v", q)
 		}
 		w.Header().Set("Content-Type", "application/json")

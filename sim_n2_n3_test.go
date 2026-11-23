@@ -325,7 +325,7 @@ func TestSimN2(t *testing.T) {
 		w05_Add(t, &out, "N2.4", "WORKS", fmt.Sprintf("SO 500 -> HTTP 200 exact echo in %v", elapsed))
 	}
 
-	bin := "/Users/keremurhan/walsy-system1/walsy-system1"
+	bin := simShippedBinary(t)
 	if _, err := os.Stat(bin); err != nil {
 		w05_Add(t, &out, "N2.5", "PARTIAL", fmt.Sprintf("shipped binary unavailable: %v", err))
 	} else {

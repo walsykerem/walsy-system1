@@ -3,6 +3,7 @@
   --bg: #E5E5E5;
   --ink: #111111;
   --accent: #D9481F;
+  --danger: #B83610;
   --white: #FFFFFF;
   --muted: #4A4A4A;
   --b: 2px solid var(--ink);
@@ -125,7 +126,7 @@ form.form, .form { display: grid; gap: 12px; }
 .key-row { display: flex; align-items: center; gap: 8px; }
 .key-label { flex: 1; font-size: 12px; font-weight: 800; letter-spacing: 1px; }
 .btn-small { min-height: 30px; padding: 5px 10px; font-size: 11px; border-radius: 0; box-shadow: var(--bshadow); }
-.btn-danger { color: var(--white); background: var(--danger); border-color: var(--ink); }
+.btn.btn-danger { color: var(--white); background: var(--danger); border-color: var(--ink); }
 .sheet-actions { display: flex; justify-content: flex-end; margin: 0 0 10px; }
 .clear-form { justify-self: start; }
 
@@ -285,6 +286,8 @@ body.sheet-document .sheet-body { height: 100vh; height: 100dvh; max-height: 100
   .panel-providers, .panel-combo, #build-target { grid-column: auto; grid-row: auto; }
   .panel { padding: 16px; }
   .topbar { padding: 12px 14px; }
+  /* Right-anchored sheet would cover the floating origin URL on narrow screens. */
+  body:has(.sheet-backdrop:target) .sheet { margin-top: 44px; max-height: calc(100dvh - 44px); }
   .combo-item { flex-wrap: wrap; }
   .combo-actions { width: 100%; }
 }

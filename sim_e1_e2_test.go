@@ -24,7 +24,7 @@ import (
 
 const (
 	w24ShippedBinary = "./walsy-system1"
-	w24ShippedSHA256 = "aeb9598d8ed7b9c42d2c77caab41296363d0a5c3bf902813027327f3013bfb4d"
+	w24ShippedSHA256 = "c3369b39540a65b0e292d8860314b9b909b62657ca79137b0b24ce810f3d19a6"
 	w24TestFile      = "sim_e1_e2_test.go"
 	w24VerifyScript  = "scripts/verify.sh"
 	w24Changelog     = "CHANGELOG.md"
@@ -489,6 +489,9 @@ func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 	if shipped["CGO_ENABLED"] != "0" || shipped["-trimpath"] != "true" {
 		t.Fatalf("shipped build flags = CGO_ENABLED:%q trimpath:%q, want 0/true", shipped["CGO_ENABLED"], shipped["-trimpath"])
 	}
+	if shipped["vcs.revision"] != "" || shipped["vcs.modified"] != "" {
+		t.Fatalf("shipped build carries git state: revision=%q modified=%q; want deterministic -buildvcs=false", shipped["vcs.revision"], shipped["vcs.modified"])
+	}
 	if !strings.Contains(shipped["mod"], "walsy-system1") {
 		t.Fatalf("shipped module stamp = %q", shipped["mod"])
 	}
@@ -512,7 +515,7 @@ func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmpBin := filepath.Join(t.TempDir(), "walsy-system1")
-	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=true", "-o", tmpBin, ".")
+	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", tmpBin, ".")
 	cmd.Dir = wd
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -522,29 +525,18 @@ func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 	if rebuilt["CGO_ENABLED"] != "0" || rebuilt["-trimpath"] != "true" {
 		t.Fatalf("rebuilt flags = CGO_ENABLED:%q trimpath:%q, want 0/true", rebuilt["CGO_ENABLED"], rebuilt["-trimpath"])
 	}
-	if gitOK(t, wd) {
-		if rebuilt["vcs.revision"] != shipped["vcs.revision"] {
-			t.Fatalf("vcs.revision shipped=%q rebuilt=%q", shipped["vcs.revision"], rebuilt["vcs.revision"])
-		}
-		if shipped["vcs.modified"] != "true" || rebuilt["vcs.modified"] != "true" {
-			t.Fatalf("F1 equivalence not proven: vcs.modified shipped=%q rebuilt=%q", shipped["vcs.modified"], rebuilt["vcs.modified"])
-		}
-		t.Log("PARTIAL E2 F1: same vcs.revision but both builds are vcs.modified=true; HEAD-clean equivalence unproven")
-	} else {
-		t.Log("PARTIAL E2 F1: isolated tree has no git metadata; revision equivalence not checked")
+	if rebuilt["vcs.revision"] != "" || rebuilt["vcs.modified"] != "" {
+		t.Fatalf("rebuilt build carries git state: revision=%q modified=%q; want deterministic -buildvcs=false", rebuilt["vcs.revision"], rebuilt["vcs.modified"])
 	}
-}
-
-func gitOK(t *testing.T, dir string) bool {
-	t.Helper()
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Dir = dir
-	_, err := cmd.Output()
-	return err == nil
+	rebuiltDigest := w24_SHA256File(t, tmpBin)
+	if rebuiltDigest != digest {
+		t.Fatalf("rebuilt binary digest = %s, want shipped %s", rebuiltDigest, digest)
+	}
+	t.Log("E2 F1: both builds are vcs-unstamped and digest-equal; dirty/clean tree cannot change fixture")
 }
 
 // TestSimE2W24VerifyShape simulates the read-only parts of scripts/verify.sh.
-// The full script is not run: step 3 needs CGO=1 and step 4 rewrites the
+// The full script is not run: step 4 needs CGO=1 and step 3 rewrites the
 // repository binary, which this simulation must not do.
 func TestSimE2W24VerifyShape(t *testing.T) {
 	raw, err := os.ReadFile(w24VerifyScript)
@@ -555,13 +547,18 @@ func TestSimE2W24VerifyShape(t *testing.T) {
 	for _, must := range []string{
 		"CGO_ENABLED=0 go vet ./...",
 		"CGO_ENABLED=1 go test -race -count=1 ./...",
-		"CGO_ENABLED=0 go build -trimpath -buildvcs=true -o walsy-system1 .",
+		"CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .",
 		"go run ./scripts/recondigest",
 		"echo \"PASS\"",
 	} {
 		if !strings.Contains(script, must) {
 			t.Fatalf("verify.sh missing required step %q", must)
 		}
+	}
+	buildLine := "CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ."
+	testLine := "CGO_ENABLED=1 go test -race -count=1 ./..."
+	if strings.Index(script, buildLine) >= strings.Index(script, testLine) {
+		t.Fatalf("verify.sh must build the shipped binary before -race tests read it")
 	}
 	cmd := exec.Command("gofmt", "-l", w24TestFile)
 	wd, err := os.Getwd()

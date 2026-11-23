@@ -378,7 +378,7 @@ func TestSimFA15VerifyScriptHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	stages := string(log)
-	for _, want := range []string{"CGO_ENABLED=0|build -trimpath -buildvcs=true", "CGO_ENABLED=1|test -race -count=1 ./...", "vet ./..."} {
+	for _, want := range []string{"CGO_ENABLED=0|build -trimpath -buildvcs=false", "CGO_ENABLED=1|test -race -count=1 ./...", "vet ./..."} {
 		if !strings.Contains(stages, want) {
 			t.Fatalf("FA15 verify.sh weakened a gate %q: %s", want, stages)
 		}

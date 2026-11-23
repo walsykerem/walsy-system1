@@ -1,4 +1,18 @@
-    registry_sweep_test.go:279: live points: 1 admitted, 14 refused, 38 low-conf, 0 degraded, 3 local
---- PASS: TestEveryDecisionPointLive (19.07s)
+=== RUN   TestEveryDecisionPointLive
+    registry_sweep_test.go:288: live points: 0 admitted, 0 refused, 0 low-conf, 55 degraded, 3 local
+    registry_sweep_test.go:290:    55  |so-degraded
+--- PASS: TestEveryDecisionPointLive (10.02s)
 PASS
-ok  	walsy-system1	19.733s
+ok  	walsy-system1	10.430s
+
+Honest note: WALSY_LIVE=1 WALSY_SO_MODE=enforcing against the real endpoint.
+The test passes because it checks the routing branches and steer contract; it
+does not claim live SO admission. All 55 gated items degraded because live SO
+latency exceeded the shipped 5s enforcing deadline.
+
+Direct probe after the sweep (same endpoint and key, tiny 3-label question):
+HTTP=200, time_total=13.071857s, response carried a valid typed choice.
+13.07s > soEnforcingTimeout=5s at gate.go:34, so degradation is endpoint
+latency, not a malformed wire body. No timeout constant was changed to
+manufacture a green live result. The stub sweeps (K15, local) remain the
+proof of the routing contract.

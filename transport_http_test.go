@@ -202,7 +202,26 @@ func TestProxyHTTPFailureEchoesID(t *testing.T) {
 	}
 }
 
-// An upstream body at the 8 MiB cap is truncated by LimitReader, so it must
+// An upstream body exactly at the 8 MiB cap is complete: answer it verbatim.
+func TestProxyHTTPExactCapUpstream(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), maxHTTPFrame)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer up.Close()
+
+	reqBody := []byte(`{"jsonrpc":"2.0","id":11,"method":"tools/list"}`)
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(reqBody))
+	res := proxyHTTP(context.Background(), up.URL, reqBody, r)
+	if res.status != http.StatusOK {
+		t.Fatalf("want 200, got %d", res.status)
+	}
+	if !bytes.Equal(res.body, body) {
+		t.Fatalf("exact-cap reply = %d bytes, want %d verbatim", len(res.body), maxHTTPFrame)
+	}
+}
+
+// An upstream body past the 8 MiB cap is truncated by LimitReader, so it must
 // answer an error frame instead of returning the cut body as a complete reply.
 func TestProxyHTTPOversizedUpstream(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -72,11 +72,13 @@ var (
 // redacted audit file. A missing file is already clear; an existing one is
 // replaced atomically so a concurrent reader never sees a half-truncated JSONL.
 func clearLogs() error {
+	// Hold the lock through both clears: a concurrent logCall must not append
+	// to the ring after it was emptied but before the audit file is truncated.
 	logMu.Lock()
+	defer logMu.Unlock()
 	logRing = nil
 	logCalls, logReqB, logRespB, logCredits = 0, 0, 0, 0
 	logSince = time.Now()
-	logMu.Unlock()
 	path, err := auditLogPath()
 	if err != nil {
 		return err

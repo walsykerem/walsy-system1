@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -29,10 +30,13 @@ func runSim(t *testing.T, skipLive bool) (string, error) {
 }
 
 // The script must emit one PASS/FAIL line per active check and end with a
-// consistent tally. Outcomes depend on whole-repo health, so the test asserts
-// the report shape, not that every check passes.
+// consistent tally. CHECKER_SIM_SKIP_LIVE=1 leaves only deterministic offline
+// checks, so the whole repo must be green: a FAIL there is a real regression.
 func TestCheckerSimScript(t *testing.T) {
 	out, err := runSim(t, true)
+	if err != nil {
+		t.Fatalf("skip-live checker exited non-zero: %v\n%s", err, out)
+	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	checks, fails := 0, 0
 	for _, line := range lines {
@@ -60,30 +64,13 @@ func TestCheckerSimScript(t *testing.T) {
 	if verdict == "" {
 		t.Fatalf("no verdict line:\n%s", out)
 	}
-	if fails > 0 && err == nil {
-		t.Fatalf("FAIL printed but exit 0:\n%s", out)
+	if fails != 0 {
+		t.Fatalf("skip-live checker FAIL count = %d, want 0:\n%s", fails, out)
 	}
-	if fails == 0 && err != nil {
-		t.Fatalf("no FAIL printed but exit non-zero: %v\n%s", err, out)
-	}
-	want := "checker-sim: " + itoa(checks-fails) + " PASS " + itoa(fails) + " FAIL"
+	want := "checker-sim: " + strconv.Itoa(checks-fails) + " PASS " + strconv.Itoa(fails) + " FAIL"
 	if verdict != want {
 		t.Fatalf("verdict = %q, want %q:\n%s", verdict, want, out)
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
 
 // With live checks on, the script still ends in a self-consistent verdict and

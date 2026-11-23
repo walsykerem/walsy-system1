@@ -841,8 +841,11 @@ func NewDashboardHandler() http.Handler {
 					return
 				}
 				handleComboSave(w, r)
-			default:
+			case http.MethodGet:
 				handleComboGet(w)
+			default:
+				// PUT/DELETE/PATCH used to fall through to the read path and answer 200.
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
 			}
 		case "/api/combo/run":
 			if r.Method != http.MethodPost || !sameOrigin(r) {

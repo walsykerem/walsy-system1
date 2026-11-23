@@ -497,10 +497,10 @@ func TestSimFA8StickyPinStrictHit(t *testing.T) {
 		}
 	})
 
-	// Genuine falsifier for FA8's stable identifier requirement. The only
-	// outbound decision POST this artifact makes is askSOQOnce; no Go source
-	// emits session_id or prompt_cache_key anywhere. This subtest is expected
-	// to FAIL until production carries a stable identifier on the wire.
+	// Genuine falsifier for FA8's stable identifier requirement. Live SO
+	// rejects top-level session_id/prompt_cache_key (HTTP 422), so the stable
+	// hashes must ride inside state instead. Missing either hash or sending a
+	// rejected top-level key fails.
 	t.Run("stable_session_id_prompt_cache_key_present", func(t *testing.T) {
 		_, stub := w28_env(t, w28_answer(0.95), 0)
 		d := newDecisionBridge()
@@ -517,12 +517,22 @@ func TestSimFA8StickyPinStrictHit(t *testing.T) {
 		for k := range top {
 			keys = append(keys, k)
 		}
-		_, hasSession := top["session_id"]
-		_, hasCacheKey := top["prompt_cache_key"]
-		if !hasSession || !hasCacheKey {
-			t.Fatalf("FA8 BROKEN: SO POST has no stable session_id/prompt_cache_key "+
-				"(session_id=%v prompt_cache_key=%v, top-level keys=%v); "+
-				"body=%s", hasSession, hasCacheKey, keys, bodies[0])
+		if _, ok := top["session_id"]; ok {
+			t.Fatal("FA8 BROKEN: top-level session_id rejected by live SO")
+		}
+		if _, ok := top["prompt_cache_key"]; ok {
+			t.Fatal("FA8 BROKEN: top-level prompt_cache_key rejected by live SO")
+		}
+		var wire struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(bodies[0]), &wire); err != nil {
+			t.Fatalf("SO POST state is not a string: %v", err)
+		}
+		for _, key := range []string{"so_session_id=", "so_prompt_cache_key="} {
+			if !strings.Contains(wire.State, key) {
+				t.Fatalf("FA8 BROKEN: SO POST state has no %s (top-level keys=%v, state=%s)", key, keys, wire.State)
+			}
 		}
 		if strings.TrimSpace(bodies[0]) == "" {
 			t.Fatal("empty SO POST body")

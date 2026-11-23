@@ -14,12 +14,12 @@ fi
 echo "== 2/10 go vet =="
 CGO_ENABLED=0 go vet ./...
 
-echo "== 3/10 go test -race =="
+echo "== 3/10 go build =="
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+
+echo "== 4/10 go test -race =="
 # The race detector needs cgo; do not inherit an ambient CGO_ENABLED=0.
 CGO_ENABLED=1 go test -race -count=1 ./...
-
-echo "== 4/10 go build =="
-CGO_ENABLED=0 go build -trimpath -buildvcs=true -o walsy-system1 .
 
 echo "== 5/10 lrecon digest =="
 LRECON="${LRECON:-/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon}"

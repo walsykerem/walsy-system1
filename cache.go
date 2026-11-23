@@ -360,6 +360,7 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 		if ok {
 			s.storeLocked(key, warm)
 			s.mu.Unlock()
+			c.refreshDone(k) // no async refresh was launched on this warm hit
 			return warm, true
 		}
 	}

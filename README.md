@@ -55,11 +55,15 @@ process wiring only — no API keys, tokens, or other secrets.
 
 System One decision capabilities require explicit opt-in: a client frame must
 carry `need_label`, `no_scratch`, `safe`, `reversible`, `authority`, `calibrated`,
-`opt_in` all true and `phase=before-model` (or `pre-model`) to enter the SO
-decision path. Missing capability is advisory-only warning, enforcing-mode
-JSON-RPC error `-32001`. There is no dashboard SO CONFIG panel. Nothing is
-inferred from raw content. User prompts are untrusted data and never enter SO
-state. No key values or secrets are ever rendered.
+`opt_in` all true, use method `initialize` or `tools/call`, and carry a non-empty
+`phase` that is not an after-/post-model/tool/call/response phase
+(`route.go:288-300`). `before-model` and `pre-model` are the canonical forms; an
+unknown phase such as `UserPromptSubmit` remains in scope, but a non-label-shaped
+body takes the `layer0-shape` pass (`route_test.go:246`). Missing capability is
+advisory-only warning, enforcing-mode JSON-RPC error `-32001`. There is no
+dashboard SO CONFIG panel. Nothing is inferred from raw content. User prompts are
+untrusted data and never enter SO state. No key values or secrets are ever
+rendered.
 
 ## Dashboard API
 

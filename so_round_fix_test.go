@@ -51,6 +51,65 @@ func TestBridgeStdioDeadlineRefresh(t *testing.T) {
 	}
 }
 
+// silentDeadlineConn blocks the upstream read until released and records the
+// deadline applied before it. The test never waits out httpReadTimeout.
+type silentDeadlineConn struct {
+	deadlines atomic.Int64
+	deadline  atomic.Value // time.Time
+	release   chan struct{}
+}
+
+func (c *silentDeadlineConn) SetDeadline(t time.Time) error {
+	c.deadlines.Add(1)
+	c.deadline.Store(t)
+	return nil
+}
+
+func (c *silentDeadlineConn) Read([]byte) (int, error) {
+	<-c.release
+	return 0, io.EOF
+}
+
+func TestBridgeStdioUpstreamDeadline(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	up := &silentDeadlineConn{release: make(chan struct{})}
+	released := false
+	defer func() {
+		if !released {
+			close(up.release)
+		}
+	}()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bridgeStdio(bytes.NewReader(nil), io.Discard, io.Discard, up)
+	}()
+
+	deadlined := false
+	for i := 0; i < 500; i++ {
+		if up.deadlines.Load() > 0 {
+			deadlined = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !deadlined {
+		t.Fatal("silent upstream read had no deadline")
+	}
+	d, ok := up.deadline.Load().(time.Time)
+	if !ok || d.Before(time.Now().Add(httpReadTimeout-time.Second)) {
+		t.Fatalf("upstream deadline = %v, want ~now+%v", d, httpReadTimeout)
+	}
+
+	close(up.release)
+	released = true
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bridge did not return after silent upstream was released")
+	}
+}
+
 func TestSoRoundWhitespaceMarker(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	d := newDecisionBridge()
