@@ -668,7 +668,7 @@ func NewDashboardHandler() http.Handler {
 				writeAPIError(w, "method not allowed")
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+			writeJSON(w, http.StatusOK, healthFingerprint())
 		case "/api/providers":
 			if r.Method == http.MethodPost {
 				if !sameOrigin(r) {

@@ -459,12 +459,9 @@ func TestSOModeDefaultAndSources(t *testing.T) {
 }
 
 func TestSOCapabilityDefaultOn(t *testing.T) {
-	want := capabilityConfig{
-		NeedLabel: true, NoScratch: true, Safe: true, Reversible: true,
-		Authority: true, Calibrated: true, Phase: "before-model",
-	}
-	if got := soCapability(); got != want {
-		t.Fatalf("capability = %+v, want %+v", got, want)
+	// No default-true opt-in: a client must send every capability flag.
+	if got := soCapability(); got != (capabilityConfig{}) {
+		t.Fatalf("capability = %+v, want empty (explicit opt-in only)", got)
 	}
 }
 

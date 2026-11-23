@@ -470,7 +470,7 @@
 {{define "logsBody"}}
 <div class="sheet-body">
   <h1 class="panel-title">LOGS</h1>
-  <p class="sheet-note">{{.Log.Calls}} CALL(S) SINCE <time data-ts="{{.Log.SinceTS}}">{{.Log.Since}}</time> - {{.Log.ReqB}} B SENT / {{.Log.RespB}} B RECEIVED. NEWEST FIRST, IN MEMORY ONLY.</p>
+  <p class="sheet-note">{{.Log.Calls}} CALL(S) SINCE <time data-ts="{{.Log.SinceTS}}">{{.Log.Since}}</time> - {{.Log.ReqB}} B SENT / {{.Log.RespB}} B RECEIVED. NEWEST FIRST, IN MEMORY ONLY.{{if .Log.CostPerCall}} - {{.Log.CostPerCall}} CREDITS/CALL{{end}}</p>
   <table class="log-table">
     <thead><tr><th>TIME</th><th>KIND</th><th>OUTCOME</th><th>MS</th><th>SENT</th><th>RECV</th><th>USAGE</th></tr></thead>
     <tbody>

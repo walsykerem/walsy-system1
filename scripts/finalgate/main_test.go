@@ -9,7 +9,7 @@ import (
 // exists rather than trusting plausible prose.
 func TestExcerptInlinesCitedArtifact(t *testing.T) {
 	t.Chdir("../..")
-	ex, err := excerpt(citation{"decision_bridge.go", 93, 93})
+	ex, err := excerpt(citation{"decision_bridge.go", 153, 153})
 	if err != nil {
 		t.Fatal(err)
 	}

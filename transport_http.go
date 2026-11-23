@@ -181,9 +181,7 @@ func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Reques
 }
 
 func (d *decisionBridge) advisoryHTTP(request []byte, f frame) {
-	if f.Method == "initialize" {
-		_ = d.decide(unwrapParams(request, f))
-	}
+	_ = d.decideFrame(request)
 	d.advisoryHooks(request)
 }
 

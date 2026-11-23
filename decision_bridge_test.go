@@ -40,13 +40,17 @@ func (w *frameGateWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
+// explicitCaps is the full opt-in set enforcing gate requires; wire tests use
+// it so unrelated guards stay the reason a frame is blocked.
+const explicitCaps = `"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"`
+
 func gateFrame(method string, id int) []byte {
 	if method == "tools/call" {
 		return []byte(`{"jsonrpc":"2.0","id":` + itoaTest(id) +
-			`,"method":"tools/call","params":{"name":"read_file"}}`)
+			`,"method":"tools/call","params":{"name":"read_file",` + explicitCaps + `}}`)
 	}
 	return []byte(`{"jsonrpc":"2.0","id":` + itoaTest(id) +
-		`,"method":"` + method + `","params":{}}`)
+		`,"method":"` + method + `","params":{` + explicitCaps + `}}`)
 }
 
 func itoaTest(n int) string {
@@ -183,7 +187,7 @@ func TestTransientNotCached(t *testing.T) {
 	t.Setenv("EVREN_API_KEY", "test-key")
 
 	d := newDecisionBridge()
-	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	req := []byte(`{"state":"classify this request","method":"initialize",` + explicitCaps + `}`)
 	r1 := d.decide(req)
 	r2 := d.decide(req)
 	if r1.Decision != decPass || r2.Decision != decPass {
@@ -192,7 +196,7 @@ func TestTransientNotCached(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("degraded result was cached: SO called %d times, want 2", calls)
 	}
-	if _, hit := d.cache.lookup(gateKey(req, soCapability())); hit {
+	if _, hit := d.cache.lookup(gateKeyBytes(req, soCapability())); hit {
 		t.Fatal("transient/degraded outcome must not be stored in cache")
 	}
 }
@@ -222,7 +226,7 @@ func TestArgsSecretCheckedWithBody(t *testing.T) {
 	d.guard.check("read_file", json.RawMessage(`{"path":"/tmp/args-secret.txt"}`))
 	// AKIA literal is a shape pattern that argsSecretCheck sees inside raw JSON
 	// (a quoted api_key assignment would not match the assignment regex).
-	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"filePath":"/tmp/args-secret.txt","content":"hello world","metadata":{"api_key":"AKIAIOSFODNN7EXAMPLE"}}}}`)
+	req := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"filePath":"/tmp/args-secret.txt","content":"hello world","metadata":{"api_key":"AKIAIOSFODNN7EXAMPLE"}},` + explicitCaps + `}}`)
 	resp, blocked := d.enforcingGate(req)
 	if !blocked {
 		t.Fatal("write call with content + metadata api_key must be blocked")
@@ -252,7 +256,7 @@ func TestBridgeStdioSerializesClientWrites(t *testing.T) {
 	// two writes were concurrent.
 	go func() {
 		<-gate.release
-		_, _ = pw.Write([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"/tmp/neverread-xyz.txt","content":"x"}}}` + "\n"))
+		_, _ = pw.Write([]byte(`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"/tmp/neverread-xyz.txt","content":"x"},` + explicitCaps + `}}` + "\n"))
 		_ = pw.Close()
 	}()
 
@@ -265,5 +269,23 @@ func TestBridgeStdioSerializesClientWrites(t *testing.T) {
 	}
 	if !bytes.Contains(gate.buf.Bytes(), []byte(`"id":5`)) {
 		t.Fatalf("blocked reply not delivered: %q", gate.buf.Bytes())
+	}
+}
+
+// N4: enforcing must fail closed on a frame with no explicit decision
+// capability; advisory only warns. No default-true opt-in backfill.
+func TestN4MissingCapabilityFailClosed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WALSY_SO_MODE", soModeEnforcing)
+	if explicitCapability([]byte(`{"state":"classify this"}`)) {
+		t.Fatal("bare frame must not count as explicit consent")
+	}
+	if !explicitCapability([]byte(`{"state":"classify this",` + explicitCaps + `}`)) {
+		t.Fatal("full opt-in set must be accepted")
+	}
+	d := newDecisionBridge()
+	_, blocked := d.enforcingGate([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file"}}`))
+	if !blocked {
+		t.Fatal("enforcing must fail closed on missing capability")
 	}
 }

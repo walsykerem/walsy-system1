@@ -62,21 +62,7 @@ func serveUnix(l net.Listener, dial func() (net.Conn, error)) {
 			if err != nil {
 				return // passthrough: client just sees EOF
 			}
-			relayConn(c, up)
+			bridgeStdio(c, c, up, up)
 		}()
 	}
-}
-
-// relayConn bridges two byte streams verbatim with half-close on each side:
-// when one side ends, only its write half is closed, so the peer can flush.
-func relayConn(a, b io.ReadWriteCloser) {
-	done := make(chan struct{}, 1)
-	go func() {
-		_, _ = io.Copy(b, a)
-		halfCloseWriter(b)
-		done <- struct{}{}
-	}()
-	_, _ = io.Copy(a, b)
-	halfCloseWriter(a)
-	<-done
 }

@@ -27,12 +27,16 @@ type routeResult struct {
 	// Steer is the next step to tell the agent, when one is known. Registry
 	// items carry it per label; a refusal that says nothing is retried blind.
 	Steer string
+	// LastDecision is the raw SO answer behind the result, when SO was asked.
+	// Bucket-only and layer-0 results leave it zero.
+	LastDecision soDecision
 }
 
 // stateEnvelope is buildState's output. All fields are user-sourced;
 // server-sourced systemPrompt/message never reach it.
 type stateEnvelope struct {
 	State      string `json:"state"`
+	Method     string `json:"method"` // trusted JSON-RPC method from the envelope, not client params
 	NeedLabel  bool   `json:"need_label"`
 	NoScratch  bool   `json:"no_scratch"`
 	Safe       bool   `json:"safe"`
@@ -45,6 +49,27 @@ type stateEnvelope struct {
 	// UserSystemPrompt is untrusted data; the header marks the boundary for SO.
 	UserSystemPrompt  string `json:"user_system_prompt,omitempty"`
 	UserSystemPrompts string `json:"user_system_prompts,omitempty"`
+}
+
+// soStateFromEnvelope projects an envelope into the explicit SO-bound shape.
+// Only prompt IDs and SHA-256 digests cross; prompt bodies are never a field.
+// Over-cap input is rejected in full (no truncation, no partial state).
+func soStateFromEnvelope(e stateEnvelope) (string, error) {
+	skel := StateSkeleton{
+		State: e.State, Method: e.Method, NeedLabel: e.NeedLabel, NoScratch: e.NoScratch,
+		Safe: e.Safe, Reversible: e.Reversible, OptIn: e.OptIn, Phase: e.Phase,
+		Authority: e.Authority, Calibrated: e.Calibrated, Item: e.Item,
+	}
+	bodies := map[string]string{}
+	for _, p := range loadPrompts() {
+		bodies[p.Name] = p.Text
+	}
+	ref, err := buildStateSkeleton("", bodies)
+	if err != nil {
+		return "", err
+	}
+	skel.Prompts = ref.Prompts
+	return marshalSOState(skel)
 }
 
 // droppedKeys are normalized key names removed recursively, before assembly.
@@ -180,14 +205,15 @@ func buildState(userRequest string) string {
 		Safe:       boolField(obj, "safe"),
 		Reversible: boolField(obj, "reversible"),
 		OptIn:      capabilityEnabled(obj),
-		Phase:      stringField(obj, "phase"),
+		Phase:      strings.ToLower(strings.ReplaceAll(stringField(obj, "phase"), "_", "-")),
+		Method:     stringField(obj, "method"),
 		Authority:  boolField(obj, "authority", "decision_authority"),
 		Calibrated: boolField(obj, "calibrated"),
 	}
 	for _, k := range []string{
 		"state", "request", "item", "need_label", "needLabel", "no_scratch", "noScratch",
 		"safe", "reversible", "opt_in", "enable", "capability", "capabilities",
-		"experimental", "phase", "authority", "decision_authority", "calibrated",
+		"experimental", "phase", "authority", "decision_authority", "calibrated", "method",
 	} {
 		delete(clean, k)
 	}
@@ -226,10 +252,15 @@ func passResult(reason string, abstained bool) routeResult {
 	return routeResult{Decision: decPass, Reason: reason, Abstained: abstained, Passthrough: true}
 }
 
-// inScope is the honest coverage intersection: model-before and authoritative and
-// opted-in and calibrated. Context-only and post-tool phases never enter payday.
+// inScope is the honest coverage intersection: an in-scope JSON-RPC method,
+// model-before, authoritative, opted-in and calibrated. Context-only and
+// post-tool phases never enter payday.
 func inScope(e stateEnvelope) bool {
 	p := strings.ToLower(strings.ReplaceAll(e.Phase, "_", "-"))
+	m := strings.ToLower(strings.ReplaceAll(e.Method, "_", "-"))
+	if m != "initialize" && m != "tools/call" {
+		return false
+	}
 	return (p == "before-model" || p == "pre-model") && e.Authority && e.OptIn && e.Calibrated
 }
 
@@ -334,15 +365,19 @@ func routeInner(state string, p *pin) routeResult {
 
 	var d soDecision
 	if isItem {
-		d = askSOQ(state, item.question()) // full envelope: user prompts ride as data fields
+		d = askSOQ(state, item.question())
 	} else {
 		d = askSO(state)
 	}
+	// LastDecision keeps labels/confidence out of logs and the cache; callers
+	// that need the raw answer (system1_decide) read it from this result.
+	raw := d
+	withRaw := func(r routeResult) routeResult { r.LastDecision = raw; return r }
 	switch {
 	case d.TimedOut:
-		return passResult(classify(0, context.DeadlineExceeded), true)
+		return withRaw(passResult(classify(0, context.DeadlineExceeded), true))
 	case d.Choice == "":
-		return passResult("so-degraded", true) // HTTP!=200, parse error or a label outside the item's set
+		return withRaw(passResult("so-degraded", true)) // HTTP!=200, parse error or a label outside the item's set
 	case !admits(d.Choice):
 		// Outside the item's proceed list nothing is admitted. A registry item's
 		// own action is the steer; the generic question's label rides through
@@ -351,11 +386,11 @@ func routeInner(state string, p *pin) routeResult {
 		if isItem {
 			r := passResult("registry-nonproceed", true)
 			r.Label, r.Steer = d.Choice, item.Action[d.Choice]
-			return r
+			return withRaw(r)
 		}
 		r := passResult("so-"+d.Choice, true)
 		r.Label = d.Choice
-		return r
+		return withRaw(r)
 	case d.Conf < thr:
 		r := passResult("so-low-conf", true)
 		r.Label = d.Choice
@@ -364,7 +399,7 @@ func routeInner(state string, p *pin) routeResult {
 			// text: a below-cut label still knows which action it wanted.
 			r.Steer = item.Action[d.Choice]
 		}
-		return r
+		return withRaw(r)
 	default:
 		bucket := confBucket(d.Conf)
 		if p != nil {
@@ -374,6 +409,6 @@ func routeInner(state string, p *pin) routeResult {
 		if isItem {
 			r.Label, r.Steer = d.Choice, item.Action[d.Choice]
 		}
-		return r
+		return withRaw(r)
 	}
 }

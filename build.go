@@ -149,7 +149,7 @@ var buildAttempts = newAttemptGuard()
 
 // runGoBuild is a var so tests can hold the slot without invoking the toolchain.
 var runGoBuild = func(ctx context.Context, dir, rel, goos, goarch string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-buildvcs=false", "-o", rel, ".")
+	cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-buildvcs=true", "-o", rel, ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	return cmd.CombinedOutput()

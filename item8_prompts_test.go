@@ -73,8 +73,9 @@ func TestPromptFileMode(t *testing.T) {
 	}
 }
 
-// TestPromptSOBlockMultiMulti7A3F checks named prompts reach SO in the state
-// string, through a real askSOQ POST against an httptest server.
+// TestPromptSOBlockMultiMulti7A3F checks named prompts stay in the local UI
+// block and never reach SO in the state string, through a real askSOQ POST
+// against an httptest server.
 func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 	item8Home(t)
 	const token = "CHECKMULTI7A3F"
@@ -97,8 +98,8 @@ func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 	if err := json.Unmarshal([]byte(state), &e); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(e.UserSystemPrompts, "[one]") || !strings.Contains(e.UserSystemPrompts, "[two]") {
-		t.Fatalf("envelope missing named prompts: %+v", e)
+	if strings.Contains(e.UserSystemPrompts, "[one]") || strings.Contains(e.UserSystemPrompts, "[two]") || strings.Contains(e.UserSystemPrompts, token) {
+		t.Fatalf("SO envelope leaked named prompts: %+v", e)
 	}
 
 	var got string
@@ -111,7 +112,7 @@ func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 			got = req.State
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"answers":{"gate":{"choice":"no","confidence":0.9}}}`))
+		_, _ = w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"no","confidence":0.9}}}`))
 	}))
 	defer srv.Close()
 	origEndpoint, origClient := soEndpoint, soClient
@@ -119,9 +120,9 @@ func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 	t.Setenv("EVREN_API_KEY", "test-key")
 	_ = route(state, nil)
-	for _, want := range []string{"## USER PROMPTS", "[one]", "[two]", token} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("SO state missing %q: %s", want, got)
+	for _, leak := range []string{"## USER PROMPTS", "[one]", "[two]", token} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("SO state leaked %q: %s", leak, got)
 		}
 	}
 }

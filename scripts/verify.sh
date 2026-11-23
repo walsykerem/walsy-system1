@@ -19,7 +19,7 @@ echo "== 3/8 go test -race =="
 CGO_ENABLED=1 go test -race -count=1 ./...
 
 echo "== 4/8 go build =="
-CGO_ENABLED=0 go build -o walsy-system1 .
+CGO_ENABLED=0 go build -trimpath -buildvcs=true -o walsy-system1 .
 
 echo "== 5/8 lrecon digest =="
 LRECON="${LRECON:-/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon}"

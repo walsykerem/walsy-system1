@@ -31,15 +31,17 @@ type LogEntry struct {
 	ReqB    int
 	RespB   int
 	Usage   string
+	Credits float64
 }
 
 // LogTotals are the running sums shown above the ring buffer.
 type LogTotals struct {
-	Calls   int
-	SinceTS int64
-	ReqB    int64
-	RespB   int64
-	Since   string
+	Calls       int
+	SinceTS     int64
+	ReqB        int64
+	RespB       int64
+	Since       string
+	CostPerCall float64
 }
 
 // auditRow is one redacted line of the shared relay audit JSONL. Only
@@ -55,17 +57,34 @@ type auditRow struct {
 }
 
 var (
-	logMu    sync.Mutex
-	logRing  []LogEntry
-	logCalls int
-	logReqB  int64
-	logRespB int64
-	logSince = time.Now()
+	logMu      sync.Mutex
+	logRing    []LogEntry
+	logCalls   int
+	logReqB    int64
+	logRespB   int64
+	logCredits float64
+	logSince   = time.Now()
 )
+
+// usageCredits returns numeric credits from an SO usage object, if present.
+func usageCredits(usage map[string]any) (float64, bool) {
+	if c, ok := usage["credits"].(float64); ok {
+		return c, true
+	}
+	for _, v := range usage {
+		if m, ok := v.(map[string]any); ok {
+			if c, ok := m["credits"].(float64); ok {
+				return c, true
+			}
+		}
+	}
+	return 0, false
+}
 
 // logCall records one outbound call. usage is an optional API usage object.
 func logCall(kind, outcome string, d time.Duration, reqB, respB int, usage map[string]any) {
 	now := time.Now()
+	credits, hasCredits := usageCredits(usage)
 	e := LogEntry{
 		TS:      now.UnixMilli(),
 		At:      now.In(time.Local).Format("15:04:05"),
@@ -75,18 +94,25 @@ func logCall(kind, outcome string, d time.Duration, reqB, respB int, usage map[s
 		ReqB:    reqB,
 		RespB:   respB,
 		Usage:   usageLine(usage),
+		Credits: credits,
 	}
 	logMu.Lock()
 	defer logMu.Unlock()
 	logCalls++
 	logReqB += int64(reqB)
 	logRespB += int64(respB)
+	logCredits += credits
 	logRing = append(logRing, e)
 	if len(logRing) > logRingSize {
 		logRing = logRing[len(logRing)-logRingSize:]
 	}
-	// Same source as relayLog: only coarse labels and a byte count reach disk.
-	routerAudit("call", "method", kind, "status", outcome, "count", strconv.Itoa(reqB))
+	creditStr := ""
+	if hasCredits {
+		creditStr = strconv.FormatFloat(credits, 'f', -1, 64)
+	}
+	// Same source as relayLog: only coarse labels and numeric totals reach disk.
+	routerAudit("call", "method", kind, "status", outcome, "count", strconv.Itoa(reqB),
+		"latency_ms", strconv.FormatInt(d.Milliseconds(), 10), "credits", creditStr)
 }
 
 // usageLine flattens an API usage object to "key=value" pairs, sorted and
@@ -125,6 +151,9 @@ func logsView() (LogTotals, []LogEntry) {
 	defer logMu.Unlock()
 	t := LogTotals{Calls: logCalls, ReqB: logReqB, RespB: logRespB,
 		SinceTS: logSince.UnixMilli(), Since: logSince.In(time.Local).Format("15:04:05")}
+	if logCalls > 0 {
+		t.CostPerCall = logCredits / float64(logCalls)
+	}
 	out := make([]LogEntry, len(logRing))
 	for i, e := range logRing {
 		out[len(logRing)-1-i] = e

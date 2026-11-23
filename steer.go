@@ -47,6 +47,7 @@ var steerTable = map[string]string{
 	"ledger-complete":     "proceed: every declared todo item is covered by a done claim.",
 	"ledger-open":         "finish the uncovered todo items or drop them explicitly, then re-check the ledger.",
 	"no-state":            "send a JSON state object with the decision text under \"state\".",
+	"frame-too-large":     "split the request into frames under 1 MiB before sending it again.",
 	"no-key":              "configure the relay's model key, or decide locally.",
 	"unread-write":        "read the target path first, or state why it is new, then write.",
 	"unread-path":         "give a readable target path, or state why it is new, then write; the guard could not read this path.",

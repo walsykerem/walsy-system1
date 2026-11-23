@@ -53,9 +53,9 @@ func TestAcceptanceGap4CapabilityOptIn(t *testing.T) {
 	t.Setenv("EVREN_API_KEY", "")
 
 	c := soCapability()
-	if !c.NeedLabel || !c.NoScratch || !c.Safe || !c.Reversible ||
-		!c.Authority || !c.Calibrated || c.Phase != "before-model" {
-		t.Fatalf("capability default not on: %+v", c)
+	if c.NeedLabel || c.NoScratch || c.Safe || c.Reversible ||
+		c.Authority || c.Calibrated || c.Phase != "" {
+		t.Fatalf("capability default must require explicit opt-in: %+v", c)
 	}
 }
 

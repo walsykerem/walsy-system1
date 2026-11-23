@@ -25,7 +25,7 @@ func TestWiringBridgeDecidesOnInitialize(t *testing.T) {
 		default:
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
 	}))
 	defer srv.Close()
 
@@ -195,8 +195,8 @@ func enforcingSO(t *testing.T, body string, calls *int32) {
 // set), so enforcing mode must forward it: blocking there would deny ordinary
 // traffic the typed layer never claimed.
 func TestEnforcingGenericNoPassesThrough(t *testing.T) {
-	enforcingSO(t, `{"answers":{"gate":{"choice":"no","confidence":0.96}}}`, nil)
-	req := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tool-a","arguments":{}}}` + "\n")
+	enforcingSO(t, `{"answers":{"gate":{"type":"choice","choice":"no","confidence":0.96}}}`, nil)
+	req := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tool-a","arguments":{},` + explicitCaps + `}}` + "\n")
 	var toServer, toClient bytes.Buffer
 	bridgeStdio(bytes.NewReader(req), &toClient, &toServer, bytes.NewReader(nil))
 	if toServer.Len() == 0 {
@@ -210,7 +210,7 @@ func TestEnforcingGenericNoPassesThrough(t *testing.T) {
 // A registry item outside its proceed list still blocks in enforcing mode,
 // with a valid JSON-RPC error - never an HTTP status or a leaked payload.
 func TestEnforcingRegistryRefusalBlocks(t *testing.T) {
-	enforcingSO(t, `{"answers":{"gate":{"choice":"destructive","confidence":0.97}}}`, nil)
+	enforcingSO(t, `{"answers":{"gate":{"type":"choice","choice":"destructive","confidence":0.97}}}`, nil)
 	req := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tool-a","arguments":{},` +
 		`"state":"the delete already ran on prod","item":"intake.destructive","phase":"before-model",` +
 		`"authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,` +
@@ -231,7 +231,7 @@ func TestEnforcingRegistryRefusalBlocks(t *testing.T) {
 // An SO outage in enforcing mode fails open: frame still reaches upstream.
 func TestEnforcingOutageFailsOpen(t *testing.T) {
 	enforcingSO(t, `not-json`, nil)
-	req := []byte(`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tool-b"}}` + "\n")
+	req := []byte(`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tool-b",` + explicitCaps + `}}` + "\n")
 	var toServer, toClient bytes.Buffer
 	bridgeStdio(bytes.NewReader(req), &toClient, &toServer, bytes.NewReader(nil))
 	if !bytes.Equal(toServer.Bytes(), req) {
@@ -242,9 +242,9 @@ func TestEnforcingOutageFailsOpen(t *testing.T) {
 // Distinct frames get distinct decisions: the one-shot latch is gone.
 func TestPerRequestGating(t *testing.T) {
 	var calls int32
-	enforcingSO(t, `{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`, &calls)
-	reqs := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tool-c","arguments":{"n":1}}}` + "\n" +
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tool-c","arguments":{"n":2}}}` + "\n")
+	enforcingSO(t, `{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`, &calls)
+	reqs := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tool-c","arguments":{"n":1},` + explicitCaps + `}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tool-c","arguments":{"n":2},` + explicitCaps + `}}` + "\n")
 	var toServer, toClient bytes.Buffer
 	bridgeStdio(bytes.NewReader(reqs), &toClient, &toServer, bytes.NewReader(nil))
 	if !bytes.Equal(toServer.Bytes(), reqs) {

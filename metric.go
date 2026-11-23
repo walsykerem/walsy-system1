@@ -24,6 +24,7 @@ type metric struct {
 	Abstained    bool   `json:"abstained,omitempty"`
 	Passthrough  bool   `json:"passthrough,omitempty"`
 	ConfBucket   string `json:"conf_bucket,omitempty"`
+	Source       string `json:"source,omitempty"` // "preflight" on advisory shadow records only
 }
 
 // confBucket coarsens a confidence to the allowlisted bucket. <0.8 is invalid

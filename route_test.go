@@ -13,7 +13,7 @@ import (
 
 func scopeState(state string, optIn bool) string {
 	b, _ := json.Marshal(stateEnvelope{
-		State: state, NeedLabel: true, NoScratch: true, Safe: true,
+		State: state, Method: "tools/call", NeedLabel: true, NoScratch: true, Safe: true,
 		Reversible: true, OptIn: optIn, Phase: "before-model",
 		Authority: true, Calibrated: true,
 	})
@@ -44,7 +44,7 @@ func TestRouteLayers(t *testing.T) {
 
 	// Layer 0: gate false -> pass, SO never called.
 	b, _ := json.Marshal(stateEnvelope{
-		State: "classify this", NeedLabel: false, NoScratch: true,
+		State: "classify this", Method: "tools/call", NeedLabel: false, NoScratch: true,
 		Safe: true, Reversible: true, OptIn: true, Phase: "before-model",
 		Authority: true, Calibrated: true,
 	})
@@ -56,7 +56,7 @@ func TestRouteLayers(t *testing.T) {
 	// Layer 1: gate true + opt-in -> SO is called.
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
 	})
 	r = route(scopeState("classify this request", true), newPin(bakedRegistry()))
 	if r.Decision != decPin || !r.Covered || r.ConfBucket != "0.9" || !called {
@@ -67,14 +67,14 @@ func TestRouteLayers(t *testing.T) {
 // checker 6: conf 0.799->pass, 0.801->pin, timeout->pass, HTTP 500->pass. No 503.
 func TestRouteFailSafe(t *testing.T) {
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.799}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.799}}}`))
 	})
 	if r := route(scopeState("classify this", true), nil); r.Decision != decPass || !r.Abstained {
 		t.Fatalf("conf 0.799: %+v", r)
 	}
 	// swap endpoint response for 0.801 via a fresh server
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.801}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.801}}}`))
 	}))
 	orig := soEndpoint
 	soEndpoint = srv2.URL
@@ -123,7 +123,7 @@ func TestSOSchemaOnWire(t *testing.T) {
 		if got := r.Header.Get("x-api-key"); got != "test-key" {
 			t.Error("missing x-api-key")
 		}
-		w.Write([]byte(`{"answers":{"gate":{"choice":"no","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"no","confidence":0.95}}}`))
 	})
 	route(scopeState("classify this", true), nil)
 	if requests != 1 {
@@ -220,7 +220,7 @@ func TestRouteTrustBoundary(t *testing.T) {
 	called := false
 	withSO(t, func(w http.ResponseWriter, r *http.Request) { called = true })
 	b, _ := json.Marshal(stateEnvelope{
-		State: "classify this", NeedLabel: true, NoScratch: true, Safe: true,
+		State: "classify this", Method: "tools/call", NeedLabel: true, NoScratch: true, Safe: true,
 		Reversible: true, OptIn: false, Phase: "before-model",
 		Authority: true, Calibrated: true,
 	})
@@ -250,6 +250,7 @@ func TestRouteCoverageMatrix(t *testing.T) {
 	})
 	for _, c := range cases {
 		c.e.State = "plain greeting"
+		c.e.Method = "tools/call"
 		b, _ := json.Marshal(c.e)
 		r := route(string(b), nil)
 		if r.Reason != c.want || !r.Passthrough {
@@ -262,15 +263,22 @@ func TestSOAutoOnForPlainClientFrame(t *testing.T) {
 	called := false
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
 	})
-	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
-	r := newDecisionBridge().decide(frame)
+	// A client frame reaches SO only when it carries the explicit capability;
+	// the old default-on behavior would be an unconsented model call.
+	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",` + explicitCaps + `}}`)
+	r := newDecisionBridge().decideFrame(frame)
 	if !called {
-		t.Fatal("plain client frame must reach SO by default")
+		t.Fatal("in-scope frame with explicit capability must reach SO")
 	}
 	if r.Decision != decPin || r.ConfBucket != "0.9" {
 		t.Fatalf("auto-on decision: %+v", r)
+	}
+	outOfScope := []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{` + explicitCaps + `}}`)
+	called = false
+	if got := newDecisionBridge().decideFrame(outOfScope); got.Reason != "layer0-scope" || called {
+		t.Fatalf("out-of-scope method must not call SO: %+v called=%v", got, called)
 	}
 }
 
@@ -278,11 +286,11 @@ func TestSOAutoOnForPlainClientFrame(t *testing.T) {
 // discarded at the global gate, admitted below it, and clamped above it.
 func TestRoutePerItemThreshold(t *testing.T) {
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"sufficient","confidence":0.768}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"sufficient","confidence":0.768}}}`))
 	})
 	state := func() string {
 		b, _ := json.Marshal(stateEnvelope{
-			State: "decide whether the context is sufficient", NeedLabel: true,
+			State: "decide whether the context is sufficient", Method: "tools/call", NeedLabel: true,
 			NoScratch: true, Safe: true, Reversible: true, OptIn: true,
 			Phase: "before-model", Authority: true, Calibrated: true,
 			Item: "context.sufficient",
@@ -332,5 +340,26 @@ func TestAdmitSteerDoesNotBlock(t *testing.T) {
 	// steer: AGENT_CONTRACT.md:30 requires the relay to keep forwarding.
 	if steerBlocks(routeResult{Decision: decPass, Reason: "so-low-conf", Steer: "name the missing fact"}) {
 		t.Fatal("low-confidence steer must not block in enforcing mode")
+	}
+}
+
+// F3: scope is method-bound. Only initialize and tools/call with a
+// model-before phase and full capability enter the decision path.
+func TestF3MethodScope(t *testing.T) {
+	for _, m := range []string{"", "tools/list", "prompts/get", "resources/read"} {
+		e := stateEnvelope{State: "classify this", Method: m, Phase: "before-model",
+			NeedLabel: true, NoScratch: true, Safe: true, Reversible: true,
+			Authority: true, Calibrated: true, OptIn: true}
+		if inScope(e) {
+			t.Errorf("method %q must be out of scope", m)
+		}
+	}
+	for _, m := range []string{"initialize", "tools/call", "initialize", "TOOLS/CALL"} {
+		e := stateEnvelope{State: "classify this", Method: m, Phase: "before_model",
+			NeedLabel: true, NoScratch: true, Safe: true, Reversible: true,
+			Authority: true, Calibrated: true, OptIn: true}
+		if !inScope(e) {
+			t.Errorf("method %q with model-before phase must be in scope", m)
+		}
 	}
 }

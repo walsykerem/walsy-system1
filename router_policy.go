@@ -53,7 +53,9 @@ var routerAuditKeys = map[string]bool{
 	"tool": true, "status": true, "bucket": true, "decision": true,
 	"phase": true, "mode": true, "provider": true, "outcome": true,
 	"reason": true, "budget": true, "count": true, "latency_ms": true,
-	"method": true, "allow": true,
+	"method": true, "allow": true, "credits": true,
+	"source": true, "id": true, "nonce": true,
+	"prev": true, "head": true, "response_id": true,
 }
 
 // routerReset clears per-process counters. Tests call it between cases.

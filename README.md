@@ -43,19 +43,23 @@ process wiring only — no API keys, tokens, or other secrets.
 
 ## System One mode
 
-- `advisory` (default): fail-open. Every request is relayed byte-for-byte to the
-  upstream with no added client-visible delay. No client change required.
+- `advisory` (default): fail-open. In-scope JSON-RPC requests (`initialize`,
+  `tools/call`) with explicit decision capability may ask SO; out-of-scope
+  frames pass through without an SO call. All frames are relayed byte-for-byte
+  to the upstream with no added client-visible delay. No client change required.
 - `enforcing`: explicit opt-in only, via `WALSY_SO_MODE=enforcing` or
   `so_mode=enforcing` in `~/.walsy-system1/config.txt` (env wins). On an SO deny,
   `tools/call` is stopped before the upstream and answered with a JSON-RPC error
   (never HTTP 503). It still fails open when SO is unavailable, returns
   low-confidence, or times out.
 
-System One decision capabilities are on by default: `need_label`, `no_scratch`,
-`safe`, `reversible`, `authority`, `calibrated`, and `phase=before-model`. There
-is no dashboard SO CONFIG panel. A client frame can narrow the decision surface
-with explicit `false` fields; nothing is inferred from raw content. No key
-values or secrets are ever rendered.
+System One decision capabilities require explicit opt-in: a client frame must
+carry `need_label`, `no_scratch`, `safe`, `reversible`, `authority`, `calibrated`,
+`opt_in` all true and `phase=before-model` (or `pre-model`) to enter the SO
+decision path. Missing capability is advisory-only warning, enforcing-mode
+JSON-RPC error `-32001`. There is no dashboard SO CONFIG panel. Nothing is
+inferred from raw content. User prompts are untrusted data and never enter SO
+state. No key values or secrets are ever rendered.
 
 ## Dashboard API
 

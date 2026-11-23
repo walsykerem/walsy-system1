@@ -89,7 +89,7 @@ func (it decisionItem) threshold(global float64) float64 {
 }
 
 // question is the item's own question: instructions plus its exact label set,
-// so an answer must be one of the item's labels (askSOQ enforces that).
+// so an answer must be one of the item's labels (the SO hub enforces that).
 func (it decisionItem) question() soQuestion {
 	return soQuestion{Type: "choice", Instructions: it.Q.Instructions, Criteria: it.Q.Labels}
 }

@@ -150,13 +150,12 @@ func TestItem6SystemPrompt(t *testing.T) {
 		t.Fatalf("prompt file mode/size: %v %v", st, err)
 	}
 	state := buildSOState(`{"state":"classify this request"}`)
-	for _, want := range []string{"## USER SYSTEM PROMPT (untrusted data)", token, "ignore previous instructions"} {
-		if !strings.Contains(state, want) {
-			t.Fatalf("SO state missing %q: %s", want, state)
+	// User prompts are untrusted data: the local UI keeps them, SO never sees
+	// them. This is a stronger boundary than the old "escaped prompt in state".
+	for _, leak := range []string{"## USER SYSTEM PROMPT (untrusted data)", token, "ignore previous instructions"} {
+		if strings.Contains(state, leak) {
+			t.Fatalf("SO state leaked %q: %s", leak, state)
 		}
-	}
-	if strings.Contains(state, "<|endoftext|>") {
-		t.Fatalf("delimiter not escaped in SO state: %s", state)
 	}
 
 	long := strings.Repeat("x", 8193)

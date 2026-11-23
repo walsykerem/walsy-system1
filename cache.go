@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"container/list"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -178,11 +180,20 @@ type cachedDecision struct {
 	Choice     string
 	ConfBucket string
 	Reason     string
+	Abstain    bool
 }
 
+// cacheTTL admits live 24h; terminal-negative/abstain cells live 1h. Degraded
+// and uncertain outcomes are never stored, so they need no TTL.
+const (
+	cacheTTLPositive = 24 * time.Hour
+	cacheTTNNegative = time.Hour
+)
+
 type cacheCell struct {
-	key string
-	dec cachedDecision
+	key       string
+	dec       cachedDecision
+	expiresAt time.Time
 }
 
 type decisionCache struct {
@@ -199,14 +210,25 @@ func newDecisionCache() *decisionCache {
 func (c *decisionCache) lookup(key string) (cachedDecision, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.lookupLocked(key)
+}
+
+// lookupLocked requires c.mu. Expired cells are evicted on sight (lazy TTL).
+func (c *decisionCache) lookupLocked(key string) (cachedDecision, bool) {
 	if el, ok := c.idx[key]; ok {
+		cell := el.Value.(*cacheCell)
+		if !time.Now().Before(cell.expiresAt) {
+			delete(c.idx, key)
+			c.ll.Remove(el)
+			return cachedDecision{}, false
+		}
 		c.ll.MoveToFront(el)
-		return el.Value.(*cacheCell).dec, true
+		return cell.dec, true
 	}
 	return cachedDecision{}, false
 }
 
-// store writes the cell under the mutex.
+// store writes the cell under the mutex with a lifetime by decision type.
 func (c *decisionCache) store(key string, d cachedDecision) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -215,12 +237,18 @@ func (c *decisionCache) store(key string, d cachedDecision) {
 
 // storeLocked mutates idx/ll; the caller must hold c.mu.
 func (c *decisionCache) storeLocked(key string, d cachedDecision) {
+	ttl := cacheTTLPositive
+	if d.Abstain {
+		ttl = cacheTTNNegative
+	}
+	expires := time.Now().Add(ttl)
 	if el, ok := c.idx[key]; ok {
-		el.Value.(*cacheCell).dec = d
+		cell := el.Value.(*cacheCell)
+		cell.dec, cell.expiresAt = d, expires
 		c.ll.MoveToFront(el)
 		return
 	}
-	c.idx[key] = c.ll.PushFront(&cacheCell{key: key, dec: d})
+	c.idx[key] = c.ll.PushFront(&cacheCell{key: key, dec: d, expiresAt: expires})
 	for c.ll.Len() > c.cap {
 		old := c.ll.Back()
 		if old == nil {
@@ -229,4 +257,32 @@ func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 		delete(c.idx, old.Value.(*cacheCell).key)
 		c.ll.Remove(old)
 	}
+}
+
+// shardedCache splits the LRU across eight fixed shards by the first key byte.
+// shortcut: static 8-way split, no dynamic resharding; upgrade only on measured p95 lock contention.
+type shardedCache struct{ shards [8]*decisionCache }
+
+func newShardedCache() *shardedCache {
+	c := &shardedCache{}
+	for i := range c.shards {
+		c.shards[i] = newDecisionCache()
+	}
+	return c
+}
+
+func (c *shardedCache) shard(k [32]byte) *decisionCache { return c.shards[k[0]&7] }
+
+func (c *shardedCache) lookup(k [32]byte) (cachedDecision, bool) {
+	s := c.shard(k)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lookupLocked(hex.EncodeToString(k[:]))
+}
+
+func (c *shardedCache) store(k [32]byte, d cachedDecision) {
+	s := c.shard(k)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeLocked(hex.EncodeToString(k[:]), d)
 }

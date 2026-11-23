@@ -728,16 +728,6 @@ type capabilityConfig struct {
 	Phase      string
 }
 
-// soCapability is on by default. The UI has no SO toggle; a client frame can
-// still narrow the decision surface with explicit false fields.
-func soCapability() capabilityConfig {
-	return capabilityConfig{
-		NeedLabel:  true,
-		NoScratch:  true,
-		Safe:       true,
-		Reversible: true,
-		Authority:  true,
-		Calibrated: true,
-		Phase:      "before-model",
-	}
-}
+// soCapability is the explicit opt-in surface. Defaults stay off; a client
+// must send every capability flag with a model-before phase to enter SO.
+func soCapability() capabilityConfig { return capabilityConfig{} }

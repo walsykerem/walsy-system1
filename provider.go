@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // provider is one registry slot. KeyEnv holds an env var NAME, never the key.
@@ -296,11 +298,17 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// pinTTL bounds how long a sticky provider stays trusted without a fresh
+// success. RAM only: restart -> empty -> config order.
+const pinTTL = 15 * time.Minute
+
 // pin is the sticky winner. RAM only: restart -> empty -> config order.
 type pin struct {
-	mu   sync.Mutex
-	name string
-	list []provider
+	mu      sync.Mutex
+	name    string
+	list    []provider
+	expires time.Time
+	gen     atomic.Uint64 // engine identity; bumped on pin change, never time-based
 }
 
 func newPin(list []provider) *pin {
@@ -310,7 +318,7 @@ func newPin(list []provider) *pin {
 func (p *pin) current() provider {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.name != "" {
+	if p.name != "" && time.Now().Before(p.expires) {
 		for _, pr := range p.list {
 			if pr.Name == p.name {
 				return pr
@@ -325,15 +333,24 @@ func (p *pin) current() provider {
 
 func (p *pin) markSuccess(name string) {
 	p.mu.Lock()
+	if p.name != name {
+		p.gen.Add(1)
+	}
 	p.name = name
+	p.expires = time.Now().Add(pinTTL)
 	p.mu.Unlock()
 }
+
+// generation reports the current engine identity. Never a TTL or wall clock.
+func (p *pin) generation() uint64 { return p.gen.Load() }
 
 // rotateOnFailure drops the pin and moves to deterministic hash order's head.
 func (p *pin) rotateOnFailure() provider {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.gen.Add(1)
 	p.name = ""
+	p.expires = time.Time{}
 	ordered := rotationOrder(p.list)
 	if len(ordered) == 0 {
 		return provider{}

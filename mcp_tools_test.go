@@ -100,7 +100,7 @@ func TestToolsServerInitializeListAndCall(t *testing.T) {
 func TestToolsDecideTable(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("EVREN_API_KEY", "test-key")
-	const defaultBody = `{"answers":{"gate":{"choice":"chat","confidence":0.95}}}`
+	const defaultBody = `{"answers":{"gate":{"type":"choice","choice":"chat","confidence":0.95}}}`
 	hits := 0
 	status, body := http.StatusOK, defaultBody
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +140,7 @@ func TestToolsDecideTable(t *testing.T) {
 		},
 		{
 			name: "low confidence is an error object", item: "intake.intent", state: "decide intake intent",
-			body: `{"answers":{"gate":{"choice":"other","confidence":0.5}}}`, wantHits: 1,
+			body: `{"answers":{"gate":{"type":"choice","choice":"other","confidence":0.5}}}`, wantHits: 1,
 			want: map[string]any{"error": "model unavailable or answer outside the item's label set"},
 		},
 		{

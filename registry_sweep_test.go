@@ -28,7 +28,7 @@ func TestEveryDecisionPointSteers(t *testing.T) {
 		_, _ = io.ReadAll(r.Body)
 		label, conf := answerFor(r.URL.Query().Get("k"))
 		b, _ := json.Marshal(map[string]any{"answers": map[string]any{"gate": map[string]any{
-			"choice": label, "confidence": conf,
+			"type": "choice", "choice": label, "confidence": conf,
 		}}})
 		_, _ = w.Write(b)
 	}))
@@ -187,7 +187,7 @@ func envelope(id string, gated bool) string {
 
 func envelopeWithState(id, text string) string {
 	b, _ := json.Marshal(map[string]any{
-		"state": text,
+		"state": text, "method": "tools/call",
 		"phase": "before-model", "authority": true, "opt_in": true,
 		"calibrated": true, "need_label": true, "no_scratch": true,
 		"safe": true, "reversible": true, "item": id,

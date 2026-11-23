@@ -34,7 +34,7 @@ func TestAskSOHealthy(t *testing.T) {
 			t.Error("missing x-api-key")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
 	}))
 	defer srv.Close()
 	orig := soEndpoint
@@ -65,7 +65,7 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 
 	// Low confidence -> degraded passthrough.
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.79}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.79}}}`))
 	}))
 	soEndpoint = srv2.URL
 	if d := askSO("x"); d.Choice != "yes" || d.Conf != 0.79 {
@@ -75,7 +75,7 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 
 	// Out-of-range confidence (negative) -> empty decision, never admitted.
 	srvNeg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":-0.5}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":-0.5}}}`))
 	}))
 	soEndpoint = srvNeg.URL
 	if d := askSO("x"); d.Choice != "" || d.Conf != 0 {
@@ -119,7 +119,7 @@ func TestPerItemThreshold(t *testing.T) {
 func TestBelowCutLabelIsKept(t *testing.T) {
 	q := soQuestion{Type: "choice", Criteria: map[string]string{"yes": "admit", "no": "pass"}}
 	withSO(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.768}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.768}}}`))
 	})
 	if d := askSOQ("decide: classify this", q); d.Choice != "yes" || d.Conf != 0.768 {
 		t.Fatalf("parser must keep a below-cut label: %+v", d)
@@ -134,7 +134,7 @@ func TestAskSOStoredProviderKey(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.Write([]byte(`{"answers":{"gate":{"choice":"yes","confidence":0.95}}}`))
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
 	}))
 	defer srv.Close()
 

@@ -77,7 +77,7 @@ func endpoint() string {
 		a := next()
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"answers": map[string]any{"gate": map[string]any{
-				"choice": a.Choice, "confidence": a.Conf,
+				"type": "choice", "choice": a.Choice, "confidence": a.Conf,
 			}},
 		})
 	})

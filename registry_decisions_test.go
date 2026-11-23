@@ -53,7 +53,7 @@ func TestRegistryItemRoutesWithoutModel(t *testing.T) {
 	// gate=false must short-circuit before any HTTP: a broken endpoint here
 	// would show up as a timeout, so a fast local pass proves no call happened.
 	soEndpoint = "http://127.0.0.1:1/v1/systemone"
-	res := route(`{"state":"decide which tool fits this step","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"tools.pick"}`, nil)
+	res := route(`{"state":"decide which tool fits this step","method":"tools/call","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"tools.pick"}`, nil)
 	if res.Reason != "registry-local" {
 		t.Fatalf("gate=false item must pass locally, got %+v", res)
 	}
@@ -76,14 +76,14 @@ func TestRegistryNonProceedCarriesItsAction(t *testing.T) {
 	t.Setenv("EVREN_API_KEY", "test-key")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
-		_, _ = w.Write([]byte(`{"answers":{"gate":{"choice":"chat","confidence":0.95}}}`))
+		_, _ = w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"chat","confidence":0.95}}}`))
 	}))
 	defer srv.Close()
 	origEndpoint, origClient := soEndpoint, soClient
 	soEndpoint, soClient = srv.URL, srv.Client()
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 
-	res := route(`{"state":"classify the intent of: add a retry loop to the fetch helper","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"intake.intent"}`, nil)
+	res := route(`{"state":"classify the intent of: add a retry loop to the fetch helper","method":"tools/call","phase":"before-model","authority":true,"opt_in":true,"calibrated":true,"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"item":"intake.intent"}`, nil)
 	if res.Reason != "registry-nonproceed" {
 		t.Fatalf("reason = %q, want registry-nonproceed (%+v)", res.Reason, res)
 	}
@@ -141,7 +141,7 @@ func TestRegistryItemAdmissionTable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		_, _ = io.ReadAll(r.Body)
-		_, _ = w.Write([]byte(`{"answers":{"gate":{"choice":"build","confidence":0.95}}}`))
+		_, _ = w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"build","confidence":0.95}}}`))
 	}))
 	defer srv.Close()
 	origEndpoint, origClient := soEndpoint, soClient
@@ -153,11 +153,11 @@ func TestRegistryItemAdmissionTable(t *testing.T) {
 		wantDecision, wantReason, wantLabel, wantSteer string
 		wantCalls                                      int
 	}{
-		{"gate false item spends no model call", `{"state":"decide which tool fits this step","item":"tools.pick"}`,
+		{"gate false item spends no model call", `{"state":"decide which tool fits this step","method":"tools/call","item":"tools.pick","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`,
 			decPass, "registry-local", "", "decide locally from the registry item's proceed list; no model call is needed.", 0},
-		{"admitting label does not call a second model", `{"state":"classify the intent of: add a retry loop","item":"intake.intent"}`,
+		{"admitting label does not call a second model", `{"state":"classify the intent of: add a retry loop","method":"tools/call","item":"intake.intent","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`,
 			decPin, "so-admit", "build", "continue", 1},
-		{"unknown item routes the generic question", `{"state":"classify this request","item":"no.such.item"}`,
+		{"unknown item routes the generic question", `{"state":"classify this request","method":"tools/call","item":"no.such.item","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`,
 			decPass, "so-degraded", "", "name the label set and the concrete options, or decide locally; the model returned no usable label.", 1},
 	}
 	for _, tc := range cases {
@@ -249,7 +249,7 @@ func decideWith(t *testing.T, item, label string, conf float64) decideReply {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"answers":{"gate":{"choice":%q,"confidence":%v}}}`, label, conf)))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"answers":{"gate":{"type":"choice","choice":%q,"confidence":%v}}}`, label, conf)))
 	}))
 	defer srv.Close()
 	origEndpoint, origClient := soEndpoint, soClient

@@ -60,16 +60,22 @@ func runToolsServer(in io.Reader, out io.Writer) {
 	lr := &frameLimitReader{r: in}
 	dec := json.NewDecoder(lr)
 	enc := json.NewEncoder(out)
+	d := newDecisionBridge()
 	for {
 		lr.n = 0
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return
+		}
 		var req struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params json.RawMessage `json:"params"`
 		}
-		if err := dec.Decode(&req); err != nil {
-			return
+		if json.Unmarshal(raw, &req) != nil {
+			continue
 		}
+		d.decideFrame(raw)
 		if len(req.ID) == 0 {
 			continue // notification
 		}
@@ -189,12 +195,9 @@ func toolsError(msg string) string {
 	return string(b)
 }
 
-// toolsDecide runs one registry item through the relay's SO path. route() is
-// not reused because routeResult keeps only a coarse confidence bucket (never
-// the label or confidence this tool must return) and the shared decision cache
-// lives on decisionBridge, which this server does not hold; so the same pieces
-// route() calls - buildStateWithCapability, item.question(), askSOQ,
-// item.admits, defaultThreshold - are composed here with route's admission rule.
+// toolsDecide runs one registry item through the single decision hub. The raw
+// SO answer rides on routeResult.LastDecision; routeResult's bucket alone is
+// too coarse for the label/confidence this tool must return.
 func toolsDecide(item, state, phase string, strict bool) string {
 	it, ok := decisionItemFor(item)
 	if !ok {
@@ -204,9 +207,19 @@ func toolsDecide(item, state, phase string, strict bool) string {
 		b, _ := json.Marshal(decideReply{Item: item, Local: true, Steer: "decide locally, no model call"})
 		return string(b)
 	}
-	req, _ := json.Marshal(map[string]any{"state": state, "phase": phase, "item": item})
+	if phase == "" {
+		phase = "before-model"
+	}
+	// shortcut: invoking system1_decide is the explicit capability for this
+	// tool request; add a per-client consent field when tools gain their own
+	// capability envelope.
+	req, _ := json.Marshal(map[string]any{
+		"state": state, "phase": phase, "item": item, "method": "tools/call",
+		"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
+		"authority": true, "calibrated": true, "opt_in": true,
+	})
 	thr := it.threshold(defaultThreshold())
-	d := askSOQ(buildSOState(string(req)), it.question())
+	_, d := newDecisionBridge().decideFull(req)
 	if d.TimedOut {
 		return toolsError("model timeout")
 	}

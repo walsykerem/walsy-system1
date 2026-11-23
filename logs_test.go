@@ -9,7 +9,7 @@ import (
 
 func resetLogs() {
 	logMu.Lock()
-	logRing, logCalls, logReqB, logRespB = nil, 0, 0, 0
+	logRing, logCalls, logReqB, logRespB, logCredits = nil, 0, 0, 0, 0
 	logMu.Unlock()
 }
 

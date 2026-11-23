@@ -32,6 +32,9 @@ func decodeFrame(raw []byte) (frame, error) {
 		Result json.RawMessage `json:"result"`
 		Params json.RawMessage `json:"params"`
 	}
+	if _, err := strictObject(t, 1<<20, nil); err != nil {
+		return frame{}, err
+	}
 	if err := json.Unmarshal(t, &env); err != nil {
 		return frame{}, err
 	}
