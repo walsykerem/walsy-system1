@@ -1,0 +1,63 @@
+name: relay-transcript-hashpin
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  relay-transcript-hashpin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Pin relay harness hashes and shipped-binary claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          transcript=scripts/relay56/TRANSCRIPT.txt
+          k13=scripts/finalgate/main.go
+          for f in "$transcript" "$k13"; do
+            [ -f "$f" ] || { echo "FAIL: missing $f" >&2; exit 1; }
+          done
+
+          check_hash() {
+            local path="$1" cited="$2" actual
+            actual=$(sha256sum "$path" | awk '{print $1}')
+            if [ "$actual" != "$cited" ]; then
+              echo "FAIL: $path sha256=$actual, transcript cites $cited" >&2
+              return 1
+            fi
+            echo "OK: $path sha256=$actual"
+          }
+
+          main_cited=$(sed -n 's/^harness: scripts\/relay56\/main\.go sha256=\([0-9a-f]\{64\}\).*/\1/p' "$transcript")
+          test_cited=$(sed -n 's/^harness test: scripts\/relay56\/main_test\.go sha256=\([0-9a-f]\{64\}\).*/\1/p' "$transcript")
+          [ -n "$main_cited" ] || { echo "FAIL: no main.go harness hash in $transcript" >&2; exit 1; }
+          [ -n "$test_cited" ] || { echo "FAIL: no main_test.go harness hash in $transcript" >&2; exit 1; }
+          check_hash scripts/relay56/main.go "$main_cited"
+          check_hash scripts/relay56/main_test.go "$test_cited"
+
+          if [ -f scripts/relay56/relay56-test ]; then
+            bin_cited=$(sed -n 's/^binary: \([0-9a-f]\{64\}\) relay56-test.*/\1/p' "$transcript")
+            [ -n "$bin_cited" ] || { echo "FAIL: relay56-test present but uncited in $transcript" >&2; exit 1; }
+            check_hash scripts/relay56/relay56-test "$bin_cited"
+          else
+            echo "SKIP: scripts/relay56/relay56-test absent"
+          fi
+
+          shipped=$(sed -n 's/.*shipped \([0-9a-f]\{64\}\) walsy-system1.*/\1/p' "$transcript")
+          k13_sha=$(sed -n 's/.*"K13".*sha256 \([0-9a-f]\{64\}\).*/\1/p' "$k13")
+          [ -n "$shipped" ] || { echo "FAIL: no shipped-binary sha in $transcript" >&2; exit 1; }
+          [ -n "$k13_sha" ] || { echo "FAIL: no sha256 cited in K13 of $k13" >&2; exit 1; }
+          if [ "$shipped" != "$k13_sha" ]; then
+            echo "FAIL: shipped=$shipped K13=$k13_sha" >&2
+            exit 1
+          fi
+          # Build-artifact claim only: never reproduce the shipped binary in CI.
+          echo "OK: shipped-binary claim matches K13 sha256=$shipped"

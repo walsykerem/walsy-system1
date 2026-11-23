@@ -1,0 +1,31 @@
+name: audit-doc-presence
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-doc-presence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Require non-empty round audit docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Round 1 has no audit doc - known gap. Rounds 2,3,4,5,9 are required.
+          for doc in ROUND2-AUDIT.md ROUND3-AUDIT.md ROUND4-AUDIT.md ROUND5-AUDIT.md ROUND9-AUDIT.md; do
+            path="scripts/finalgate/evidence/$doc"
+            if [ ! -s "$path" ]; then
+              echo "FAIL: missing or empty $path" >&2
+              exit 1
+            fi
+            echo "OK: $path ($(wc -c < "$path") bytes)"
+          done

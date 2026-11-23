@@ -1,0 +1,39 @@
+name: atomic-artifact-bundle
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+
+permissions:
+  contents: read
+
+jobs:
+  atomic-artifact-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+      - name: Hermetic core checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+          sha256sum walsy-system1
+          sha256sum -c decision_items.json.sha256.sig
+      - name: Upload one atomic bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: walsy-system1-atomic-bundle
+          if-no-files-found: error
+          path: |
+            walsy-system1
+            walsy-system1.digest.json
+            decision_items.json.sha256.sig
+            scripts/finalgate/evidence/K12.txt
+            scripts/relay56/TRANSCRIPT.txt

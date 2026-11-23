@@ -1,0 +1,41 @@
+name: release-tag-changelog-binding
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-tag-changelog-binding:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Bind release.tag to CHANGELOG and decision_items signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Hermetic: no release gate binary, no System One call, no key.
+          tag=$(cat release.tag)
+          [ -n "$tag" ] || { echo "FAIL: empty release.tag" >&2; exit 1; }
+          if ! grep -Fq -- "$tag" CHANGELOG.md; then
+            echo "FAIL: release.tag $tag absent from CHANGELOG.md" >&2
+            exit 1
+          fi
+          echo "OK: release.tag $tag present in CHANGELOG.md"
+
+          # CHANGELOG.md still lists 1.0.0-fix-7, so substring presence alone
+          # cannot detect a tag stale vs HEAD; bind it to the branch under test.
+          target="${GITHUB_BASE_REF:-${GITHUB_REF_NAME:-}}"
+          if [ -n "$target" ] && [ "$tag" != "$target" ]; then
+            echo "FAIL: release.tag $tag stale vs branch $target" >&2
+            exit 1
+          fi
+          echo "OK: release.tag bound to $target"
+
+          sha256sum -c decision_items.json.sha256.sig

@@ -12,7 +12,6 @@
   {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if or .MsgOK (eq .Msg "LOGS CLEARED")}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms" data-toast-ms="1500"><button class="toast-close" type="button" aria-label="Dismiss notification">&times;</button><span class="toast-text">{{.Msg}}</span></div></div>{{end}}
   {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode .PromptSheetMode)}}
   <header class="topbar">
-    <a class="origin-link" href="/" aria-label="Dashboard origin 127.0.0.1:8787">http://127.0.0.1:8787/</a>
     <a class="brand" href="/" aria-label="WALSY SYSTEM ONE - reload dashboard">WALSY<span class="slash">/</span>SYSTEM ONE</a>
     <nav class="topbar-nav" aria-label="Dashboard actions">
       <a class="topbar-link" href="https://github.com/walsykerem/walsy-system1" target="_blank" rel="noopener noreferrer">GITHUB STAR ME</a>
@@ -332,7 +331,7 @@
       home.location.hash = '#providers';
     });
     // Opening a sheet moves focus into it and makes the background inert so Tab
-    // stays in the dialog; the origin URL remains visible, just not focusable.
+    // stays in the dialog; closing the sheet restores normal tab order.
     function setBackgroundInert(open) {
       var keep = open && open.closest('.sheet-backdrop');
       document.querySelectorAll('header.topbar, main.grid > *').forEach(function (el) {

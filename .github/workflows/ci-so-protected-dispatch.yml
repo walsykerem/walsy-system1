@@ -1,0 +1,31 @@
+name: CI SO-protected dispatch
+
+# A real SO-protected release dispatch also needs repo admin settings
+# (protected environment, required reviewers); YAML alone cannot enforce it.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Guard dispatch ref
+        shell: bash
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [ "$DISPATCH_REF" = "refs/heads/1.0.0-fix-9" ] || {
+            echo "dispatch refused: ref is not refs/heads/1.0.0-fix-9"
+            exit 1
+          }
+          echo "dispatch ref allowed"

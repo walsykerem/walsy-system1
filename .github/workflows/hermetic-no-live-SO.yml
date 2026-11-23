@@ -1,0 +1,40 @@
+name: Hermetic no live SO
+
+on:
+  push:
+    branches:
+      - 1.0.0-fix-9
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Assert no workflow reaches live SO
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Assemble spellings at runtime so this checker cannot match itself.
+          ekey="$(printf 'EV%s' 'REN_API_KEY')"
+          rel="$(printf 'release%s' 'gate')"
+          sfin="$(printf '%s%s' '-so-final-' 'complete')"
+          vsh="$(printf 'scripts/verify.%s' 'sh')"
+          bad=0
+          for f in .github/workflows/*.yml; do
+            for tok in "$ekey" "$rel" "$sfin" "$vsh"; do
+              if grep -qF -- "$tok" "$f"; then
+                echo "forbidden live-SO reference in $f"
+                bad=1
+              fi
+            done
+          done
+          [ "$bad" -eq 0 ] || { echo "hermetic check failed"; exit 1; }
+          echo "no live-SO references in workflows"

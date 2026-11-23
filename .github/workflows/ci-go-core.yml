@@ -1,0 +1,26 @@
+name: Go core (fmt / vet / race)
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: go vet
+        run: CGO_ENABLED=0 go vet ./...
+      - name: go test -race
+        run: CGO_ENABLED=1 go test -race -count=1 ./...

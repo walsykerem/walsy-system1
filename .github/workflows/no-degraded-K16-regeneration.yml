@@ -1,0 +1,37 @@
+name: no-degraded-K16-regeneration
+
+on:
+  push:
+    branches: [1.0.0-fix-9]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-degraded-K16-regeneration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+      - name: Keep honest degraded K16 evidence and 5s enforcing timeout
+        shell: bash
+        run: |
+          set -euo pipefail
+          k16=scripts/finalgate/evidence/K16.txt
+          [ -f "$k16" ] || { echo "FAIL: missing $k16" >&2; exit 1; }
+          if ! grep -Fq '0 admitted, 0 refused, 0 low-conf, 55 degraded, 3 local' "$k16"; then
+            echo "FAIL: $k16 no longer records 0 admitted / 0 refused / 0 low-conf / 55 degraded / 3 local" >&2
+            exit 1
+          fi
+          echo "OK: $k16 retains honest degraded counts"
+
+          line34=$(sed -n '34p' gate.go)
+          if ! printf '%s\n' "$line34" | grep -Fq 'soEnforcingTimeout' \
+             || ! printf '%s\n' "$line34" | grep -Fq '5 * time.Second'; then
+            echo "FAIL: gate.go:34 no longer pins soEnforcingTimeout = 5 * time.Second" >&2
+            exit 1
+          fi
+          echo "OK: gate.go:34 soEnforcingTimeout = 5 * time.Second"

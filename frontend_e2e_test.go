@@ -21,14 +21,10 @@ import (
 	"time"
 )
 
-const feOriginLink = "http://127.0.0.1:8787/"
-
 var (
-	feAnchorRe = regexp.MustCompile(`(?is)<a\b[^>]*>.*?</a>`)
-	feTagRe    = regexp.MustCompile(`(?s)<[^>]*>`)
-	feAttrRe   = regexp.MustCompile(`(?i)\b([a-z-]+)\s*=\s*"([^"]*)"`)
-	feDataRe   = regexp.MustCompile(`data-src="([^"]+)"`)
-	feCSSRe    = regexp.MustCompile(`(?s)([^{}]+)\{([^{}]*)\}`)
+	feAttrRe = regexp.MustCompile(`(?i)\b([a-z-]+)\s*=\s*"([^"]*)"`)
+	feDataRe = regexp.MustCompile(`data-src="([^"]+)"`)
+	feCSSRe  = regexp.MustCompile(`(?s)([^{}]+)\{([^{}]*)\}`)
 )
 
 // feServer starts the production handler on an ephemeral loopback port with
@@ -143,10 +139,6 @@ func feAttr(tag, name string) string {
 	return ""
 }
 
-func feStripTags(s string) string {
-	return strings.TrimSpace(feTagRe.ReplaceAllString(s, ""))
-}
-
 func feCSSRule(css, selector string) string {
 	css = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
 	for _, m := range feCSSRe.FindAllStringSubmatch(css, -1) {
@@ -168,9 +160,8 @@ func feHome(t *testing.T, c *http.Client, srv *httptest.Server) string {
 	return r.body
 }
 
-// The canonical origin link belongs in the always-visible topbar, never in a
-// sheet/backdrop (which is hidden until :target).
-func TestE2EFrontendHomeOriginLinkOutsideSheets(t *testing.T) {
+// The topbar carries brand and actions, never the loopback origin URL.
+func TestE2EFrontendHomeNoOriginLink(t *testing.T) {
 	srv, _ := feServer(t)
 	c := feClient(t)
 	home := feHome(t, c, srv)
@@ -182,21 +173,10 @@ func TestE2EFrontendHomeOriginLinkOutsideSheets(t *testing.T) {
 	if strings.Contains(topbar, "sheet-backdrop") {
 		t.Error("topbar contains a sheet/backdrop")
 	}
-	found := false
-	for _, a := range feAnchorRe.FindAllString(topbar, -1) {
-		href, text := feAttr(a, "href"), feStripTags(a)
-		if !strings.Contains(text, feOriginLink) && href != feOriginLink &&
-			href != strings.TrimSuffix(feOriginLink, "/") {
-			continue
+	for _, gone := range []string{`class="origin-link"`, "http://127.0.0.1:8787/", "Dashboard origin"} {
+		if strings.Contains(topbar, gone) {
+			t.Errorf("topbar still renders %q", gone)
 		}
-		if strings.Contains(a, "sr-only") || strings.Contains(a, "hidden") ||
-			strings.Contains(a, `aria-hidden="true"`) {
-			t.Errorf("origin link is not visible: %s", a)
-		}
-		found = true
-	}
-	if !found {
-		t.Errorf("home topbar has no visible origin link %q", feOriginLink)
 	}
 	if strings.Contains(feAttr(feBlock(home, "<body", ">"), "class"), "sheet-document") {
 		t.Error("home document is rendered as a sheet document")
@@ -589,10 +569,8 @@ func TestE2EFrontendSystemPromptsTransitionDelay(t *testing.T) {
 	}
 }
 
-// The origin link lives in the topbar of the parent document, which stays in
-// the DOM for every #prompts / #logs / #combo-add target and after X/Escape
-// returns to #providers. Sheet-close anchors are distinct from toast-close.
-func TestE2EFrontendSheetCloseAndOriginLinkPersistence(t *testing.T) {
+// Sheet targets and close anchors survive every open/close cycle.
+func TestE2EFrontendSheetCloseTargets(t *testing.T) {
 	srv, _ := feServer(t)
 	c := feClient(t)
 	home := feHome(t, c, srv)
@@ -611,18 +589,10 @@ func TestE2EFrontendSheetCloseAndOriginLinkPersistence(t *testing.T) {
 	if !strings.Contains(home, `'Escape'`) || !strings.Contains(home, "'hashchange'") {
 		t.Error("Escape/hashchange sheet close handler missing")
 	}
-
-	css := feGet(t, c, srv, "/style.css").body
-	for _, m := range feCSSRe.FindAllStringSubmatch(css, -1) {
-		if strings.Contains(m[1], ":target") && strings.Contains(m[1], "origin-link") &&
-			strings.Contains(m[2], "display: none") {
-			t.Errorf(":target rule hides the origin link: %s", m[0])
-		}
-	}
 }
 
 // A sheet is a real modal: hashchange marks the background inert, and closing
-// back to #providers clears it so the origin URL is focusable again.
+// back to #providers clears it so the dashboard is interactive again.
 func TestE2EFrontendSheetBackgroundInert(t *testing.T) {
 	srv, _ := feServer(t)
 	c := feClient(t)

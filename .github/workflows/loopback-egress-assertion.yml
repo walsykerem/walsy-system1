@@ -1,0 +1,53 @@
+name: loopback egress assertion
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 1.0.0-fix-9
+  pull_request:
+
+jobs:
+  loopback-assertion:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run checker simulation offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GOCACHE="$RUNNER_TEMP/checker-sim-gocache"
+          CHECKER_SIM_SKIP_LIVE=1 bash scripts/checker_sim.sh
+
+      - name: Static loopback and trigger assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Static checks only; no service is started.'
+
+          grep -q '"127.0.0.1:"' dashboard.go \
+            || { echo 'FAIL: dashboard.go missing 127.0.0.1 bind'; exit 1; }
+          echo 'OK: dashboard binds 127.0.0.1'
+
+          if grep -rn '0\.0\.0\.0' --include='*.go' .; then
+            echo 'FAIL: wildcard bind found in Go source'
+            exit 1
+          fi
+          echo 'OK: no wildcard bind in Go source'
+
+          if grep -rnE 'pull_request[_]target' .github/workflows/; then
+            echo 'FAIL: PR-target trigger found in workflows'
+            exit 1
+          fi
+          echo 'OK: no PR-target trigger in workflows'

@@ -1,0 +1,76 @@
+name: signed provenance attestation (manual)
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      so_go_gate_id:
+        description: 'Local System One GO gate ID (informational; no live call in CI)'
+        required: true
+        type: string
+      artifact_sha256:
+        description: 'Expected SHA-256 of the hermetic rebuild (64 hex characters)'
+        required: true
+        type: string
+
+jobs:
+  manual-provenance-check:
+    if: github.ref == 'refs/heads/1.0.0-fix-9'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no persisted credentials)
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          SO_GO_GATE_ID: ${{ inputs.so_go_gate_id }}
+          EXPECTED_SHA: ${{ inputs.artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo 'FAIL: artifact_sha256 must be exactly 64 hex characters'
+            exit 1
+          fi
+          echo "SO GO gate id (informational, no SO call): $SO_GO_GATE_ID"
+
+      - name: Hermetic rebuild and digest check
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+          got="$(sha256sum walsy-system1 | awk '{print $1}')"
+          want="$(printf '%s' "$EXPECTED_SHA" | tr 'A-F' 'a-f')"
+          echo "rebuilt sha256 = $got"
+          echo "expected       = $want"
+          [ "$got" = "$want" ] || { echo 'FAIL: rebuilt digest != artifact_sha256'; exit 1; }
+          echo 'OK: digest verified'
+
+      - name: Manual attestation instruction
+        shell: bash
+        run: |
+          cat <<'EOF'
+          DIGEST VERIFIED. No attestation was created and nothing was published.
+
+          An authorized human must create the provenance attestation with their
+          own approval, outside this workflow:
+            1. Re-run the hermetic build on your own trusted machine.
+            2. Confirm its SHA-256 matches the verified digest above.
+            3. Create the signed attestation using the org-approved signer and
+               your own human approval.
+
+          True signed provenance needs an org-level trusted signer configured by
+          org admins. This workflow holds no signing key, uses no repository
+          secret, makes no live System One call, and publishes nothing.
+          EOF

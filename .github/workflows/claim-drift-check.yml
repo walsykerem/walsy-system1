@@ -1,0 +1,39 @@
+name: Claim drift check
+
+on:
+  push:
+    branches:
+      - 1.0.0-fix-9
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  finalgate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test finalgate hermetically
+        shell: bash
+        run: CGO_ENABLED=0 go test -count=1 ./scripts/finalgate/...
+
+      - name: Check cited K12-K16 evidence files exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          refs="$(grep -oE 'scripts/finalgate/evidence/K1[2-6]\.txt' scripts/finalgate/main.go | sort -u)"
+          [ -n "$refs" ] || { echo "no K12-K16 evidence citations found"; exit 1; }
+          while IFS= read -r f; do
+            [ -f "$f" ] || { echo "missing cited evidence: $f"; exit 1; }
+          done <<< "$refs"
+          echo "cited K12-K16 evidence files present"

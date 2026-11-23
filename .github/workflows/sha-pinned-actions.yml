@@ -1,0 +1,38 @@
+name: SHA-pinned actions
+
+on:
+  push:
+    branches:
+      - 1.0.0-fix-9
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Assert every action is SHA-pinned
+        shell: bash
+        run: |
+          set -euo pipefail
+          pat='^[[:space:]]*uses:[[:space:]]+[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-fA-F]{40}([[:space:]]+#[[:space:]]*[^[:space:]]+)?[[:space:]]*$'
+          bad=0
+          for f in .github/workflows/*.yml; do
+            while IFS= read -r hit; do
+              n="${hit%%:*}"
+              line="${hit#*:}"
+              if ! printf '%s\n' "$line" | grep -qE -- "$pat"; then
+                echo "unpinned action at $f:$n"
+                bad=1
+              fi
+            done < <(grep -nE '^[[:space:]]*uses:' "$f" || true)
+          done
+          [ "$bad" -eq 0 ] || { echo "sha-pinning check failed"; exit 1; }
+          echo "all actions pinned"

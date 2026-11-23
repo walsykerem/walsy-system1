@@ -1,0 +1,38 @@
+name: CI evidence freshness
+
+on:
+  push:
+    branches:
+      - 1.0.0-fix-9
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Verify cited binary digest has not drifted
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha='c3369b39540a65b0e292d8860314b9b909b62657ca79137b0b24ce810f3d19a6'
+          src='scripts/finalgate/main.go'
+          tr='scripts/relay56/TRANSCRIPT.txt'
+          k12='scripts/finalgate/evidence/K12.txt'
+          grep -qF -- "$sha" "$src" || { echo "cited digest missing from $src"; exit 1; }
+          grep -qF -- "$sha" "$tr" || { echo "cited digest missing from $tr"; exit 1; }
+          if [ -f walsy-system1 ]; then
+            actual="$(sha256sum walsy-system1 | cut -d ' ' -f 1)"
+            [ "$actual" = "$sha" ] || { echo "digest drift: binary $actual vs cited $sha"; exit 1; }
+            echo "binary digest matches citation"
+          else
+            grep -qF -- "$sha" "$k12" || { echo "cited digest missing from $k12"; exit 1; }
+            echo "binary absent; citation present in $src, $tr, $k12"
+          fi

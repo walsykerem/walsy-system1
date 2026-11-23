@@ -55,24 +55,21 @@ func feuxNoFeedback(t *testing.T, page string) {
 	}
 }
 
-// The origin address must live in the home topbar and float above an open
-// sheet's backdrop, so #prompts / #logs never hide the way back home.
-func TestFEUXOriginLinkAlwaysVisible(t *testing.T) {
+// The dashboard header must not contain the loopback origin URL; the brand
+// stays as the home link and sheets keep no topbar duplication.
+func TestFEUXNoOriginLinkInTopbar(t *testing.T) {
 	page := feuxRender(t, "/")
 	feuxNoFeedback(t, page)
 	feuxHas(t, page, `<header class="topbar">`)
-	feuxHas(t, page, `<a class="origin-link" href="/"`)
-	feuxHas(t, page, `>http://127.0.0.1:8787/</a>`)
-	head := strings.Index(page, `<header class="topbar">`)
-	link := strings.Index(page, `class="origin-link"`)
-	end := strings.Index(page, `</header>`)
-	if !(head >= 0 && head < link && link < end) {
-		t.Fatalf("origin link outside topbar: head=%d link=%d end=%d", head, link, end)
+	for _, gone := range []string{`class="origin-link"`, `http://127.0.0.1:8787/`, `Dashboard origin`} {
+		if strings.Contains(page, gone) {
+			t.Errorf("home still renders %q", gone)
+		}
 	}
 	css := feuxFile(t, "style.css")
-	feuxHas(t, css, `body:has(.sheet-backdrop:target) .origin-link`)
-	feuxHas(t, css, `position: fixed`)
-	feuxHas(t, css, `z-index: calc(var(--z-modal) + 2)`)
+	if strings.Contains(css, ".origin-link") {
+		t.Error("style.css still defines .origin-link")
+	}
 	// Sheets themselves must stay sheet-only (no home topbar duplication).
 	sheet := feuxRender(t, "/ui/prompts")
 	if strings.Contains(sheet, `class="topbar"`) {
@@ -170,11 +167,9 @@ func TestFEUXColdHashLoadAndDangerButton(t *testing.T) {
 	feuxHas(t, feuxRender(t, "/ui/logs"), `class="btn btn-small btn-danger"`)
 }
 
-// On a 375px sheet the fixed origin link sits over the sheet title, so the
-// mobile sheet starts below it and stays within the viewport.
-func TestFEUXMobileSheetOffsetForOriginLink(t *testing.T) {
+// On a 375px sheet keep the panel below the viewport top and within bounds.
+func TestFEUXMobileSheetOffset(t *testing.T) {
 	css := feuxFile(t, "style.css")
-	feuxHas(t, css, `body:has(.sheet-backdrop:target) .origin-link`)
 	i := strings.Index(css, "@media (max-width: 720px)")
 	if i < 0 {
 		t.Fatal("mobile media query missing")
