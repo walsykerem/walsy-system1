@@ -407,8 +407,8 @@ func faRecordsHave(text string, names ...string) bool {
 
 // TestSimFA14 simulates FA14 observability and cost against real handlers:
 // decision response headers, a structured hash/label/latency record,
-// latency_ms + credits in audit.jsonl, the enforcing -32001 alarm, and a
-// read-only feedback surface on the dashboard.
+// latency_ms + credits in audit.jsonl, the enforcing -32001 alarm, and the
+// read-only dashboard header after the feedback surface was removed.
 func TestSimFA14(t *testing.T) {
 	home := fa1314Env(t, "advisory")
 	metrics := faCaptureMetrics(t)
@@ -484,7 +484,7 @@ func TestSimFA14(t *testing.T) {
 		faAdd(t, &out, "FA14.4", "WORKS", fmt.Sprintf("enforcing handler returned -32001: %s", reply.Error.Message))
 	}
 
-	// FA14.5: read-only feedback surface on the real dashboard handler.
+	// FA14.5: feedback UI removed; backend mutation stays rejected; header links served.
 	dh := NewDashboardHandler()
 	getRec := httptest.NewRecorder()
 	dh.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/feedback", nil))
@@ -492,14 +492,19 @@ func TestSimFA14(t *testing.T) {
 	dh.ServeHTTP(postRec, httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/feedback", strings.NewReader(`{"rating":1}`)))
 	pageRec := httptest.NewRecorder()
 	dh.ServeHTTP(pageRec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil))
-	widget := strings.Contains(strings.ToLower(pageRec.Body.String()), "feedback")
+	lowerPage := strings.ToLower(pageRec.Body.String())
+	feedbackGone := !strings.Contains(lowerPage, `id="feedback"`) && !strings.Contains(lowerPage, "feedback (read-only)") && !strings.Contains(lowerPage, "feedback-text")
+	headerOK := strings.Contains(lowerPage, `<a class="brand" href="/"`) &&
+		strings.Contains(lowerPage, `href="https://www.linkedin.com/in/kerem-urhan-225870436/"`) &&
+		strings.Contains(lowerPage, `href="https://github.com/walsykerem/walsy-system1"`) &&
+		strings.Contains(lowerPage, `>github star me</a>`)
 	switch {
-	case getRec.Code == http.StatusOK && widget && postRec.Code >= 400:
-		faAdd(t, &out, "FA14.5", "WORKS", "feedback GET 200, widget rendered, mutation POST rejected")
-	case getRec.Code != http.StatusNotFound || widget:
-		faAdd(t, &out, "FA14.5", "PARTIAL", fmt.Sprintf("feedback GET=%d widget=%v POST=%d", getRec.Code, widget, postRec.Code))
+	case getRec.Code == http.StatusOK && postRec.Code >= 400 && feedbackGone && headerOK:
+		faAdd(t, &out, "FA14.5", "WORKS", "feedback GET 200, mutation POST rejected, feedback UI removed, header links served")
+	case getRec.Code != http.StatusNotFound && feedbackGone && headerOK:
+		faAdd(t, &out, "FA14.5", "PARTIAL", fmt.Sprintf("feedback GET=%d POST=%d feedbackGone=%v headerOK=%v", getRec.Code, postRec.Code, feedbackGone, headerOK))
 	default:
-		faAdd(t, &out, "FA14.5", "BROKEN", fmt.Sprintf("no read-only feedback surface: GET=%d POST=%d widget=%v", getRec.Code, postRec.Code, widget))
+		faAdd(t, &out, "FA14.5", "BROKEN", fmt.Sprintf("feedback UI/header contract broken: GET=%d POST=%d feedbackGone=%v headerOK=%v", getRec.Code, postRec.Code, feedbackGone, headerOK))
 	}
 
 	t.Logf("FA14 OVERALL: %s", faOverall(out))

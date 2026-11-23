@@ -64,9 +64,10 @@ func simPost(t *testing.T, c *http.Client, s *httptest.Server, path string, form
 }
 
 // TestServedMarkupIsSelfContained walks the markup the dashboard actually
-// serves and proves every link stays inside it: no external host, every
-// fragment resolves to an element in the document, every same-origin URL the
-// page points at answers 200 with a document rather than a JSON error.
+// serves and proves every link stays inside it, except the two explicit
+// profile/repo links below; every fragment resolves to an element in the
+// document, every same-origin URL the page points at answers 200 with a
+// document rather than a JSON error.
 func TestServedMarkupIsSelfContained(t *testing.T) {
 	_, c, base := simHome(t)
 	status, home := simGet(t, c, base+"/")
@@ -95,13 +96,20 @@ func TestServedMarkupIsSelfContained(t *testing.T) {
 	}
 
 	routes := map[string]bool{}
+	externalAllow := map[string]bool{
+		"https://www.linkedin.com/in/kerem-urhan-225870436/": true,
+		"https://github.com/walsykerem/walsy-system1":        true,
+	}
 	for _, m := range attrs {
 		kind, val := m[1], m[2]
 		if val == "" {
 			continue
 		}
 		if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") || strings.HasPrefix(val, "//") {
-			t.Errorf("external %s=%q on the home page", kind, val)
+			if kind == "href" && externalAllow[val] {
+				continue
+			}
+			t.Errorf("unexpected external %s=%q on the home page", kind, val)
 			continue
 		}
 		if strings.HasPrefix(val, "#") {
@@ -112,6 +120,9 @@ func TestServedMarkupIsSelfContained(t *testing.T) {
 				t.Errorf("fragment %q has no element in the served document", val)
 			}
 			continue
+		}
+		if kind == "src" && val == "about:blank" {
+			continue // inert sheet placeholder; the real address lives in data-src
 		}
 		if !strings.HasPrefix(val, "/") {
 			t.Errorf("%s=%q is neither a fragment nor same-origin", kind, val)
@@ -401,5 +412,99 @@ func TestRemovalRejectsUnknownName(t *testing.T) {
 	resp, _ := simPost(t, c, s, "/ui/providers/remove", url.Values{"name": {"Ghost Provider"}})
 	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Request.URL.RawQuery, "INVALID+PROVIDER") {
 		t.Fatalf("unknown provider removal reported success: %d %s", resp.StatusCode, resp.Request.URL)
+	}
+}
+
+// The operator status strip stays in the served DOM so machines and assistive
+// tech still read it, but it no longer occupies the top of the dashboard.
+func TestStatusStripIsMachineReadable(t *testing.T) {
+	_, c, base := simHome(t)
+	_, home := simGet(t, c, base+"/")
+	for _, want := range []string{
+		`class="mode-banner sr-only"`, `class="so-status sr-only"`,
+		"SALT-OKUNUR", "READ-ONLY", "SO -32001 DENIAL ALARM",
+		"SO HEALTH:", "DEGRADED MONITORED", "MUTATION TOKEN REJECT",
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("home lost machine-readable status marker %q", want)
+		}
+	}
+	_, css := simGet(t, c, base+"/style.css")
+	if !strings.Contains(css, ".sr-only") || !strings.Contains(css, "clip: rect(0, 0, 0, 0)") {
+		t.Error("style.css lost the visually-hidden status rule")
+	}
+}
+
+// A live ring with tens of thousands of calls made every LOGS open re-render a
+// multi-megabyte table. The sheet must bound rendered rows, not the persisted
+// history or the reported totals.
+func TestLogsSheetCapsRenderedRows(t *testing.T) {
+	_, c, base := simHome(t)
+	resetLogs()
+	path := filepath.Join(mustStateDir(t), "audit.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Repeat(`{"event":"sim","count":"1"}`+"\n", 250)), 0o600); err != nil {
+		t.Fatalf("seed audit rows: %v", err)
+	}
+	code, page := simGet(t, c, base+"/ui/logs")
+	if code != http.StatusOK {
+		t.Fatalf("GET /ui/logs = %d", code)
+	}
+	rows := strings.Count(page, "<tr>")
+	if rows > 201 || rows < 100 {
+		t.Errorf("LOGS rendered %d <tr> for 250 entries, want 101..201", rows)
+	}
+	for _, want := range []string{"200 CALL(S) SINCE", "SHOWING AT MOST 200 ROWS"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("LOGS sheet lost %q", want)
+		}
+	}
+}
+
+// SYSTEM PROMPTS is the task sheet: its purpose and the tracking path must be
+// stated in the sheet that actually receives the task.
+func TestPromptSheetStatesTaskPurpose(t *testing.T) {
+	_, c, base := simHome(t)
+	_, home := simGet(t, c, base+"/")
+	if !strings.Contains(home, `>PROMPTS / TASK</h2>`) {
+		t.Error("home sheet title lost the TASK label")
+	}
+	code, page := simGet(t, c, base+"/ui/prompts")
+	if code != http.StatusOK {
+		t.Fatalf("GET /ui/prompts = %d", code)
+	}
+	for _, want := range []string{"TASK BOARD", "SYSTEM ONE to follow", "tracks them in the receipt chain", "ADD PROMPT"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("prompts sheet lost task purpose marker %q", want)
+		}
+	}
+}
+
+// Sheet frames must not be fetched with the home document: five eager /ui/*
+// iframes made every sheet click wait on sibling renders. The address is kept
+// in data-src and assigned only when that sheet opens.
+func TestSheetFramesLoadOnOpen(t *testing.T) {
+	_, c, base := simHome(t)
+	_, home := simGet(t, c, base+"/")
+	if regexp.MustCompile(`<iframe[^>]*\ssrc="/ui/`).MatchString(home) {
+		t.Error("home still has eager /ui/* iframe sources")
+	}
+	for _, sheet := range []string{
+		`data-src="/ui/combo/add/sheet"`, `data-src="/ui/combo/sheet"`,
+		`data-src="/ui/logs"`, `data-src="/ui/prompts"`,
+	} {
+		if !strings.Contains(home, sheet) {
+			t.Errorf("home lost lazy sheet address %q", sheet)
+		}
+	}
+	for _, want := range []string{
+		`src="about:blank" data-src="/ui/`,
+		"function loadSheetFrame(open)",
+		"frame.getAttribute('data-src')",
+		"frame.removeAttribute('data-src')",
+		"url.searchParams.set('t', String(Date.now()))",
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("home lost lazy-load fragment %q", want)
+		}
 	}
 }

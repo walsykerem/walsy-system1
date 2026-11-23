@@ -513,11 +513,35 @@ func TestSimF6(t *testing.T) {
 		t.Fatalf("dashboard home: status=%d err=%v", status, err)
 	}
 	lowerPage := strings.ToLower(string(page))
-	if !strings.Contains(lowerPage, "feedback") {
-		t.Error("dashboard home has no feedback widget")
+	for _, marker := range []string{`id="feedback"`, "feedback (read-only)", "feedback-text"} {
+		if strings.Contains(lowerPage, marker) {
+			t.Errorf("dashboard home still serves feedback UI marker %q", marker)
+		}
 	}
-	if !strings.Contains(lowerPage, "readonly") && !strings.Contains(lowerPage, "disabled") {
-		t.Error("feedback widget is not read-only")
+	for _, marker := range []string{
+		`<a class="brand" href="/"`,
+		`class="topbar-nav"`,
+		`href="https://www.linkedin.com/in/kerem-urhan-225870436/"`,
+		`href="https://github.com/walsykerem/walsy-system1"`,
+		`>github star me</a>`,
+	} {
+		if !strings.Contains(lowerPage, marker) {
+			t.Errorf("dashboard home missing header marker %q", marker)
+		}
+	}
+	headerStart := strings.Index(lowerPage, `<header class="topbar">`)
+	headerEnd := strings.Index(lowerPage, `</header>`)
+	if headerStart < 0 || headerEnd < 0 || headerEnd < headerStart {
+		t.Fatalf("dashboard home missing topbar header")
+	}
+	header := lowerPage[headerStart:headerEnd]
+	last := -1
+	for _, marker := range []string{`>github star me</a>`, `>linkedin</a>`, `>system prompts</a>`, `>logs</a>`} {
+		at := strings.Index(header, marker)
+		if at <= last {
+			t.Errorf("topbar link %q out of right-to-left order: positions %v", marker, at)
+		}
+		last = at
 	}
 	fbReq, err := http.NewRequest(http.MethodPost, base+"/api/feedback", strings.NewReader(`{"text":"sim"}`))
 	if err != nil {
@@ -531,7 +555,7 @@ func TestSimF6(t *testing.T) {
 	}
 	_ = fbResp.Body.Close()
 	if fbResp.StatusCode >= 200 && fbResp.StatusCode < 300 {
-		t.Errorf("feedback POST accepted with status %d (widget must be read-only)", fbResp.StatusCode)
+		t.Errorf("feedback POST accepted with status %d (feedback mutations must stay rejected)", fbResp.StatusCode)
 	}
 
 	stub.setDelay(300 * time.Millisecond)

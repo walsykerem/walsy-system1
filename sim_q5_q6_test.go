@@ -23,8 +23,8 @@ import (
 // are the ground truth used to check what the report is allowed to claim.
 const (
 	w23_BinaryPath = "/Users/keremurhan/walsy-system1/walsy-system1"
-	w23_BinarySHA  = "38dd7d17bfa9ebeb29cc4661f266eb226ae3971effca631cc7f5ce9c7e88b625"
-	w23_FuncCount  = 11123
+	w23_BinarySHA  = "aeb9598d8ed7b9c42d2c77caab41296363d0a5c3bf902813027327f3013bfb4d"
+	w23_FuncCount  = 11126
 	w23_OldFUNAddr = 0x12ad0
 )
 

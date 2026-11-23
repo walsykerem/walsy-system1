@@ -21,8 +21,8 @@ import (
 // No target binary execution, no live process inspection, no real SO call.
 const (
 	simBinaryPath = "/Users/keremurhan/walsy-system1/walsy-system1"
-	simBinarySHA  = "38dd7d17bfa9ebeb29cc4661f266eb226ae3971effca631cc7f5ce9c7e88b625"
-	simAESOffset  = 0x88d4e0
+	simBinarySHA  = "aeb9598d8ed7b9c42d2c77caab41296363d0a5c3bf902813027327f3013bfb4d"
+	simAESOffset  = 0x8914e0
 	simAESBytes   = "637c777bf26b6fc5"
 	simAESSegment = "__DATA,__noptrdata"
 )

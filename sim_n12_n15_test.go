@@ -91,7 +91,7 @@ func TestSimN12CostMeter(t *testing.T) {
 		t.Fatalf("cost per decision = %v, want 2.5", totals.CostPerCall)
 	}
 	rec := httptest.NewRecorder()
-	uiLogsSheet(rec)
+	uiLogsSheet(rec, nil)
 	if !strings.Contains(rec.Body.String(), "2.5 CREDITS/CALL") {
 		t.Fatalf("dashboard missing cost-per-decision gauge; body=%s", rec.Body.String())
 	}

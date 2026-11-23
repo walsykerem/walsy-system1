@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,6 +67,28 @@ var (
 	logCredits float64
 	logSince   = time.Now()
 )
+
+// clearLogs empties both views of call history: the in-memory ring and the
+// redacted audit file. A missing file is already clear; an existing one is
+// replaced atomically so a concurrent reader never sees a half-truncated JSONL.
+func clearLogs() error {
+	logMu.Lock()
+	logRing = nil
+	logCalls, logReqB, logRespB, logCredits = 0, 0, 0, 0
+	logSince = time.Now()
+	logMu.Unlock()
+	path, err := auditLogPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return writeStateFile(path, nil)
+}
 
 // usageCredits returns numeric credits from an SO usage object, if present.
 func usageCredits(usage map[string]any) (float64, bool) {
@@ -210,6 +234,68 @@ func auditLogRows() ([]auditRow, error) {
 	return rows, nil
 }
 
+// auditLogRowsTail returns at most limit newest rows, reading only the file's
+// tail. The UI opens this on every sheet click; a full scan of a large audit
+// file made the LOGS sheet render megabytes of rows and stall the click.
+func auditLogRowsTail(limit int) ([]auditRow, error) {
+	if limit <= 0 {
+		return []auditRow{}, nil
+	}
+	path, err := auditLogPath()
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []auditRow{}, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("audit file rejected")
+	}
+	const tailBytes = 1 << 20
+	var off int64
+	if st.Size() > tailBytes {
+		off = st.Size() - tailBytes
+	}
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(f, tailBytes))
+	if err != nil {
+		return nil, err
+	}
+	if off > 0 {
+		// Seek may start mid-line; only lines after the first newline are whole.
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			data = data[i+1:]
+		} else {
+			data = nil
+		}
+	}
+	lines := bytes.Split(data, []byte{'\n'})
+	rows := make([]auditRow, 0, limit)
+	for i := len(lines) - 1; i >= 0 && len(rows) < limit; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+		var row auditRow
+		if json.Unmarshal(line, &row) != nil {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
 // auditLogEntries maps redacted audit rows onto the existing LOGS table, so
 // the sheet and GET /api/logs show the same persisted source.
 func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
@@ -240,13 +326,18 @@ func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
 // uiLogsSheet renders the LOGS sheet iframe document. A live process shows its
 // in-memory call ring (with byte/usage detail); on a fresh load it falls back
 // to the persisted audit rows so history survives a restart.
-func uiLogsSheet(w http.ResponseWriter) {
+func uiLogsSheet(w http.ResponseWriter, r *http.Request) {
 	t, entries := logsView()
 	if t.Calls == 0 {
-		rows, err := auditLogRows()
+		rows, err := auditLogRowsTail(logRingSize)
 		if err == nil {
 			t, entries = auditLogEntries(rows)
 		}
 	}
-	renderPage(w, uiPage{Title: "Logs", LogsSheetMode: true, Log: t, Logs: entries, Prompt: loadSystemPrompt()})
+	msg, msgMs := "", 0
+	if r != nil {
+		msg = r.URL.Query().Get("msg")
+		msgMs = uiMsgMs(r)
+	}
+	renderPage(w, uiPage{Title: "Logs", LogsSheetMode: true, Log: t, Logs: entries, Msg: msg, MsgMs: msgMs})
 }

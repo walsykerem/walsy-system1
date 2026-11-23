@@ -60,7 +60,7 @@ func TestItem2APILogsFromAuditJSONL(t *testing.T) {
 	// Same source in the browser: a fresh /ui/logs render exposes the line.
 	resetLogs()
 	page := httptest.NewRecorder()
-	uiLogsSheet(page)
+	uiLogsSheet(page, nil)
 	if !strings.Contains(page.Body.String(), "tools/call") ||
 		strings.Contains(page.Body.String(), secret) {
 		t.Fatalf("browser logs not sourced from audit.jsonl")

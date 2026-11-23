@@ -638,6 +638,16 @@ func NewDashboardHandler() http.Handler {
 				return
 			}
 			writeJSON(w, http.StatusOK, rows)
+		case "/api/logs/clear":
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
+				return
+			}
+			if err := clearLogs(); err != nil {
+				writeAPIError(w, "logs clear failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		case "/api/keytest":
 			if r.Method != http.MethodPost {
 				writeAPIError(w, "method not allowed")
@@ -698,6 +708,29 @@ func NewDashboardHandler() http.Handler {
 			default:
 				writeAPIError(w, "method not allowed")
 			}
+		case "/api/prompts/add":
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
+				return
+			}
+			var req struct {
+				Name string `json:"name"`
+				Text string `json:"text"`
+			}
+			if !decodeRequest(w, r, &req) {
+				writeAPIError(w, "invalid request")
+				return
+			}
+			name, text := strings.TrimSpace(req.Name), strings.TrimSpace(req.Text)
+			if name == "" || text == "" || len(name) > maxPromptName || len(text) > maxSystemPrompt {
+				writeAPIError(w, "invalid request")
+				return
+			}
+			if err := addPrompt(name, text); err != nil {
+				writeAPIError(w, "prompt save failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		case "/api/prompts":
 			switch r.Method {
 			case http.MethodGet:
@@ -908,7 +941,7 @@ func NewDashboardHandler() http.Handler {
 				writeAPIError(w, "method not allowed")
 				return
 			}
-			uiLogsSheet(w)
+			uiLogsSheet(w, r)
 		case "/ui/prompts":
 			if r.Method != http.MethodGet {
 				writeAPIError(w, "method not allowed")

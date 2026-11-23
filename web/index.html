@@ -9,23 +9,24 @@
 <body{{if or .SheetMode .PromptSheetMode}} class="sheet-document"{{end}}>
   <span id="providers" class="anchor" aria-hidden="true"></span>
   {{if .RefreshParent}}<script>if (window.parent !== window) window.parent.postMessage('walsy-refresh|{{urlquery .Msg}}', window.location.origin);</script>{{end}}
-  {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if .MsgOK}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms">{{.Msg}}</div></div>{{end}}
+  {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if or .MsgOK (eq .Msg "LOGS CLEARED")}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms" data-toast-ms="1500"><button class="toast-close" type="button" aria-label="Dismiss notification">&times;</button><span class="toast-text">{{.Msg}}</span></div></div>{{end}}
   {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode .PromptSheetMode)}}
   <header class="topbar">
-    <div class="brand">WALSY<span class="slash">/</span>SYSTEM ONE</div>
-    <a class="topbar-link" href="#logs">LOGS</a>
-    <a class="topbar-link" href="#prompts">PROMPTS</a>
-    <a class="topbar-link" href="#feedback" aria-disabled="true">FEEDBACK (READ-ONLY)</a>
+    <a class="origin-link" href="/" aria-label="Dashboard origin 127.0.0.1:8787">http://127.0.0.1:8787/</a>
+    <a class="brand" href="/" aria-label="WALSY SYSTEM ONE - reload dashboard">WALSY<span class="slash">/</span>SYSTEM ONE</a>
+    <nav class="topbar-nav" aria-label="Dashboard actions">
+      <a class="topbar-link" href="https://github.com/walsykerem/walsy-system1" target="_blank" rel="noopener noreferrer">GITHUB STAR ME</a>
+      <a class="topbar-link" href="https://www.linkedin.com/in/kerem-urhan-225870436/" target="_blank" rel="noopener noreferrer">LINKEDIN</a>
+      <a class="topbar-link" href="#prompts">SYSTEM PROMPTS</a>
+      <a class="topbar-link" href="#logs">LOGS</a>
+    </nav>
   </header>
-  {{if .ReadOnlyBanner}}<p class="mode-banner" role="status">SALT-OKUNUR / {{.SOMode}} / READ-ONLY</p>{{end}}
-  <section id="feedback" class="feedback-panel" aria-label="Feedback (read-only)">
-    <h2>FEEDBACK (READ-ONLY)</h2>
-    <textarea id="feedback-text" readonly disabled>Feedback is read-only.</textarea>
-    <label for="mutation-token">MUTATION TOKEN</label>
-    <input id="mutation-token" name="mutation_token" readonly disabled value="MUTATION TOKEN REJECT">
-    <p class="denial-alarm" role="status">SO -32001 DENIAL ALARM (armed)</p>
-    <p class="so-health" data-mode="{{.SOMode}}">SO HEALTH: {{.SOMode}} / DEGRADED MONITORED</p>
-  </section>
+  {{if .ReadOnlyBanner}}<p class="mode-banner sr-only" role="status">SALT-OKUNUR / {{.SOMode}} / READ-ONLY</p>{{end}}
+  <p class="so-status sr-only" aria-label="System One read-only status">
+    <span class="denial-alarm" role="status">SO -32001 DENIAL ALARM (armed)</span>
+    <span class="so-health" data-mode="{{.SOMode}}">SO HEALTH: {{.SOMode}} / DEGRADED MONITORED</span>
+    <span class="mutation-token">MUTATION TOKEN REJECT</span>
+  </p>
   <!-- Legacy DOM anchors: the keytest rule and prompt editor live in the PROMPTS sheet. -->
   <div class="logs-layout" hidden aria-hidden="true">
     <div class="system-prompt-panel"><textarea id="system-prompt" tabindex="-1"></textarea></div>
@@ -278,7 +279,7 @@
           <h2 class="sheet-title">ADD TO COMBO</h2>
           <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
         </div>
-        <iframe class="sheet-frame" title="Add to combo" src="/ui/combo/add/sheet"></iframe>
+        <iframe class="sheet-frame" title="Add to combo" src="about:blank" data-src="/ui/combo/add/sheet"></iframe>
       </div>
     </div>
 
@@ -289,7 +290,7 @@
           <h2 class="sheet-title">COMBO RUN</h2>
           <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
         </div>
-        <iframe class="sheet-frame" title="Combo run" src="/ui/combo/sheet"></iframe>
+        <iframe class="sheet-frame" title="Combo run" src="about:blank" data-src="/ui/combo/sheet"></iframe>
       </div>
     </div>
 
@@ -300,7 +301,7 @@
           <h2 class="sheet-title">LOGS</h2>
           <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
         </div>
-        <iframe class="sheet-frame" title="Logs" src="/ui/logs"></iframe>
+        <iframe class="sheet-frame" title="Logs" src="about:blank" data-src="/ui/logs"></iframe>
       </div>
     </div>
 
@@ -308,10 +309,10 @@
       <a class="sheet-dismiss" href="#providers" aria-label="Close sheet" tabindex="-1"></a>
       <div class="sheet">
         <div class="sheet-head">
-          <h2 class="sheet-title">PROMPTS</h2>
+          <h2 class="sheet-title">PROMPTS / TASK</h2>
           <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
         </div>
-        <iframe class="sheet-frame" title="Prompts" src="/ui/prompts"></iframe>
+        <iframe class="sheet-frame" title="Prompts" src="about:blank" data-src="/ui/prompts"></iframe>
       </div>
     </div>
 
@@ -369,18 +370,27 @@
         group.hidden = !shown;
       });
     });
-    // Every sheet iframe is rendered once per parent document, so a second
-    // opening would show the state from before the last write. Reload it from
-    // its own src (LOG, provider, combo, add-model) each time the sheet opens.
-    addEventListener('hashchange', function () {
-      var open = document.querySelector(':target');
+    // Sheets start on about:blank so opening the home page fetches no /ui/*
+    // frames. The real address lives in data-src until the first open; after
+    // that src is the loaded address and is reused for nonce refreshes.
+    function loadSheetFrame(open) {
       var frame = open && open.querySelector('iframe.sheet-frame');
       if (!frame) return;
-      // set() keeps one nonce instead of stacking t= on every reopen.
       var url = new URL(frame.getAttribute('src'), location.href);
+      var sheet = frame.getAttribute('data-src');
+      if (sheet) {
+        url = new URL(sheet, location.href);
+        frame.removeAttribute('data-src');
+      }
+      // set() keeps one nonce instead of stacking t= on every reopen.
       url.searchParams.set('t', String(Date.now()));
       frame.src = url.pathname + url.search;
+    }
+    addEventListener('hashchange', function () {
+      loadSheetFrame(document.querySelector(':target'));
     });
+    // A deep link (#logs) arrives with the document, before hashchange fires.
+    if (document.querySelector(':target')) loadSheetFrame(document.querySelector(':target'));
     // Back/forward can restore this document from the browser's bfcache with
     // the lists it had before the last write; no request is made, so no header
     // helps. A restore is the one case where a full reload is the cheap fix.
@@ -405,6 +415,42 @@
         window.location.href = next;
       }
     });
+
+    // Toasts: short lifetime, click-through container, and an X that removes
+    // only its own toast. stopPropagation keeps a sheet's own controls intact.
+    function wireToast(t) {
+      var btn = t.querySelector('.toast-close');
+      if (btn) btn.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation(); t.remove();
+      });
+      var ms = Number(t.getAttribute('data-toast-ms')) || 1500;
+      setTimeout(function () { t.remove(); }, ms);
+    }
+    document.querySelectorAll('.toast').forEach(wireToast);
+    function showToast(msg, ok) {
+      var box = document.querySelector('.toasts');
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'toasts';
+        box.setAttribute('role', 'status');
+        box.setAttribute('aria-live', 'polite');
+        document.body.appendChild(box);
+      }
+      var t = document.createElement('div');
+      var kind = 'toast-';
+      t.className = 'toast ' + kind + (ok ? 'ok' : 'error');
+      t.setAttribute('data-toast-ms', '1500');
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'toast-close';
+      btn.setAttribute('aria-label', 'Dismiss notification');
+      btn.textContent = '\u00d7';
+      var span = document.createElement('span');
+      span.className = 'toast-text';
+      span.textContent = msg;
+      t.appendChild(btn); t.appendChild(span);
+      box.appendChild(t);
+      wireToast(t);
+    }
 
     // Item 3+6: the TEST button is enabled only with a selected model; every
     // fetch is same-origin JSON and never renders a key value.
@@ -448,8 +494,9 @@
 
 {{define "promptsBody"}}
 <div class="sheet-body">
+  <p class="hint">TASK BOARD: save the task you want SYSTEM ONE to follow here. SYSTEM ONE reads saved tasks as a digest on every gated decision and tracks them in the receipt chain. Prompt bodies never leave this machine.</p>
   <div class="logs-layout">
-    <form class="form system-prompt-panel" method="post" action="/ui/prompts/add">
+    <form class="form system-prompt-panel" method="post" action="/ui/prompts/add" data-prompt-add>
       <h3 class="config-title">ADD PROMPT</h3>
       <label>NAME <input type="text" name="name" required maxlength="64" placeholder="prompt name"></label>
       <label>TEXT <textarea id="system-prompt" name="text" required spellcheck="false" placeholder="prompt text"></textarea></label>
@@ -474,17 +521,63 @@
       {{end}}
     </div>
   </div>
+  <script>
+    // Progressive enhancement: the plain POST above still works without JS.
+    // With JS, add through the JSON API and update the list in place.
+    (function () {
+      var form = document.querySelector('[data-prompt-add]');
+      if (!form) return;
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var name = form.querySelector('input[name=name]').value.trim();
+        var text = form.querySelector('textarea[name=text]').value.trim();
+        if (!name || !text) { showToast('NAME AND TEXT REQUIRED', false); return; }
+        var btn = form.querySelector('button[type=submit]');
+        btn.disabled = true;
+        fetch('/api/prompts/add', {
+          method: 'POST', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, text: text })
+        })
+          .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+          .then(function (j) {
+            if (!j.ok) throw new Error('not ok');
+            var layout = form.parentNode;
+            var list = layout.querySelector('.prompt-list ul.list');
+            if (!list) {
+              var empty = layout.querySelector('.prompt-list .empty');
+              if (empty) empty.remove();
+              list = document.createElement('ul'); list.className = 'list';
+              layout.querySelector('.prompt-list').appendChild(list);
+            }
+            var li = document.createElement('li'); li.className = 'item';
+            var label = document.createElement('span'); label.className = 'item-name'; label.textContent = name;
+            li.appendChild(label);
+            var rm = document.createElement('form'); rm.method = 'post'; rm.action = '/ui/prompts/remove';
+            var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'name'; hidden.value = name;
+            var x = document.createElement('button'); x.className = 'btn-remove'; x.type = 'submit'; x.setAttribute('aria-label', 'Remove prompt'); x.textContent = 'X';
+            rm.appendChild(hidden); rm.appendChild(x); li.appendChild(rm);
+            list.insertBefore(li, list.firstChild);
+            form.reset();
+            showToast('PROMPT ADDED', true);
+          })
+          .catch(function () { showToast('PROMPT ADD FAILED', false); })
+          .finally(function () { btn.disabled = false; });
+      });
+    })();
+  </script>
 </div>
 {{end}}
 
 {{define "logsBody"}}
 <div class="sheet-body">
   <h1 class="panel-title">LOGS</h1>
-  <p class="sheet-note">{{.Log.Calls}} CALL(S) SINCE <time data-ts="{{.Log.SinceTS}}">{{.Log.Since}}</time> - {{.Log.ReqB}} B SENT / {{.Log.RespB}} B RECEIVED. NEWEST FIRST, IN MEMORY ONLY.{{if .Log.CostPerCall}} - {{.Log.CostPerCall}} CREDITS/CALL{{end}}</p>
+  <p class="sheet-note">{{.Log.Calls}} CALL(S) SINCE <time data-ts="{{.Log.SinceTS}}">{{.Log.Since}}</time> - {{.Log.ReqB}} B SENT / {{.Log.RespB}} B RECEIVED. NEWEST FIRST, IN MEMORY ONLY. SHOWING AT MOST 200 ROWS.{{if .Log.CostPerCall}} - {{.Log.CostPerCall}} CREDITS/CALL{{end}}</p>
+  <div class="sheet-actions"><button class="btn btn-small btn-danger" type="button" data-action="logs-clear">CLEAR LOGS</button></div>
   <table class="log-table">
     <thead><tr><th>TIME</th><th>KIND</th><th>OUTCOME</th><th>MS</th><th>SENT</th><th>RECV</th><th>USAGE</th></tr></thead>
     <tbody>
-      {{range .Logs}}<tr><td><time data-ts="{{.TS}}">{{.At}}</time></td><td>{{.Kind}}</td><td>{{.Outcome}}</td><td>{{.MS}}</td><td>{{.ReqB}}</td><td>{{.RespB}}</td><td class="log-usage">{{.Usage}}</td></tr>
+      {{range $i, $entry := .Logs}}{{if lt $i 200}}<tr><td><time data-ts="{{$entry.TS}}">{{$entry.At}}</time></td><td>{{$entry.Kind}}</td><td>{{$entry.Outcome}}</td><td>{{$entry.MS}}</td><td>{{$entry.ReqB}}</td><td>{{$entry.RespB}}</td><td class="log-usage">{{$entry.Usage}}</td></tr>{{end}}
       {{else}}<tr><td colspan="7">NO CALLS YET.</td></tr>{{end}}
     </tbody>
   </table>
@@ -495,6 +588,29 @@
       var d = new Date(Number(el.getAttribute('data-ts')));
       el.textContent = d.toLocaleTimeString([], { hour12: false });
       el.title = d.toString();
+    });
+    // Confirm the destructive clear, then replace rows locally. The API clears
+    // the in-memory ring and audit.jsonl; it cannot promise future calls away.
+    var clearBtn = document.querySelector('[data-action="logs-clear"]');
+    if (clearBtn) clearBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (!window.confirm('Clear all logs? This cannot be undone.')) return;
+      clearBtn.disabled = true;
+      fetch('/api/logs/clear', { method: 'POST', cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+        .then(function (j) {
+          if (!j.ok) throw new Error('not ok');
+          var body = document.querySelector('.log-table tbody');
+          if (body) {
+            var row = document.createElement('tr');
+            var cell = document.createElement('td');
+            cell.colSpan = 7; cell.textContent = 'NO CALLS YET.';
+            row.appendChild(cell); body.replaceChildren(row);
+          }
+          showToast('LOGS CLEARED', true);
+        })
+        .catch(function () { showToast('LOGS CLEAR FAILED', false); })
+        .finally(function () { clearBtn.disabled = false; });
     });
   </script>
 </div>
@@ -509,7 +625,7 @@
       <a class="sheet-close" href="#providers" aria-label="Close sheet">X</a>
     </div>
     <div class="sheet-body">
-      <iframe class="sheet-frame" title="{{.Name}}" src="/ui/providers/sheet?name={{urlquery .Name}}"></iframe>
+      <iframe class="sheet-frame" title="{{.Name}}" src="about:blank" data-src="/ui/providers/sheet?name={{urlquery .Name}}"></iframe>
     </div>
   </div>
 </div>

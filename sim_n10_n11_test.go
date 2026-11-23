@@ -228,7 +228,7 @@ func TestSimN11_w09OperatorFeedback(t *testing.T) {
 		t.Fatalf("/api/health not JSON: %v %s", err, healthBody)
 	}
 
-	// Mutation-token probe: a feedback surface must exist and reject the token.
+	// Mutation-token probe: the read-only status strip stays and every mutation route rejects the token.
 	rejects := map[string]string{}
 	for _, path := range []string{"/api/feedback", "/ui/feedback", "/api/feedback/token", "/api/operator/feedback"} {
 		st, body := w09_postJSON(t, c, dash.URL+path, `{"token":"w09-MUTATE","value":1}`)
@@ -301,7 +301,7 @@ func TestSimN11_w09OperatorFeedback(t *testing.T) {
 			t.Errorf("BROKEN: mutation token input served but no REJECT response; %s", forms.String())
 			return
 		}
-		t.Errorf("BROKEN: no mutation-token feedback surface served; %s", forms.String())
+		t.Errorf("BROKEN: no mutation-token status marker served; %s", forms.String())
 	})
 }
 
