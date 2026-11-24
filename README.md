@@ -41,6 +41,21 @@ Paste the result under `mcp` in the client config. Shape:
 `-transport stdio`, then the upstream command verbatim. The snippet contains
 process wiring only — no API keys, tokens, or other secrets.
 
+### Dashboard with the MCP server
+
+`-dashboard-listen <port>` serves the loopback dashboard from the same process
+as the MCP transport, so the dashboard comes up when the client starts the MCP
+server and goes down with it. No login item or launch agent is needed:
+
+```json
+{"mcp":{"servers":{"system1":{"type":"local","command":["/abs/path/walsy-system1","-transport","tools","-dashboard-listen","8787"]}}}}
+```
+
+The dashboard stays on `127.0.0.1` only. If the port is already taken the
+dashboard is skipped with a note on stderr, and the MCP transport keeps
+serving; `-transport dashboard` ignores the flag and keeps its own `-listen`
+port.
+
 ## System One mode
 
 - `advisory` (default): fail-open. In-scope JSON-RPC requests (`initialize`,

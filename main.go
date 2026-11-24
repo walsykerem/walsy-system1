@@ -19,6 +19,7 @@ var (
 	flagUpstream    = flag.String("upstream", "", "upstream unix socket path (unix) or http(s) URL (http)")
 	flagPrintConfig = flag.Bool("print-client-config", false, "print OpenCode MCP client config and exit")
 	flagDashboard   = flag.Bool("dashboard", false, "run loopback combo dashboard")
+	flagDashboardIn = flag.String("dashboard-listen", "", "also serve the loopback dashboard on this port, so it comes up with the MCP server")
 )
 
 func main() {
@@ -33,6 +34,11 @@ func main() {
 	if err := soModeStartupError(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+	// The dashboard rides along with the MCP server instead of a boot agent:
+	// it comes up when the client starts the transport and goes down with it.
+	if *flagDashboardIn != "" && *flagTransport != "dashboard" {
+		startDashboardWithMCP(*flagDashboardIn)
 	}
 
 	switch *flagTransport {

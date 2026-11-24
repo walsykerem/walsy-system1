@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 )
@@ -1041,13 +1042,38 @@ func writeNotFound(w http.ResponseWriter, r *http.Request) {
 // the MCP HTTP server, so a slow client cannot pin a connection. The write
 // deadline outlasts buildTimeout or a slow build's status page is cut off.
 func RunDashboard(addr string) error {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strings.TrimPrefix(addr, ":"))
+	if err != nil {
+		return err
+	}
+	return serveDashboard(ln)
+}
+
+// serveDashboard serves the dashboard on an already bound loopback listener.
+func serveDashboard(ln net.Listener) error {
 	srv := &http.Server{
-		Addr:              "127.0.0.1:" + strings.TrimPrefix(addr, ":"),
+		Addr:              ln.Addr().String(),
 		Handler:           NewDashboardHandler(),
 		ReadHeaderTimeout: httpReadHeaderTimeout,
 		ReadTimeout:       httpReadTimeout,
 		WriteTimeout:      buildTimeout + httpWriteTimeout,
 		IdleTimeout:       httpIdleTimeout,
 	}
-	return srv.ListenAndServe()
+	return srv.Serve(ln)
+}
+
+// startDashboardWithMCP serves the dashboard next to an MCP transport, so the
+// system comes up with the MCP server and goes down with it. A port that is
+// already served is not fatal: another instance of the system is up.
+func startDashboardWithMCP(port string) {
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strings.TrimPrefix(port, ":"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "dashboard: not started:", err)
+		return
+	}
+	go func() {
+		if err := serveDashboard(ln); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintln(os.Stderr, "dashboard:", err)
+		}
+	}()
 }
