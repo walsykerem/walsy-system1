@@ -36,6 +36,7 @@ var bakedProviders = [...]provider{
 	{Name: "Command Code", Base: "https://api.commandcode.ai/provider/v1/systemone", KeyEnv: "COMMANDCODE_API_KEY"},
 	{Name: "Nace Drex", Base: "https://console.nace.ai/v1/systemone"},
 	{Name: "Ollama Local", Base: "http://localhost:11434/v1/systemone"},
+	{Name: "Flide Local", Base: "http://127.0.0.1:8788/v1/systemone"},
 	{Name: "Cloudflare Clef", Base: "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/run/@cf/cloudflare/clef"},
 	{Name: "OpenCode Zen", Base: "https://opencode.ai/zen/v1/systemone"},
 }
@@ -305,12 +306,27 @@ const soProviderOverrideDenied = "so-provider-override-denied"
 // soProviderOverrideDeniedLine reports a registry line that would replace a
 // baked provider or its SO credential in enforcing mode.
 func soProviderOverrideDeniedLine(p provider) bool {
+	if strings.EqualFold(p.Base, bakedBase("Evren System One")) || strings.EqualFold(p.KeyEnv, "EVREN_API_KEY") {
+		return true
+	}
 	for _, b := range bakedProviders {
 		if strings.EqualFold(b.Name, p.Name) {
-			return true
+			return !(b.Name == "Flide Local" && bakedEquivalentLoopback(b, p))
 		}
 	}
-	return strings.EqualFold(p.Base, bakedBase("Evren System One")) || strings.EqualFold(p.KeyEnv, "EVREN_API_KEY")
+	return false
+}
+
+// bakedEquivalentLoopback lets a baked loopback slot change port without
+// leaving loopback or changing the API path, so it stays a baked-equivalent pin.
+func bakedEquivalentLoopback(b, p provider) bool {
+	bu, err := url.Parse(b.Base)
+	if err != nil || bu.User != nil || !isLoopbackHost(bu.Hostname()) {
+		return false
+	}
+	pu, err := url.Parse(p.Base)
+	return err == nil && pu.User == nil && isLoopbackHost(pu.Hostname()) &&
+		strings.EqualFold(pu.Scheme, bu.Scheme) && pu.Path == bu.Path
 }
 
 func bakedBase(name string) string {

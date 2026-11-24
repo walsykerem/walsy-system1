@@ -63,8 +63,8 @@ func TestSimN28SOGuardAndLatency(t *testing.T) {
 			if err != nil || r.Method != http.MethodPost {
 				t.Errorf("bad SO request: method=%s err=%v", r.Method, err)
 			}
-			if r.Header.Get("x-api-key") != "sim-n28-test-key" {
-				t.Error("SO stub missing x-api-key")
+			if r.Header.Get("x-api-key") != "" {
+				t.Error("loopback SO stub must not receive x-api-key")
 			}
 			if !bytes.Contains(body, []byte(`"questions":{`)) || !bytes.Contains(body, []byte(`"model":"clef"`)) {
 				t.Errorf("unexpected SO wire body: %s", body)

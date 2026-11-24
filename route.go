@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+	"unicode/utf8"
 )
 
 // Typed decisions only. No prose ever enters routeResult.Decision.
@@ -62,7 +63,8 @@ type stateEnvelope struct {
 // Omission is mechanical: the audit of this very state names what was left
 // undone (omitted) and which named risks stayed unverified. A caller cannot
 // claim an empty omission list by omitting it from the request.
-// Over-cap input is rejected in full (no truncation, no partial state).
+// Over-cap state is distilled to bounded verbatim Evidence with a mechanical
+// omission marker; what cannot fit verbatim is rejected by marshalSOState.
 func soStateFromEnvelope(e stateEnvelope) (string, error) {
 	skel := StateSkeleton{
 		State: e.State, Method: e.Method, NeedLabel: e.NeedLabel, NoScratch: e.NoScratch,
@@ -94,6 +96,11 @@ func soStateFromEnvelope(e stateEnvelope) (string, error) {
 		return "", err
 	}
 	skel.Prompts = ref.Prompts
+	if utf8.RuneCountInString(e.State) > maxSOStateChars {
+		if d, ok := distillSOState(skel); ok {
+			skel = d
+		}
+	}
 	return marshalSOState(skel)
 }
 
@@ -136,8 +143,13 @@ func cleanUser(v any) any {
 	}
 }
 
+// credentialWithheld is the only replacement written to outbound text; the
+// raw shape never survives, and no secret is echoed.
+const credentialWithheld = "[withheld: credential]"
+
 // scrubText handles non-JSON user text: strip key=value secrets and Bearer
-// tokens, never guess at structure.
+// tokens, then replace credential-shaped spans with the write gate's own
+// matchers (diffSecretPatterns), never guess at structure.
 func scrubText(s string) string {
 	fields := strings.Fields(s)
 	out := make([]string, 0, len(fields))
@@ -166,7 +178,14 @@ func scrubText(s string) string {
 		}
 		out = append(out, f)
 	}
-	return strings.Join(out, " ")
+	joined := strings.Join(out, " ")
+	if diffSecretKind(joined) == "" {
+		return joined
+	}
+	for _, re := range diffSecretPatterns {
+		joined = re.ReplaceAllString(joined, credentialWithheld)
+	}
+	return joined
 }
 
 func boolField(obj map[string]any, keys ...string) bool {

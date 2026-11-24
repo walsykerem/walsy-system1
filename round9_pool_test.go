@@ -33,8 +33,8 @@ func TestRound9ComboDecisionFailover(t *testing.T) {
 			Model string `json:"model"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if got := r.Header.Get("x-api-key"); got != "good-key" || body.Model != "model-good" {
-			t.Errorf("candidate key/model = %q/%q, want good-key/model-good", got, body.Model)
+		if got := r.Header.Get("x-api-key"); got != "" || body.Model != "model-good" {
+			t.Errorf("candidate key/model = %q/%q, want no loopback key/model-good", got, body.Model)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))

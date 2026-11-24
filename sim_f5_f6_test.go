@@ -387,8 +387,8 @@ func TestSimF5(t *testing.T) {
 	if bytes.Contains(posts[0].body, []byte(w03_promptBody)) {
 		t.Error("SO POST leaked a prompt body")
 	}
-	if posts[0].key != w03_testKey {
-		t.Errorf("SO x-api-key = %q, want hermetic test key", posts[0].key)
+	if posts[0].key != "" {
+		t.Errorf("loopback SO x-api-key = %q, want none", posts[0].key)
 	}
 	audit := w03_audit(home)
 	for _, want := range []string{`"event":"call"`, `"latency_ms"`, `"credits":"2"`} {

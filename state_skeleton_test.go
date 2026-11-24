@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -149,5 +151,60 @@ func TestStateSkeletonDecisionShape(t *testing.T) {
 	// An envelope with no decision shape still serializes to an empty object.
 	if empty, err := soStateFromEnvelope(stateEnvelope{}); err != nil || empty != "{}" {
 		t.Fatalf("empty shape = %q, %v; want {}", empty, err)
+	}
+}
+
+// Over-cap state is distilled, not dropped: verbatim keyword lines first,
+// bounded by the same cap, with a mechanical omission marker. Lines that cannot
+// fit verbatim still take the typed truncation error.
+func TestMarshalSOStateDistillsOverCapVerbatim(t *testing.T) {
+	lines := make([]string, 80)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %03d: %s", i, strings.Repeat("detail", 12))
+	}
+	lines[40] = "decide: classify this risk"
+	b, err := marshalSOState(StateSkeleton{State: strings.Join(lines, "\n"), Method: "tools/call"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if utf8.RuneCountInString(b) > maxSOStateChars {
+		t.Fatalf("distilled payload = %d chars: %s", utf8.RuneCountInString(b), b)
+	}
+	var obj map[string]any
+	if json.Unmarshal([]byte(b), &obj) != nil {
+		t.Fatalf("bad json: %s", b)
+	}
+	if _, ok := obj["state"]; ok {
+		t.Fatalf("over-cap state survived: %s", b)
+	}
+	ev, ok := obj["evidence"].([]any)
+	if !ok || len(ev) == 0 {
+		t.Fatalf("evidence missing: %s", b)
+	}
+	if ev[0] != "decide: classify this risk" {
+		t.Fatalf("keyword line not first: %v", ev[0])
+	}
+	om, ok := obj["omitted"].([]any)
+	if !ok {
+		t.Fatalf("omitted missing: %s", b)
+	}
+	marked := false
+	for _, v := range om {
+		if v == soOmittedMarker {
+			marked = true
+		}
+	}
+	if !marked {
+		t.Fatalf("mechanical omission marker missing: %s", b)
+	}
+
+	small := StateSkeleton{State: "decide: small", Method: "tools/call"}
+	want, _ := json.Marshal(small)
+	got, err := marshalSOState(small)
+	if err != nil || got != string(want) {
+		t.Fatalf("under-cap payload changed: %q, %v; want %s", got, err, want)
+	}
+	if _, err := marshalSOState(StateSkeleton{State: strings.Repeat("y", maxSOStateChars)}); !errors.Is(err, ErrStateTruncated) {
+		t.Fatalf("over-cap without usable line: %v, want ErrStateTruncated", err)
 	}
 }

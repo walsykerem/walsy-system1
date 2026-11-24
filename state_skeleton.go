@@ -94,12 +94,98 @@ func capSOState(s string) (string, error) {
 	return s, nil
 }
 
+const (
+	// soOmittedMarker is mechanical: only the cap path writes it, never a caller.
+	soOmittedMarker = "mechanical: omitted over-cap state lines"
+	// shortcut: 256-rune verbatim lines; raise when long single-line states must survive.
+	maxSOEvidenceLineChars = 256
+)
+
+// distillSOState keeps verbatim lines under the same cap: keyword hits first,
+// then leading lines. It clears the bulky fields and records the mechanical
+// omission; no new wire field is introduced. A line that cannot fit verbatim is
+// dropped, never cut mid-token.
+func distillSOState(s StateSkeleton) (StateSkeleton, bool) {
+	for _, o := range s.Omitted {
+		if o == soOmittedMarker {
+			return s, true
+		}
+	}
+	var lines []string
+	add := func(text string) {
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSuffix(line, "\r")
+			if line == "" || utf8.RuneCountInString(line) > maxSOEvidenceLineChars {
+				continue
+			}
+			lines = append(lines, line)
+		}
+	}
+	add(s.State)
+	add(s.Request)
+	for _, c := range s.Criteria {
+		add(c)
+	}
+	for _, e := range s.Evidence {
+		add(e)
+	}
+	if len(lines) == 0 {
+		return StateSkeleton{}, false
+	}
+	seen := make(map[string]bool, len(lines))
+	var ordered []string
+	for pass := 0; pass < 2; pass++ {
+		for _, line := range lines {
+			if seen[line] || (pass == 0) != isLabelShaped(line) {
+				continue
+			}
+			seen[line] = true
+			ordered = append(ordered, line)
+		}
+	}
+	out := s
+	out.State, out.Request, out.Criteria, out.Evidence = "", "", nil, nil
+	out.Omitted = append(append([]string(nil), s.Omitted...), soOmittedMarker)
+	for _, line := range ordered {
+		out.Evidence = append(out.Evidence, line)
+		b, err := json.Marshal(out)
+		if err == nil && utf8.RuneCountInString(string(b)) <= maxSOStateChars {
+			continue
+		}
+		out.Evidence = out.Evidence[:len(out.Evidence)-1]
+		break
+	}
+	if len(out.Evidence) == 0 {
+		return StateSkeleton{}, false
+	}
+	return out, true
+}
+
 // marshalSOState serializes the skeleton and enforces the cap in one step, so a
-// caller cannot POST an uncapped payload. It never emits a prompt body.
+// caller cannot POST an uncapped payload. Over-cap input is distilled into
+// bounded verbatim Evidence with a mechanical omission marker; if nothing fits,
+// capSOState's error stands. It never emits a prompt body.
 func marshalSOState(s StateSkeleton) (string, error) {
 	b, err := json.Marshal(s)
 	if err != nil {
 		return "", err
 	}
-	return capSOState(string(b))
+	payload := string(b)
+	_, overErr := capSOState(payload)
+	if overErr == nil {
+		return payload, nil
+	}
+	d, ok := distillSOState(s)
+	if !ok {
+		return "", overErr
+	}
+	b, err = json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+	payload = string(b)
+	if _, err := capSOState(payload); err != nil {
+		return "", err
+	}
+	return payload, nil
 }

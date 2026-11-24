@@ -101,15 +101,20 @@ rendered.
 - `GET /ui/combo/sheet` — minimal iframe document with the RUN COMBO form.
   `POST /ui/combo/run` renders the ordered probe result inside that iframe; the
   home page never navigates and there is no standalone result page.
-All nine built-in providers ship a documented default endpoint (OpenRouter,
+All ten built-in providers ship a documented default endpoint (OpenRouter,
 Ollama Cloud, OpenCode Zen, System One variants, Nace Drex, Ollama Local,
-Cloudflare Clef). Cloudflare Clef is the Workers AI model `@cf/cloudflare/clef`
+Flide Local, Cloudflare Clef). Cloudflare Clef is the Workers AI model `@cf/cloudflare/clef`
 (https://developers.cloudflare.com/workers-ai/models/clef/): it takes the same
 `state`/`questions` body, has no dedicated SDK (Workers AI binding `env.AI.run`
 or plain REST), and its template contains `YOUR_ACCOUNT_ID`; replace it in
 the sheet. Every non-demo sheet has a SYSTEM ONE CONFIG block: default
 endpoint, GET API KEY link, editable BASE URL with SAVE ENDPOINT and a
 conditional RESET.
+
+`Flide Local` defaults to `http://127.0.0.1:8788/v1/systemone`. Point it at
+your own Flide by saving that sheet's BASE URL with your loopback port, adding
+model `jev-latest` through the existing MODEL/COMBO controls, and running the
+combo; no key is needed on loopback and no extra flag or client change is used.
 Each sheet has a KEY TEST block: TEST sits left of REMOVE for every stored key
 and probes the configured endpoint with coarse results only. Feedback from all
 sheet forms renders inside the open sheet. While a sheet is open the page scroll

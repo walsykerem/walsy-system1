@@ -94,10 +94,10 @@ func TestHTTPNoSecretLogging(t *testing.T) {
 	metricOut = &buf
 	defer func() { metricOut = orig }()
 	t.Setenv("EVREN_API_KEY", "test-key")
-	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"token":"SECRET-TOKEN","conf":0.95,"cost":123,"email":"a@b.com","protocolVersion":"2025-06-18","capabilities":{}}}` + "\n")
+	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"token":"SECRET-TOKEN","conf":0.95,"cost":918273645,"email":"a@b.com","protocolVersion":"2025-06-18","capabilities":{}}}` + "\n")
 	rec := httptest.NewRecorder()
 	mcpHTTPHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(frame)))
-	if bytes.Contains(buf.Bytes(), []byte("SECRET-TOKEN")) || bytes.Contains(buf.Bytes(), []byte("a@b.com")) || bytes.Contains(buf.Bytes(), []byte("123")) || bytes.Contains(buf.Bytes(), []byte("0.95")) {
+	if bytes.Contains(buf.Bytes(), []byte("SECRET-TOKEN")) || bytes.Contains(buf.Bytes(), []byte("a@b.com")) || bytes.Contains(buf.Bytes(), []byte("918273645")) || bytes.Contains(buf.Bytes(), []byte("0.95")) {
 		t.Fatalf("secret leaked in metrics: %q", buf.String())
 	}
 }

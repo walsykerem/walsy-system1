@@ -369,8 +369,8 @@ func w33_CheckWire(t *testing.T, s *w33_Stub) {
 		if h.method != http.MethodPost || h.path != "/v1/systemone" {
 			t.Errorf("hit %d = %s %s, want POST /v1/systemone", i, h.method, h.path)
 		}
-		if h.key != w33_Key {
-			t.Errorf("hit %d x-api-key = %q, want %q", i, h.key, w33_Key)
+		if h.key != "" {
+			t.Errorf("hit %d loopback x-api-key = %q, want none", i, h.key)
 		}
 		if !bytes.Contains(h.body, []byte(`"state"`)) {
 			t.Errorf("hit %d body has no state: %s", i, h.body)

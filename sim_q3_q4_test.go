@@ -204,8 +204,8 @@ func TestSimQ4(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("SO method = %s", r.Method)
 		}
-		if r.Header.Get("x-api-key") != "sim-not-a-secret" {
-			t.Error("SO stub got no test key")
+		if r.Header.Get("x-api-key") != "" {
+			t.Error("loopback SO stub got x-api-key")
 		}
 		var req struct {
 			Model     string `json:"model"`

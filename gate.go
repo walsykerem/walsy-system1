@@ -442,6 +442,20 @@ func bakedProviderBase(base string) bool {
 	return false
 }
 
+// bakedEquivalentProvider keeps a baked loopback slot usable after a local port
+// change; a remote or renamed slot still needs an exact baked base.
+func bakedEquivalentProvider(p provider) bool {
+	if bakedProviderBase(p.Base) {
+		return true
+	}
+	for i := range bakedProviders {
+		if strings.EqualFold(bakedProviders[i].Name, p.Name) && bakedEquivalentLoopback(bakedProviders[i], p) {
+			return true
+		}
+	}
+	return false
+}
+
 // soPool returns the operator's combo first, then the pinned System One
 // endpoint as the backstop. The pool only grows on the default endpoint: an
 // explicit override pins one platform and keeps stubbed tests hermetic.
@@ -469,7 +483,7 @@ func soPool() []soCandidate {
 			}
 			// Enforcing pins the oracle: only baked-equivalent bases may carry a
 			// key, so a registry edit cannot route it to an unvetted endpoint.
-			if enforcing && !bakedProviderBase(p.Base) {
+			if enforcing && !bakedEquivalentProvider(*p) {
 				continue
 			}
 			key := ""
@@ -479,7 +493,9 @@ func soPool() []soCandidate {
 			if key == "" {
 				key = os.Getenv(p.KeyEnv)
 			}
-			if key == "" {
+			// J1: a loopback judge needs no key; a remote one without a key
+			// must never enter the pool.
+			if key == "" && !isLoopbackBase(p.Base) {
 				continue
 			}
 			model := s.Model
@@ -591,7 +607,10 @@ func soAskCandidate(ctx context.Context, cand soCandidate, state string, q soQue
 		return soDecision{}, false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", cand.Key)
+	// J1: a loopback judge needs no credential; keep the key on this machine.
+	if !isLoopbackBase(cand.Base) {
+		req.Header.Set("x-api-key", cand.Key)
+	}
 
 	start := time.Now()
 	outcome, respB := "error", 0
@@ -624,6 +643,11 @@ func soAskCandidate(ctx context.Context, cand soCandidate, state string, q soQue
 	if resp.StatusCode != http.StatusOK {
 		outcome = fmt.Sprintf("http_%d", resp.StatusCode)
 		return soDecision{}, false
+	}
+	// F1: audit-only correlation. Only the request id is recorded;
+	// x-flide-server-time-ms never reaches disk, a decision or a log.
+	if id := resp.Header.Get("x-typesafe-request-id"); id != "" {
+		routerAudit("gate", "response_id", id)
 	}
 	if rerr != nil {
 		return soDecision{}, false

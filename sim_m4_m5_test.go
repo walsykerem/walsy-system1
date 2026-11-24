@@ -285,25 +285,25 @@ func TestSimM4EvidenceStorage(t *testing.T) {
 	}
 
 	n, chainOK := w20_chain(t, home)
-	keySeen := false
+	keyLeaked := false
 	so.mu.Lock()
 	for _, k := range so.keys {
-		if k == w20_key {
-			keySeen = true
+		if k != "" {
+			keyLeaked = true
 		}
 	}
 	calls := so.calls.Load()
 	so.mu.Unlock()
 	files, leaks := w20_scan(t, home, w20_key, w20_sentinel, `"choice":"yes"`)
 	switch {
-	case keySeen && calls > 0 && n > 0 && chainOK && len(leaks) == 0 && files > 0:
+	case !keyLeaked && calls > 0 && n > 0 && chainOK && len(leaks) == 0 && files > 0:
 		w20_add(t, &out, "M4.1", "WORKS", fmt.Sprintf(
-			"SO POSTs=%d, key in transit only, receipt.chain lines=%d verify, %d HOME files carry no key/raw-SO/sentinel",
+			"SO POSTs=%d, no key on loopback wire, receipt.chain lines=%d verify, %d HOME files carry no key/raw-SO/sentinel",
 			calls, n, files))
-	case keySeen && calls > 0 && (n == 0 || !chainOK):
+	case !keyLeaked && calls > 0 && (n == 0 || !chainOK):
 		w20_add(t, &out, "M4.1", "BROKEN", fmt.Sprintf("receipt chain unreadable or invalid: lines=%d verify=%v", n, chainOK))
 	default:
-		w20_add(t, &out, "M4.1", "BROKEN", fmt.Sprintf("redaction failed: calls=%d keySeen=%v leaks=%v", calls, keySeen, leaks))
+		w20_add(t, &out, "M4.1", "BROKEN", fmt.Sprintf("redaction failed: calls=%d keyLeaked=%v leaks=%v", calls, keyLeaked, leaks))
 	}
 
 	switch {

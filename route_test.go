@@ -122,8 +122,8 @@ func TestSOSchemaOnWire(t *testing.T) {
 		requests++
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &body)
-		if got := r.Header.Get("x-api-key"); got != "test-key" {
-			t.Error("missing x-api-key")
+		if got := r.Header.Get("x-api-key"); got != "" {
+			t.Error("loopback SO must not receive x-api-key")
 		}
 		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"no","confidence":0.95}}}`))
 	})
@@ -229,6 +229,26 @@ func TestRouteTrustBoundary(t *testing.T) {
 	r := route(string(b), nil)
 	if r.Reason != "-32602" || !r.Passthrough || called {
 		t.Fatalf("missing capability: %+v called=%v", r, called)
+	}
+}
+
+// Outbound prose must lose credential shapes, not just key=value/Bearer tokens.
+func TestRouteScrubTextCredentialShapes(t *testing.T) {
+	in := "classify this -----BEGIN RSA PRIVATE KEY----- AKIA1234567890ABCDEF ghp_abcdefghijklmnopqrstuv Authorization: Bearer sk-secret123"
+	out := scrubText(in)
+	for _, leak := range []string{
+		"-----BEGIN RSA PRIVATE KEY-----", "AKIA1234567890ABCDEF",
+		"ghp_abcdefghijklmnopqrstuv", "Bearer", "sk-secret123",
+	} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("credential leaked %q: %s", leak, out)
+		}
+	}
+	if n := strings.Count(out, credentialWithheld); n != 3 {
+		t.Fatalf("redaction markers = %d, want 3: %s", n, out)
+	}
+	if !strings.Contains(out, "classify this") {
+		t.Fatalf("user prose lost: %s", out)
 	}
 }
 

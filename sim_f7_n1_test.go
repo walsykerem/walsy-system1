@@ -441,8 +441,8 @@ func TestSimF7SOGateThreshold(t *testing.T) {
 		if c.method != http.MethodPost {
 			t.Errorf("call %d method = %q, want POST", i, c.method)
 		}
-		if c.key != w04_soKey {
-			t.Errorf("call %d x-api-key = %q, want stub key", i, c.key)
+		if c.key != "" {
+			t.Errorf("call %d loopback x-api-key = %q, want none", i, c.key)
 		}
 		var req struct {
 			Model string `json:"model"`
