@@ -49,6 +49,7 @@ type LogTotals struct {
 // auditRow is one redacted line of the shared relay audit JSONL. Only
 // allowlisted metadata fields are decoded; keys and payloads never reach here.
 type auditRow struct {
+	TS       string `json:"ts"`
 	Event    string `json:"event"`
 	Method   string `json:"method"`
 	Mode     string `json:"mode"`
@@ -342,9 +343,36 @@ func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
 		bytes += int64(count)
 		ms := int64(0)
 		_, _ = fmt.Sscan(row.Latency, &ms)
-		entries = append(entries, LogEntry{Kind: kind, Outcome: outcome, ReqB: count, MS: ms})
+		ts, _ := strconv.ParseInt(row.TS, 10, 64)
+		at := "-"
+		if ts > 0 {
+			at = time.UnixMilli(ts).In(time.Local).Format("15:04:05")
+		}
+		entries = append(entries, LogEntry{TS: ts, At: at, Kind: kind, Outcome: outcome, ReqB: count, MS: ms})
 	}
 	return LogTotals{Calls: len(entries), ReqB: bytes, Since: "PERSISTED AUDIT"}, entries
+}
+
+// auditSignalRows drops MCP transport chatter (capability probes, relay frames,
+// provider pinning notices) from the sheet. Calls and decisions are the rows a
+// reader acts on; raw chatter stays available through GET /api/logs.
+func auditSignalRows(rows []auditRow) []auditRow {
+	out := make([]auditRow, 0, len(rows))
+	for _, row := range rows {
+		switch row.Event {
+		case "call", "decision", "drift_alarm", "writeguard", "diffguard":
+			out = append(out, row)
+		case "gate":
+			if row.Tool != "" || row.Decision != "" || row.Label != "" {
+				out = append(out, row)
+			}
+		case "relay_frame":
+			if row.Mode == "tools/call" || row.Method != "" {
+				out = append(out, row)
+			}
+		}
+	}
+	return out
 }
 
 // uiLogsSheet renders the LOGS sheet iframe document. The in-memory call ring
@@ -352,8 +380,12 @@ func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
 // sheet covers both, and a fresh load falls back to audit rows entirely.
 func uiLogsSheet(w http.ResponseWriter, r *http.Request) {
 	t, entries := logsView()
-	rows, err := auditLogRowsTail(logRingSize)
+	rows, err := auditLogRowsTail(logRingSize * 4)
 	if err == nil {
+		rows = auditSignalRows(rows)
+		if len(rows) > logRingSize {
+			rows = rows[:logRingSize]
+		}
 		if t.Calls == 0 {
 			t, entries = auditLogEntries(rows)
 		} else {

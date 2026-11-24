@@ -603,9 +603,12 @@
     // Timestamps are stored as unix millis and drawn in the viewer's own zone,
     // so the sheet reads like the clock on the machine it is opened from.
     document.querySelectorAll('time[data-ts]').forEach(function (el) {
-      var d = new Date(Number(el.getAttribute('data-ts')));
-      el.textContent = d.toLocaleTimeString([], { hour12: false });
-      el.title = d.toString();
+      var ts = Number(el.getAttribute('data-ts'));
+      if (ts > 0) {
+        var d = new Date(ts);
+        el.textContent = d.toLocaleTimeString([], { hour12: false });
+        el.title = d.toString();
+      }
     });
     // Confirm the destructive clear, then replace rows locally. The API clears
     // the in-memory ring and audit.jsonl; it cannot promise future calls away.

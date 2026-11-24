@@ -442,7 +442,7 @@ func TestLogsSheetCapsRenderedRows(t *testing.T) {
 	_, c, base := simHome(t)
 	resetLogs()
 	path := filepath.Join(mustStateDir(t), "audit.jsonl")
-	if err := os.WriteFile(path, []byte(strings.Repeat(`{"event":"sim","count":"1"}`+"\n", 250)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat(`{"event":"call","method":"sim","count":"1"}`+"\n", 250)), 0o600); err != nil {
 		t.Fatalf("seed audit rows: %v", err)
 	}
 	code, page := simGet(t, c, base+"/ui/logs")

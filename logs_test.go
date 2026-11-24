@@ -94,6 +94,43 @@ func TestLogsSheetRendersRecordedCall(t *testing.T) {
 	}
 }
 
+func TestLogsSheetDropsFrameworkChatterAndKeepsAuditTime(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, routerDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw := strings.Join([]string{
+		`{"ts":"1760000000000","event":"call","method":"combo","status":"ok"}`,
+		`{"event":"gate","method":"resources/list","reason":"layer0-scope"}`,
+		`{"event":"relay_frame","mode":"initialize","status":"ok"}`,
+		`{"ts":"1760000001000","event":"decision","method":"system1_decide","decision":"admit"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, routerAuditName), []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resetLogs()
+	defer resetLogs()
+
+	rec := httptest.NewRecorder()
+	uiLogsSheet(rec, nil)
+	body := rec.Body.String()
+	for _, want := range []string{`data-ts="1760000000000"`, "combo", `data-ts="1760000001000"`, "admit"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sheet missing %q: %s", want, body)
+		}
+	}
+	for _, drop := range []string{"resources/list", "initialize", "layer0-scope"} {
+		if strings.Contains(body, drop) {
+			t.Errorf("framework chatter %q still rendered", drop)
+		}
+	}
+	if n := strings.Count(body, `class="log-usage"`); n != 2 {
+		t.Fatalf("rendered rows = %d, want 2", n)
+	}
+}
+
 func TestLogTimestampsUseLocalClock(t *testing.T) {
 	resetLogs()
 	defer resetLogs()

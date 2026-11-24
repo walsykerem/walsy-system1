@@ -270,7 +270,7 @@ func routerMirrorURL() string {
 // routerAudit appends a redacted JSONL record to ~/.walsy-system1/audit.jsonl.
 // Only allowlisted keys and sanitized name/bucket values reach disk.
 func routerAudit(event string, kv ...string) {
-	fields := map[string]string{}
+	fields := map[string]string{"ts": strconv.FormatInt(time.Now().UnixMilli(), 10)}
 	if name, ok := routerSafeField(event); ok {
 		fields["event"] = name
 	} else {
