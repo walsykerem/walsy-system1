@@ -50,16 +50,40 @@ type stateEnvelope struct {
 	// UserSystemPrompt is untrusted data; the header marks the boundary for SO.
 	UserSystemPrompt  string `json:"user_system_prompt,omitempty"`
 	UserSystemPrompts string `json:"user_system_prompts,omitempty"`
+	// Policy A decision shape: carried from the caller's request into the SO
+	// skeleton. Omission/unverified are derived, never read from these fields.
+	Request  string   `json:"request,omitempty"`
+	Criteria []string `json:"criteria,omitempty"`
+	Evidence []string `json:"evidence,omitempty"`
 }
 
 // soStateFromEnvelope projects an envelope into the explicit SO-bound shape.
 // Only prompt IDs and SHA-256 digests cross; prompt bodies are never a field.
+// Omission is mechanical: the audit of this very state names what was left
+// undone (omitted) and which named risks stayed unverified. A caller cannot
+// claim an empty omission list by omitting it from the request.
 // Over-cap input is rejected in full (no truncation, no partial state).
 func soStateFromEnvelope(e stateEnvelope) (string, error) {
 	skel := StateSkeleton{
 		State: e.State, Method: e.Method, NeedLabel: e.NeedLabel, NoScratch: e.NoScratch,
 		Safe: e.Safe, Reversible: e.Reversible, OptIn: e.OptIn, Phase: e.Phase,
 		Authority: e.Authority, Calibrated: e.Calibrated, Item: e.Item,
+		Criteria: e.Criteria, Evidence: e.Evidence,
+	}
+	// buildState folds a lone "request" into state; do not pay for it twice.
+	if e.Request != "" && e.Request != e.State {
+		skel.Request = e.Request
+	}
+	// Only a JSON state has an auditable ledger. Prose/absent states have no
+	// omission to declare, so they must not gain a synthetic "state unreadable".
+	if strings.HasPrefix(strings.TrimSpace(e.State), "{") {
+		for _, m := range finalAudit(e.State).Missing {
+			if rest, ok := strings.CutPrefix(m, "risk: "); ok {
+				skel.Unverified = append(skel.Unverified, strings.TrimSpace(rest))
+				continue
+			}
+			skel.Omitted = append(skel.Omitted, m)
+		}
 	}
 	bodies := map[string]string{}
 	for _, p := range loadPrompts() {
@@ -163,6 +187,27 @@ func stringField(obj map[string]any, keys ...string) string {
 	return ""
 }
 
+// stringListField reads the first non-empty string array from obj. Only strings
+// enter the shape; numbers/objects are dropped rather than stringified.
+func stringListField(obj map[string]any, keys ...string) []string {
+	for _, k := range keys {
+		arr, ok := obj[k].([]any)
+		if !ok {
+			continue
+		}
+		var out []string
+		for _, v := range arr {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
 // capabilityEnabled reads the opt-in marker from the user request only.
 // SDK default is off: absent capability means no decision traffic change.
 func capabilityEnabled(obj map[string]any) bool {
@@ -210,6 +255,9 @@ func buildState(userRequest string) string {
 		Method:     stringField(obj, "method"),
 		Authority:  boolField(obj, "authority", "decision_authority"),
 		Calibrated: boolField(obj, "calibrated"),
+		Request:    stringField(obj, "request"),
+		Criteria:   stringListField(obj, "criteria"),
+		Evidence:   stringListField(obj, "evidence"),
 	}
 	for _, k := range []string{
 		"state", "request", "item", "need_label", "needLabel", "no_scratch", "noScratch",

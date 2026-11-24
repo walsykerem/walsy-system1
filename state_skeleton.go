@@ -29,6 +29,8 @@ type PromptRef struct {
 
 // StateSkeleton is the explicit SO-bound state shape. Prompt bodies are absent
 // by construction; omitempty suppresses zero fields so no empty block is sent.
+// Policy A: a distilled decision shape (request/criteria/evidence) plus an
+// omission list derived mechanically by soStateFromEnvelope, never caller-claimed.
 // shortcut: shape mirrors stateEnvelope without untrusted prompt text; extend
 // only when SO asks for a field that is not already derivable from state.
 type StateSkeleton struct {
@@ -44,6 +46,11 @@ type StateSkeleton struct {
 	Calibrated bool        `json:"calibrated,omitempty"`
 	Item       string      `json:"item,omitempty"`
 	Prompts    []PromptRef `json:"prompts,omitempty"`
+	Request    string      `json:"request,omitempty"`
+	Criteria   []string    `json:"criteria,omitempty"`
+	Evidence   []string    `json:"evidence,omitempty"`
+	Omitted    []string    `json:"omitted,omitempty"`
+	Unverified []string    `json:"unverified,omitempty"`
 }
 
 // newPromptRef hashes a caller-supplied body and discards it. No body is kept.
