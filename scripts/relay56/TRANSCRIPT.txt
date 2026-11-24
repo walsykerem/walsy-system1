@@ -1,8 +1,8 @@
 # relay56 live transcript
-timestamp: 2026-11-24T13:17:26Z
+timestamp: 2026-11-24T13:45:37Z
 harness: scripts/relay56/main.go sha256=8173e2baee7fbaf078d946971fa234892e9703d56b1895deb681ea2c4d3c13a5
 harness test: scripts/relay56/main_test.go sha256=2a920fc41bf90628c85347032e4a1df0c86f0b0e1a6f27279fefd14a03cb05bf
-binary: 2965180a4370b605d6be5895ad5437a79e0eb186d97e9903352f4043eef24771 relay56-test (source copy, only soEndpointDefaultBase overridden; shipped c5909baae7f0bf5a8c308a8ee68685334d0304f3666c3950db0b82c2b07a934b walsy-system1 untouched)
+binary: 1691d720aa3a90982eb62255821a480f8a5fbd67df3f794c1a54f0151021b81c relay56-test (source copy, only soEndpointDefaultBase overridden; shipped 87cecffbe449e29293d739926317b2b853b06368b8bc3ed53fdf214c5bae6d37 walsy-system1 untouched)
 command: go run ./scripts/relay56 (CGO_ENABLED=0, private HOME per child)
 --- run
 PASS unread-write   blocked: write to a path this session never touched: /tmp/relay56-a.txt: read it first, or state why it is new

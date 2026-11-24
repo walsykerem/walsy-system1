@@ -49,13 +49,23 @@ type LogTotals struct {
 // auditRow is one redacted line of the shared relay audit JSONL. Only
 // allowlisted metadata fields are decoded; keys and payloads never reach here.
 type auditRow struct {
-	Event  string `json:"event"`
-	Method string `json:"method"`
-	Mode   string `json:"mode"`
-	Status string `json:"status"`
-	Count  string `json:"count"`
-	Phase  string `json:"phase"`
-	Tool   string `json:"tool"`
+	Event    string `json:"event"`
+	Method   string `json:"method"`
+	Mode     string `json:"mode"`
+	Status   string `json:"status"`
+	Count    string `json:"count"`
+	Phase    string `json:"phase"`
+	Tool     string `json:"tool"`
+	Reason   string `json:"reason,omitempty"`
+	Decision string `json:"decision,omitempty"`
+	Bucket   string `json:"bucket,omitempty"`
+	Allow    string `json:"allow,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Latency  string `json:"latency_ms,omitempty"`
+	Credits  string `json:"credits,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Outcome  string `json:"outcome,omitempty"`
 }
 
 var (
@@ -308,7 +318,6 @@ func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
 		if kind == "" {
 			kind = row.Phase
 		}
-		outcome := row.Status
 		name := row.Method
 		if name == "" {
 			name = row.Mode
@@ -316,24 +325,48 @@ func auditLogEntries(rows []auditRow) (LogTotals, []LogEntry) {
 		if name == "" {
 			name = row.Tool
 		}
+		if name == "" {
+			name = row.Provider
+		}
+		// MCP decision rows carry no status/method; surface their redacted
+		// metadata instead of rendering an empty outcome cell.
+		outcome := strings.TrimSpace(strings.Join([]string{
+			row.Status, row.Reason, row.Decision, row.Bucket, row.Allow,
+			row.Source, row.Label, row.Outcome,
+		}, " "))
+		if name != "" {
+			outcome = strings.TrimSpace(name + " " + outcome)
+		}
 		count := 0
 		_, _ = fmt.Sscan(row.Count, &count)
 		bytes += int64(count)
-		entries = append(entries, LogEntry{Kind: kind, Outcome: outcome + " " + name,
-			ReqB: count})
+		ms := int64(0)
+		_, _ = fmt.Sscan(row.Latency, &ms)
+		entries = append(entries, LogEntry{Kind: kind, Outcome: outcome, ReqB: count, MS: ms})
 	}
 	return LogTotals{Calls: len(entries), ReqB: bytes, Since: "PERSISTED AUDIT"}, entries
 }
 
-// uiLogsSheet renders the LOGS sheet iframe document. A live process shows its
-// in-memory call ring (with byte/usage detail); on a fresh load it falls back
-// to the persisted audit rows so history survives a restart.
+// uiLogsSheet renders the LOGS sheet iframe document. The in-memory call ring
+// keeps byte/usage detail; persisted MCP decision rows are merged in so one
+// sheet covers both, and a fresh load falls back to audit rows entirely.
 func uiLogsSheet(w http.ResponseWriter, r *http.Request) {
 	t, entries := logsView()
-	if t.Calls == 0 {
-		rows, err := auditLogRowsTail(logRingSize)
-		if err == nil {
+	rows, err := auditLogRowsTail(logRingSize)
+	if err == nil {
+		if t.Calls == 0 {
 			t, entries = auditLogEntries(rows)
+		} else {
+			// The ring holds call rows only; MCP decisions write straight to
+			// audit.jsonl. Merge those so one LOGS sheet shows both transports.
+			mcp := make([]auditRow, 0, len(rows))
+			for _, row := range rows {
+				if row.Event != "call" {
+					mcp = append(mcp, row)
+				}
+			}
+			_, extra := auditLogEntries(mcp)
+			entries = append(entries, extra...)
 		}
 	}
 	msg, msgMs := "", 0

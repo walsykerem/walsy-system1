@@ -676,8 +676,8 @@ func NewDashboardHandler() http.Handler {
 			}
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		case "/api/keytest":
-			if r.Method != http.MethodPost {
-				writeAPIError(w, "method not allowed")
+			if r.Method != http.MethodPost || !sameOrigin(r) {
+				writeAPIError(w, "method or origin not allowed")
 				return
 			}
 			var req struct {
