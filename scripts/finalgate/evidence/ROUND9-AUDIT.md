@@ -86,3 +86,46 @@ Live sweep exposed two wire defects, both SO-approved and applied:
 - UX/docs/tests group SO verdicts were weak (values above); group-level grading is not strong evidence.
 - Live SO enforcing evidence is degraded; `K16.txt` records it explicitly. It is not presented as healthy live proof.
 - No force push, tag, main merge, deploy, release or dashboard/MCP restart was performed for round 9.
+
+## Live provider verification (run after the round-9 push)
+
+The fixed probe path was exercised against the real endpoints with the real
+stored credentials, through the product's own functions (`testProviderKey`,
+`probeComboStep`). Only verdicts were printed, never a key value. The check
+ran as a temporary test that was deleted right after it, so it is not part of
+the branch.
+
+    OpenRouter: per-key test -> KEY OK
+    OpenRouter: combo model=typesafe/jev-1.14 -> ok=true status=200 OK detail=key accepted latency=233ms
+    OpenRouter: combo model=clef -> ok=false status=400 Bad Request detail=non-2xx response latency=47ms
+    Evren System One: per-key test -> ENDPOINT RESPONDED
+    Evren System One: combo model=cloudflare/clef -> ok=false status=404 Not Found detail=non-2xx response latency=168ms
+    Evren System One: combo model=clef -> ok=true status=200 OK detail=key accepted latency=389ms
+    Nace Drex: per-key test -> ENDPOINT RESPONDED
+    Nace Drex: combo model=nace-ai/drex-v2.0 -> ok=false status=422 Unprocessable Entity detail=non-2xx response latency=221ms
+    Nace Drex: combo model=clef -> ok=false status=422 Unprocessable Entity detail=non-2xx response latency=224ms
+
+A direct `POST` of `soProbeBody("clef")` to `https://evren-llmapi.ssyz.org.tr/v1/systemone` with the stored key answered `http=200 total=0.846861s`, inside the 2 s client timeout at `keytest.go:11`.
+
+What this proves: the provider that produced the reported false winner
+(`OpenRouter/typesafe/jev-1.14 | 400 Bad Request | key accepted`) answers
+HTTP 200 with the System One body, and the combo reports `key accepted` only
+for that real 200. A 400 (OpenRouter with the unknown model `clef`) is now
+reported as `non-2xx response` and fails over instead of winning round 1.
+
+Three configuration findings that are not product defects:
+
+- `~/.walsy-system1/models.txt` maps `Evren System One` to `cloudflare/clef`,
+  which the live endpoint answers with 404. The same stored key answers 200
+  for the System One default model `clef`. The mapping is a stale user
+  setting; the product now reports the 404 instead of hiding it.
+- `~/.walsy-system1/keys/50cf1571788edaef` holds the key of the retired
+  provider name `Evren`. The registry has no `Evren` provider any more, so
+  that key file cannot be reached from the UI.
+- The `Nace Drex` endpoint answers 422 for the System One contract, so its
+  probe fails over truthfully. That endpoint needs its own contract check and
+  is not covered by the round-9 fix.
+
+Test-harness note: the root package's `TestMain` (`testhome_test.go:11-26`)
+replaces `HOME` with a fresh temp dir, so a test that must read the real key
+store has to point `HOME` back at the real home with `t.Setenv`.
