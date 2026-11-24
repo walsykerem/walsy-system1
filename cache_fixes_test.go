@@ -74,3 +74,33 @@ func TestToolsDecideUsesCachedTypedDecision(t *testing.T) {
 		t.Fatalf("SO POSTs = %d, want 1 (second frame must reuse cache)", got)
 	}
 }
+
+// A terminal abstain must survive the cache cell with its typed label and
+// bucket, else a second system1_decide errors instead of repeating the refusal.
+func TestAbstainCacheHitKeepsTypedDecision(t *testing.T) {
+	cell := cacheResult(routeResult{
+		Decision: decPass, Abstained: true, Reason: "so-no",
+		LastDecision: soDecision{Choice: "no", Conf: 0.95},
+	})
+	hit := cachedResult(cell)
+	if !hit.Abstained || hit.Decision != decPass {
+		t.Fatalf("abstain hit lost its state: %+v", hit)
+	}
+	if hit.Label != "no" || hit.LastDecision.Choice != "no" || hit.LastDecision.Conf != 0.9 {
+		t.Fatalf("abstain hit lost typed decision: %+v", hit)
+	}
+}
+
+// A terminal abstain must keep its typed answer across a cache hit; otherwise
+// toolsDecide sees an empty choice and reports "model unavailable".
+func TestCacheAbstainHitKeepsTypedDecision(t *testing.T) {
+	live := routeResult{Decision: decPass, Abstained: true, Reason: "so-no", Label: "no",
+		LastDecision: soDecision{Choice: "no", Conf: 0.95}}
+	hit := cachedResult(cacheResult(live))
+	if !hit.Abstained || hit.Decision != decPass || hit.Label != "no" {
+		t.Fatalf("abstain hit lost route shape: %+v", hit)
+	}
+	if hit.LastDecision.Choice != "no" || hit.LastDecision.Conf != 0.9 {
+		t.Fatalf("abstain hit lost typed decision: %+v", hit.LastDecision)
+	}
+}

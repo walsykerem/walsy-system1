@@ -293,7 +293,13 @@ func skipResult(reason string) routeResult {
 // cacheResult projects a terminal route result into the cell the bridge stores.
 func cacheResult(r routeResult) cachedDecision {
 	if r.Abstained {
-		return cachedDecision{Abstain: true, Reason: r.Reason, ConfBucket: r.ConfBucket}
+		label := r.Label
+		if label == "" {
+			label = r.LastDecision.Choice
+		}
+		// A terminal abstain's typed answer still crosses the cell boundary as
+		// a coarse bucket, so a hit can rebuild it for toolsDecide like an admit.
+		return cachedDecision{Abstain: true, Reason: r.Reason, ConfBucket: confBucket(r.LastDecision.Conf), Label: label, Steer: r.Steer}
 	}
 	label := r.Label
 	if label == "" {
@@ -321,7 +327,12 @@ func bucketConf(bucket string) float64 {
 // rebuilt from it so tools on a cache hit see the same shape as on a live call.
 func cachedResult(c cachedDecision) routeResult {
 	if c.Abstain {
-		return routeResult{Decision: decPass, Reason: c.Reason, Abstained: true, ConfBucket: c.ConfBucket}
+		label := c.Label
+		if label == "" {
+			label = c.Choice
+		}
+		return routeResult{Decision: decPass, Reason: c.Reason, Abstained: true, ConfBucket: c.ConfBucket, Label: label, Steer: c.Steer,
+			LastDecision: soDecision{Choice: label, Conf: bucketConf(c.ConfBucket)}}
 	}
 	label := c.Label
 	if label == "" {
@@ -345,7 +356,11 @@ func passesKeyConfRule(d soDecision) bool {
 // identity. A rotated or swapped-out engine never reads another engine's cell;
 // generation is identity, not a TTL.
 func (d *decisionBridge) cacheKey(request []byte, cap capabilityConfig, gen uint64) [32]byte {
-	base := gateKeyBytes(request, cap)
+	return d.cacheKeyFromBase(gateKeyBytes(request, cap), gen)
+}
+
+// cacheKeyFromBase binds an already-computed gate key to engine identity.
+func (d *decisionBridge) cacheKeyFromBase(base [32]byte, gen uint64) [32]byte {
 	h := sha256.New()
 	_, _ = h.Write(base[:])
 	_ = binary.Write(h, binary.BigEndian, gen)
@@ -359,6 +374,13 @@ func (d *decisionBridge) cacheKey(request []byte, cap capabilityConfig, gen uint
 // decide runs buildState + route per request, keyed by request+capability.
 // No one-shot latch: a second distinct frame gets a fresh decision.
 func (d *decisionBridge) decide(request []byte) routeResult {
+	return d.decideWithKey(request, nil)
+}
+
+// decideWithKey reuses a gate key the caller already computed for this exact
+// request; gateKeyBytes reads prompts from disk, so a frame-level caller must
+// not pay for it twice.
+func (d *decisionBridge) decideWithKey(request []byte, base *[32]byte) routeResult {
 	d.mu.Lock()
 	keySet := d.keySet
 	d.mu.Unlock()
@@ -390,7 +412,12 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 	}
 	gen := d.pin.generation()
 	d.syncHold(gen)
-	key := d.cacheKey(request, cap, gen)
+	var key [32]byte
+	if base != nil {
+		key = d.cacheKeyFromBase(*base, gen)
+	} else {
+		key = d.cacheKey(request, cap, gen)
+	}
 	if cached, hit := d.cache.lookupForDecision(key); hit {
 		r := cachedResult(cached)
 		recordPreflight(p, r, d.preflight)
@@ -524,7 +551,7 @@ func (d *decisionBridge) decideFrameDetailed(raw []byte) (routeResult, soDecisio
 	}
 	params := unwrapParams(raw, f)
 	keyHash := gateKeyBytes(params, soCapability())
-	r := d.decide(params)
+	r := d.decideWithKey(params, &keyHash)
 	tool := toolName(f.Params)
 	det := receiptDetails{
 		Force:     true, // every in-scope frame is chained, including local passes

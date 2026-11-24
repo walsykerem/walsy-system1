@@ -454,6 +454,7 @@ func soPool() []soCandidate {
 	steps, serr := loadCombo()
 	providers, _, perr := loadRegistryWithOverrides()
 	if serr == nil && perr == nil {
+		enforcing := soMode() == soModeEnforcing
 		seen := make(map[string]bool)
 		for _, s := range steps {
 			var p *provider
@@ -468,7 +469,7 @@ func soPool() []soCandidate {
 			}
 			// Enforcing pins the oracle: only baked-equivalent bases may carry a
 			// key, so a registry edit cannot route it to an unvetted endpoint.
-			if soMode() == soModeEnforcing && !bakedProviderBase(p.Base) {
+			if enforcing && !bakedProviderBase(p.Base) {
 				continue
 			}
 			key := ""
@@ -522,7 +523,10 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	until := time.Now().Add(deadline)
+	start := time.Now()
+	until := start.Add(deadline)
+	questions := contextQuestions(state)
+	questions["gate"] = gateQuestion(q)
 	var reason string
 	timedOut := false
 	for i, cand := range cands {
@@ -535,7 +539,7 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 			timedOut = true
 			break
 		}
-		d, ok := soAskCandidate(ctx, cand, state, q, slice)
+		d, ok := soAskCandidate(ctx, cand, state, q, questions, slice)
 		if ok {
 			if cand.Name != "systemone" {
 				routerAudit("gate", "provider", cand.Name)
@@ -553,7 +557,7 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 		return soDecision{Reason: reason}
 	}
 	if timedOut {
-		return soDecision{TimedOut: true}
+		return soDecision{TimedOut: true, LatencyMS: time.Since(start).Milliseconds()}
 	}
 	return soDecision{}
 }
@@ -561,14 +565,12 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 // soAskCandidate posts one gate question to one pool candidate. ok is true
 // only for a usable SO answer; a transport or body failure fails over to the
 // next candidate inside the shared deadline.
-func soAskCandidate(ctx context.Context, cand soCandidate, state string, q soQuestion, slice time.Duration) (soDecision, bool) {
+func soAskCandidate(ctx context.Context, cand soCandidate, state string, q soQuestion, questions map[string]soQuestion, slice time.Duration) (soDecision, bool) {
 	cctx, cancel := context.WithTimeout(ctx, slice)
 	defer cancel()
 	// Stable identifiers are hashes only (never the raw prompt) so SO can cache
 	// across frames without receiving prompt bodies. See N6.
 	sid, pck := soStableIDs(cand.Model, q, state)
-	questions := contextQuestions(state)
-	questions["gate"] = gateQuestion(q)
 	// Live SO rejects top-level session_id/prompt_cache_key (HTTP 422). Keep
 	// the stable hashes on the wire inside state so the cache contract holds.
 	wireState := soWireState(state, sid, pck)

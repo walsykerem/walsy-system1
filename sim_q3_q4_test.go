@@ -20,7 +20,7 @@ import (
 // Static-only simulation for MANIFEST B22 items Q3 and Q4.
 // No target binary execution, no live process inspection, no real SO call.
 const (
-	simAESOffset  = 0x895440
+	simAESOffset  = 0x899440
 	simAESBytes   = "637c777bf26b6fc5"
 	simAESSegment = "__DATA,__noptrdata"
 )
@@ -118,12 +118,12 @@ func TestSimQ3(t *testing.T) {
 		}
 	}
 
-	oldLine := "0x895440: 637c777bf26b6fc5 (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)"
+	oldLine := "0x899440: 637c777bf26b6fc5 (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)"
 	if got := simQ3BadAESLines(oldLine, simAESSegment); len(got) != 1 {
 		t.Fatalf("checker failed to reject old label: %v", got)
 	}
 	wrongOffset := strings.Replace(oldLine, "__TEXT,__rodata", simAESSegment, 1)
-	wrongOffset = strings.Replace(wrongOffset, "0x895440", "0x858c40", 1)
+	wrongOffset = strings.Replace(wrongOffset, "0x899440", "0x858c40", 1)
 	if got := simQ3BadAESLines(wrongOffset, simAESSegment); len(got) != 1 {
 		t.Fatalf("checker failed to reject stale offset: %v", got)
 	}
@@ -133,7 +133,7 @@ func TestSimQ3(t *testing.T) {
 	}
 	// Deleting only the segment label must still pass: the line keeps the
 	// aes_sbox marker and the verified offset, so the control is not vacuous.
-	deletedLine := "aes_sbox 637c777bf26b6fc5 at 0x895440 (no segment label)"
+	deletedLine := "aes_sbox 637c777bf26b6fc5 at 0x899440 (no segment label)"
 	if got := simQ3BadAESLines(deletedLine, simAESSegment); len(got) != 0 {
 		t.Fatalf("checker rejected label deletion: %v", got)
 	}

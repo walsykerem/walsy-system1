@@ -297,7 +297,8 @@ func loadCombo() ([]stateStep, error) {
 			continue
 		}
 		f := strings.SplitN(line, "\t", 3)
-		if len(f) < 2 || f[0] == "" || len(f[0]) > maxProviderNameLen || isDemoName(f[0]) {
+		if len(f) < 2 || f[0] == "" || len(f[0]) > maxProviderNameLen || isDemoName(f[0]) ||
+			(f[1] != "" && !validModel(f[1])) {
 			continue
 		}
 		step := stateStep{Provider: f[0], Model: f[1]}
@@ -392,7 +393,7 @@ func loadKeys(name string) ([]string, error) {
 	}
 	keys := []string{}
 	for _, line := range strings.Split(string(data), "\n") {
-		if line != "" {
+		if line != "" && validKey(line) {
 			keys = append(keys, line)
 		}
 	}
@@ -548,16 +549,17 @@ func soModeStartupError() error {
 // ignored at both layers. Selecting enforcing requires a named approver from
 // WALSY_SO_APPROVER or config.txt; without one the flip is audited as denied.
 func soMode() string {
+	cfg := readSOConfig()
 	var v string
 	if e := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE"))); validSOMode(e) {
 		v = e
-	} else if f := strings.ToLower(strings.TrimSpace(readSOConfig()["so_mode"])); validSOMode(f) {
+	} else if f := strings.ToLower(strings.TrimSpace(cfg["so_mode"])); validSOMode(f) {
 		v = f
 	}
 	if v == soModeEnforcing {
 		name := strings.TrimSpace(os.Getenv("WALSY_SO_APPROVER"))
 		if name == "" {
-			name = strings.TrimSpace(readSOConfig()["approver"])
+			name = strings.TrimSpace(cfg["approver"])
 		}
 		if name == "" {
 			routerAudit("so_mode", "mode", "enforcing", "outcome", "denied")

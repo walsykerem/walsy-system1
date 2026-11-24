@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -146,7 +147,12 @@ func readRegistryData(path string) ([]byte, error) {
 	if st.Mode().Perm() != 0600 {
 		return nil, fmt.Errorf("registry mode rejected")
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("registry read failed")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxStateFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("registry read failed")
 	}
