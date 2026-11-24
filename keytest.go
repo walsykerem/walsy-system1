@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -14,6 +15,45 @@ var keyTestClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+// soProbeModel is the System One model id used when a provider has no model
+// of its own configured.
+const soProbeModel = "clef"
+
+// soProbeBody is the System One wire contract: a model id, a state string and
+// a questions record. Every SO endpoint rejects a chat-shaped body (400/422),
+// so a chat probe blames a key for a request that was never valid. The body
+// carries no secret: the credential travels only in the headers.
+func soProbeBody(model string) string {
+	body, err := json.Marshal(map[string]any{
+		"model": model,
+		"state": "credential probe",
+		"questions": map[string]soQuestion{
+			"probe": {Type: "choice", Instructions: "Answer only to confirm the endpoint answered.",
+				Criteria: map[string]string{
+					"yes": "the endpoint answered", "no": "the endpoint did not answer",
+				}},
+		},
+	})
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+// providerModel returns the model id to probe: the requested one, else the
+// provider's first configured model, else the System One default.
+func providerModel(provider, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if models, err := loadModels(); err == nil {
+		if list := models[provider]; len(list) > 0 {
+			return list[0]
+		}
+	}
+	return soProbeModel
 }
 
 // testProviderKey probes the configured base with one stored key. It reports
@@ -33,7 +73,7 @@ func testProviderKey(name string, index int) string {
 	}
 	// POST, not GET: gateways such as a System One endpoint only answer POST, so a
 	// GET probe could never distinguish a good key from a missing route.
-	body := `{"messages":[{"role":"user","content":"ping"}]}`
+	body := soProbeBody(providerModel(name, ""))
 	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(body))
 	if err != nil {
 		return "ENDPOINT INVALID"

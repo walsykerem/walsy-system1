@@ -274,34 +274,60 @@ var stateMu sync.Mutex
 // add/remove/clear actions so a 2s key TEST cannot stall every other save.
 // probeKeyStatus returns only the HTTP status class of a key probe. The key
 // value is never returned, logged, or echoed; only Authorization/x-api-key
-// headers carry it, and the body is discarded.
-func probeKeyStatus(name string, index int) int {
+// headers carry it, and the body is discarded. A status of 0 means no HTTP
+// answer arrived at all: the state, the base or the network failed.
+func probeKeyStatus(name string, index int, model string) int {
 	keys, err := loadKeys(name)
 	if err != nil || index < 1 || index > len(keys) {
 		return http.StatusUnauthorized
 	}
 	view, err := providerView()
 	if err != nil {
-		return http.StatusForbidden
+		return 0
 	}
 	base := providerBase(view, name)
 	if !validProviderBase(base) {
-		return http.StatusForbidden
+		return 0
 	}
-	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(`{"messages":[{"role":"user","content":"ping"}]}`))
+	// The System One wire contract, not a chat body: a chat-shaped request is
+	// answered 400/422, which says nothing about the credential.
+	body := soProbeBody(providerModel(name, model))
+	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(body))
 	if err != nil {
-		return http.StatusForbidden
+		return 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+keys[index-1])
 	req.Header.Set("x-api-key", keys[index-1])
 	resp, err := keyTestClient.Do(req)
 	if err != nil {
-		return http.StatusForbidden
+		return 0
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return resp.StatusCode
+}
+
+// keyTestResult names a probe outcome. It never echoes a key value.
+func keyTestResult(status int) string {
+	switch {
+	case status == http.StatusUnauthorized:
+		return "INVALID KEY"
+	case status == http.StatusForbidden:
+		return "FORBIDDEN"
+	case status == http.StatusNotFound:
+		return "MODEL NOT FOUND"
+	case status == http.StatusTooManyRequests:
+		return "RATE LIMITED"
+	case status == http.StatusBadRequest, status == http.StatusUnprocessableEntity:
+		return "BAD REQUEST"
+	case status == 0:
+		return "ENDPOINT UNREACHABLE"
+	case status >= 500:
+		return "SERVER ERROR"
+	default:
+		return "ENDPOINT RESPONDED"
+	}
 }
 
 var unlockedPost = map[string]bool{
@@ -540,7 +566,7 @@ func toComboSteps(view providersResponse, steps []stateStep) []ComboStep {
 		if s.Model != "" {
 			name += "/" + s.Model
 		}
-		step := ComboStep{Name: name, Base: providerBase(view, s.Provider), Weight: s.Weight}
+		step := ComboStep{Name: name, Base: providerBase(view, s.Provider), Weight: s.Weight, Model: s.Model}
 		// First stored key of the provider; a rejected key then fails over to the
 		// next step instead of being reported as a reachable winner.
 		if keys, err := loadKeys(s.Provider); err == nil && len(keys) > 0 {
@@ -663,26 +689,31 @@ func NewDashboardHandler() http.Handler {
 			}
 			models, err := loadModels()
 			if err != nil || len(models[req.Provider]) == 0 {
-				writeJSON(w, http.StatusOK, map[string]any{"status": 401, "result": "INVALID KEY", "winner": ""})
+				writeJSON(w, http.StatusOK, map[string]any{"status": 400, "result": "NO MODEL CONFIGURED", "winner": ""})
 				return
 			}
 			selected := req.Model
 			if selected == "" {
 				selected = models[req.Provider][0]
 			}
-			// Test all keys for the selected model. A 401 stops; 403 moves on to
-			// the next model, which the client selects and posts again.
+			// Test every stored key for the selected model: the first key the
+			// endpoint accepts wins. A rejected key does not end the test, the
+			// next stored key may still be valid. An answer about the request
+			// itself (400/404/422/429/5xx) ends it: another key would not change
+			// it.
+			outcome := http.StatusUnauthorized
 			for k := 1; k <= keyCount(req.Provider); k++ {
-				switch probeKeyStatus(req.Provider, k) {
-				case http.StatusOK:
+				status := probeKeyStatus(req.Provider, k, selected)
+				if status == http.StatusOK {
 					writeJSON(w, http.StatusOK, map[string]any{"status": 200, "result": "WINNER " + selected, "winner": selected})
 					return
-				case http.StatusUnauthorized:
-					writeJSON(w, http.StatusOK, map[string]any{"status": 401, "result": "INVALID KEY", "winner": ""})
-					return
+				}
+				outcome = status
+				if status != http.StatusUnauthorized && status != http.StatusForbidden {
+					break
 				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"status": 403, "result": "FORBIDDEN", "winner": ""})
+			writeJSON(w, http.StatusOK, map[string]any{"status": outcome, "result": keyTestResult(outcome), "winner": ""})
 		case "/api/system-prompt":
 			switch r.Method {
 			case http.MethodGet:

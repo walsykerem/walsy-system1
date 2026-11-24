@@ -133,7 +133,8 @@ func TestComboProbeUsesPostJSON(t *testing.T) {
 		t.Fatalf("probe not reachable: %+v", got)
 	}
 	if method != http.MethodPost || contentType != "application/json" ||
-		!strings.Contains(body, `"messages"`) || !strings.Contains(body, `"model"`) {
+		!strings.Contains(body, `"model"`) || !strings.Contains(body, `"state"`) ||
+		!strings.Contains(body, `"questions"`) || strings.Contains(body, `"messages"`) {
 		t.Fatalf("probe = %s / %s / %q", method, contentType, body)
 	}
 }
@@ -228,15 +229,61 @@ func TestComboSendsKeyAndRejects401(t *testing.T) {
 	}
 }
 
-func TestComboKeyAcceptedOnNon2xx(t *testing.T) {
+// A non-2xx answer never proves a credential: only a 2xx does. A 422 body is
+// the endpoint refusing the request, not a key that was accepted, so the step
+// fails over instead of winning.
+func TestComboNon2xxWithKeyDoesNotWin(t *testing.T) {
 	resetRouterForTest(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 	}))
 	defer srv.Close()
 	got := RunCombo([]ComboStep{{Name: "c/m", Base: srv.URL, Key: "sk-ok"}}, 0)
-	if got.Winner != "c/m" || !got.Steps[0].OK || got.Steps[0].Detail != "key accepted" {
+	if got.Winner != "" {
+		t.Fatalf("422 must not win: %+v", got)
+	}
+	if len(got.Steps) == 0 || got.Steps[0].OK || got.Steps[0].Detail != "non-2xx response" {
 		t.Fatalf("422 with key: %+v", got)
+	}
+}
+
+// The reported failure: a 400 answered to a chat-shaped request used to be
+// reported as "key accepted" and won the combo on round 1. It must fail over.
+func TestComboBadRequestWithKeyDoesNotWin(t *testing.T) {
+	resetRouterForTest(t)
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer bad.Close()
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ok.Close()
+	got := RunCombo([]ComboStep{
+		{Name: "OpenRouter/typesafe/jev-1.14", Base: bad.URL, Key: "sk-a", Model: "typesafe/jev-1.14"},
+		{Name: "Evren System One/cloudflare/clef", Base: ok.URL, Key: "sk-b", Model: "cloudflare/clef"},
+	}, 0)
+	if got.Winner == "" {
+		t.Fatalf("combo must fail over to the working step: %+v", got)
+	}
+	if got.Steps[0].OK || got.Steps[0].Detail == "key accepted" {
+		t.Fatalf("400 must not be reported as an accepted key: %+v", got.Steps[0])
+	}
+}
+
+// The step's own model id is asked for in full: "typesafe/jev-1.14" is a
+// different model than "jev-1.14".
+func TestComboProbeBodyUsesStepModelField(t *testing.T) {
+	resetRouterForTest(t)
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+	}))
+	defer srv.Close()
+	RunCombo([]ComboStep{{Name: "OpenRouter/typesafe/jev-1.14", Base: srv.URL, Model: "typesafe/jev-1.14"}}, 0)
+	if !strings.Contains(body, `"model":"typesafe/jev-1.14"`) {
+		t.Fatalf("probe body = %s", body)
 	}
 }
 

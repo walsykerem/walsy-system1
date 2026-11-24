@@ -20,6 +20,9 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
 echo "== 4/10 go test -race =="
 # The race detector needs cgo; do not inherit an ambient CGO_ENABLED=0.
 CGO_ENABLED=1 go test -race -count=1 ./...
+# The root package test count, so the evidence file can carry the number a
+# claim quotes instead of the claim counting test functions on its own.
+echo "root test functions: $(grep -h '^func Test' *_test.go | wc -l | tr -d ' ')"
 
 echo "== 5/10 lrecon digest =="
 LRECON="${LRECON:-/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon}"

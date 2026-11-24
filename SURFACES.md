@@ -25,7 +25,16 @@ real-browser agent (F, Chrome on an isolated :8794 instance), then re-checked by
 
 ## B — Keys (provider sheet)
 
-- B1 `TEST` — PASS (`KEY TEST 401 UNAUTHORIZED` / `KEY OK`; never prints the value)
+- B1 `TEST` — PASS (the key value is never printed)
+  - per-key row `TEST` → `POST /ui/providers/keys` `action=test`: `KEY OK` (2xx),
+    `KEY REJECTED` (401/403), `ENDPOINT RESPONDED` (any other status),
+    `ENDPOINT UNREACHABLE`, `ENDPOINT INVALID`, `STATE UNAVAILABLE`,
+    `INVALID KEY` (bad key index)
+  - sheet `TEST` → `POST /api/keytest`: `WINNER <model>` (2xx), `INVALID KEY` (401),
+    `FORBIDDEN` (403), `MODEL NOT FOUND` (404), `RATE LIMITED` (429),
+    `BAD REQUEST` (400/422), `SERVER ERROR` (5xx), `ENDPOINT UNREACHABLE`,
+    `ENDPOINT RESPONDED` (other), `NO MODEL CONFIGURED`; a 403/404 answer retries
+    the next model of the provider
 - B2 `REMOVE` — PASS
 - B3 `ADD KEY` — PASS (duplicate → `KEY ALREADY SAVED`, 8-key cap → `KEY LIMIT REACHED`, unknown provider → `INVALID PROVIDER`, no orphan file)
 - B4 `CLEAR ALL KEYS` — PASS (idempotent)
@@ -33,7 +42,7 @@ real-browser agent (F, Chrome on an isolated :8794 instance), then re-checked by
 
 ## C — Combo
 
-- C1 `RUN COMBO` → `POST /ui/combo/run` — PASS (`WINNER ON ROUND n`, `NO WINNER AFTER n ROUNDS`, 401/403 → `key rejected` fail-over)
+- C1 `RUN COMBO` → `POST /ui/combo/run` — PASS (`WINNER ON ROUND n`, `NO WINNER AFTER n ROUNDS`; only a 2xx wins, 401/403 with a key → `key rejected`, 400/404/422/429/5xx → `non-2xx response` fail-over, no key → `endpoint reachable`; the probe sends the System One wire body with the step's full model id)
 - C2 `+ ADD TO COMBO` → `GET /ui/combo/add` — PASS
 - C3 combo add sheet model buttons — PASS
 - C4 `SEARCH` button — PASS (server-side, works without JS)

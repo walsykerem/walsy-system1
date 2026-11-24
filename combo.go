@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -17,12 +16,14 @@ const comboDefaultTimeout = 1200 * time.Millisecond
 // Weight is a priority hint: zero or negative means 1, higher is tried first.
 // Key is the stored credential for the step; it is never copied into a result.
 // Cost is an optional per-call price; lower cost is tried first.
+// Model is the model id the probe asks for, in full (typesafe/jev-1.14).
 type ComboStep struct {
 	Name   string
 	Base   string
 	Weight int
 	Cost   int
 	Key    string
+	Model  string
 }
 
 // ComboResult records one attempted step without ever carrying secrets.
@@ -73,7 +74,7 @@ func RunCombo(steps []ComboStep, timeout time.Duration) ComboOutcome {
 func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 	r := ComboResult{Name: s.Name, Base: s.Base}
 	start := time.Now()
-	body := comboProbeBody(s.Name)
+	body := soProbeBody(comboModel(s))
 	respB := 0
 	// Every probe is an outbound call; the LOGS sheet counts them too.
 	defer func() { logCall("combo", r.Status, time.Since(start), len(body), respB, nil) }()
@@ -118,27 +119,26 @@ func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 	respB = int(n)
 	resp.Body.Close()
 	cancel()
-	// Without a credential the probe can only prove reachability: POST-only
-	// endpoints answer 405/401/422, which still shows a live listener. With a
-	// credential a 401/403 fails the step, so a rejected key fails over instead
-	// of winning; any other reply proves the key was accepted.
+	// A probe answers one question: is this credential usable on this endpoint?
+	// Only a 2xx proves it. 401/403 reject the key; 400/404/422 mean the
+	// request or the model was wrong, not that the key is good, so they fail
+	// over to the next step instead of winning.
 	r.Status = resp.Status
 	r.LatencyMS = time.Since(start).Milliseconds()
-	if s.Key == "" {
-		r.OK = resp.StatusCode < 500 && resp.StatusCode != http.StatusNotFound
-	} else {
-		rejected := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
-		r.OK = resp.StatusCode < 500 && resp.StatusCode != http.StatusNotFound && !rejected
-	}
 	switch {
-	case r.OK && resp.StatusCode < 300:
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		r.OK = true
 		r.Detail = "endpoint reachable"
-	case r.OK && s.Key != "":
-		r.Detail = "key accepted"
-	case r.OK:
-		r.Detail = "endpoint reachable"
+		if s.Key != "" {
+			r.Detail = "key accepted"
+		}
 	case s.Key != "" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden):
 		r.Detail = "key rejected"
+	case s.Key == "" && resp.StatusCode < 500 && resp.StatusCode != http.StatusNotFound:
+		// Without a credential the probe can only prove reachability: POST-only
+		// endpoints answer 405/401/422, which still shows a live listener.
+		r.OK = true
+		r.Detail = "endpoint reachable"
 	default:
 		r.Detail = "non-2xx response"
 	}
@@ -146,14 +146,17 @@ func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 	return r
 }
 
-// comboProbeBody keeps the message shape but asks for the step's own model, so a
-// gateway that validates the model answers about the credential, not the body.
-func comboProbeBody(name string) string {
-	model := "ping"
-	if i := strings.LastIndexByte(name, '/'); i >= 0 && i+1 < len(name) {
-		model = name[i+1:]
+// comboModel returns the model id a step probes: the step's own model, else
+// the last segment of its name, else the System One default. The full model
+// id matters - "typesafe/jev-1.14" is a different model than "jev-1.14".
+func comboModel(s ComboStep) string {
+	if s.Model != "" {
+		return s.Model
 	}
-	return `{"model":` + strconv.Quote(model) + `,"messages":[{"role":"user","content":"ping"}]}`
+	if i := strings.LastIndexByte(s.Name, '/'); i >= 0 && i+1 < len(s.Name) {
+		return s.Name[i+1:]
+	}
+	return soProbeModel
 }
 
 // comboOrder returns step indices sorted by ascending cost then descending

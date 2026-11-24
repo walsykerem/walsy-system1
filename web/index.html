@@ -483,7 +483,10 @@
           .then(function (r) { return r.json(); })
           .then(function (j) {
             keyResult.textContent = j.result || '';
-            if (j.status === 403) {
+            // A model the endpoint does not serve (forbidden or missing) is
+            // worth trying the next one; a refused request (400) is the
+            // provider's answer and would fail the same way for every model.
+            if (j.status === 403 || j.status === 404) {
               var options = keyModel.options;
               var next = options[keyModel.selectedIndex + 1];
               if (next) { keyModel.value = next.value; keyModel.dispatchEvent(new Event('change')); keyBtn.click(); }
