@@ -25,7 +25,7 @@ var (
 func main() {
 	flag.Parse()
 	if *flagPrintConfig {
-		fmt.Println(opencodeMCPSnippet("system1", *flagTransport, *flagListen, *flagUpstream, flag.Args()))
+		fmt.Println(opencodeMCPSnippet("walsy-system1", *flagTransport, *flagListen, *flagUpstream, flag.Args()))
 		return
 	}
 	if *flagDashboard {

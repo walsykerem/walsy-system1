@@ -472,7 +472,7 @@ func TestPromptSheetStatesTaskPurpose(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET /ui/prompts = %d", code)
 	}
-	for _, want := range []string{"TASK BOARD", "SYSTEM ONE to follow", "tracks them in the receipt chain", "ADD PROMPT"} {
+	for _, want := range []string{"TASK BOARD", "walsy-system1 to follow", "tracks them in the receipt chain", "ADD PROMPT"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("prompts sheet lost task purpose marker %q", want)
 		}

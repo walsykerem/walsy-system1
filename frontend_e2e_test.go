@@ -211,9 +211,9 @@ func TestE2EFrontendFeedbackWalsySystemOne(t *testing.T) {
 	srv, _ := feServer(t)
 	c := feClient(t)
 	home := feHome(t, c, srv)
-	for _, want := range []string{"WALSY", "SYSTEM ONE"} {
+	for _, want := range []string{"WALSY-SYSTEM1", "walsy-system1"} {
 		if !strings.Contains(home, want) {
-			t.Errorf("home missing WALSY/SYSTEM ONE marker %q", want)
+			t.Errorf("home missing walsy-system1 marker %q", want)
 		}
 	}
 	if strings.Contains(strings.ToUpper(home), "FEEDBACK") {

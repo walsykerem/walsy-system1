@@ -22,7 +22,7 @@ import (
 // The report is the artifact under test; the binary and the in-process handlers
 // are the ground truth used to check what the report is allowed to claim.
 const (
-	w23_FuncCount  = 11132
+	w23_FuncCount  = 11136
 	w23_OldFUNAddr = 0x12ad0
 )
 

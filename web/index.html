@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} - Walsy System One</title>
+  <title>{{.Title}} - walsy-system1</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body{{if or .SheetMode .PromptSheetMode}} class="sheet-document"{{end}}>
@@ -12,7 +12,7 @@
   {{if .Msg}}<div class="toasts" role="status" aria-live="polite"><div class="toast {{if or .MsgOK (eq .Msg "LOGS CLEARED")}}toast-ok{{else}}toast-error{{end}}" style="--ms:{{.MsgMs}}ms" data-toast-ms="1500"><button class="toast-close" type="button" aria-label="Dismiss notification">&times;</button><span class="toast-text">{{.Msg}}</span></div></div>{{end}}
   {{if not (or .SheetMode .ComboSheetMode .ComboResultMode .ComboAddMode .LogsSheetMode .PromptSheetMode)}}
   <header class="topbar">
-    <a class="brand" href="/" aria-label="WALSY SYSTEM ONE - reload dashboard">WALSY<span class="slash">/</span>SYSTEM ONE</a>
+    <a class="brand" href="/" aria-label="walsy-system1 - reload dashboard">WALSY-SYSTEM1</a>
     <nav class="topbar-nav" aria-label="Dashboard actions">
       <a class="topbar-link" href="https://github.com/walsykerem/walsy-system1" target="_blank" rel="noopener noreferrer">GITHUB STAR ME</a>
       <a class="topbar-link" href="https://www.linkedin.com/in/kerem-urhan-225870436/" target="_blank" rel="noopener noreferrer">LINKEDIN</a>
@@ -21,7 +21,7 @@
     </nav>
   </header>
   {{if .ReadOnlyBanner}}<p class="mode-banner sr-only" role="status">SALT-OKUNUR / {{.SOMode}} / READ-ONLY</p>{{end}}
-  <p class="so-status sr-only" aria-label="System One read-only status">
+  <p class="so-status sr-only" aria-label="walsy-system1 read-only status">
     <span class="denial-alarm" role="status">SO -32001 DENIAL ALARM (armed)</span>
     <span class="so-health" data-mode="{{.SOMode}}">SO HEALTH: {{.SOMode}} / DEGRADED MONITORED</span>
     <span class="mutation-token">MUTATION TOKEN REJECT</span>
@@ -38,7 +38,7 @@
     {{template "providerKeys" .}}
 
     <section class="config-block">
-      <h2 class="config-title">SYSTEM ONE CONFIG</h2>
+      <h2 class="config-title">WALSY-SYSTEM1 CONFIG</h2>
       <p class="sheet-note">DEFAULT ENDPOINT: {{if .DefaultBase}}{{.DefaultBase}}{{else}}NO DEFAULT ENDPOINT{{end}}</p>
       <p class="sheet-note">Editable; {{if .CanReset}}RESET restores the default.{{else}}this endpoint has no default to reset to.{{end}} Keys are never shown.</p>
       <form class="form config-form" method="post" action="/ui/providers/endpoint">
@@ -511,7 +511,7 @@
 
 {{define "promptsBody"}}
 <div class="sheet-body">
-  <p class="hint">TASK BOARD: save the task you want SYSTEM ONE to follow here. SYSTEM ONE reads saved tasks as a digest on every gated decision and tracks them in the receipt chain. Prompt bodies never leave this machine.</p>
+  <p class="hint">TASK BOARD: save the task you want walsy-system1 to follow here. walsy-system1 reads saved tasks as a digest on every gated decision and tracks them in the receipt chain. Prompt bodies never leave this machine.</p>
   <div class="logs-layout">
     <form class="form system-prompt-panel" method="post" action="/ui/prompts/add" data-prompt-add>
       <h3 class="config-title">ADD PROMPT</h3>

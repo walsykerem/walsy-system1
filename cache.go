@@ -175,12 +175,15 @@ func canonicalState(s string) string {
 // --- decision cache -------------------------------------------------------
 
 // cachedDecision stores only the typed decision + coarse bucket. Raw conf is
-// never held.
+// never held. Label/Steer carry the LLM-backed advice to cache hits, so a hit
+// needs no second SO POST and still tells the caller what to do next.
 type cachedDecision struct {
 	Choice     string
 	ConfBucket string
 	Reason     string
 	Abstain    bool
+	Label      string
+	Steer      string
 }
 
 // cacheTTL admits live 24h; terminal-negative/abstain cells live 1h. Degraded

@@ -4,7 +4,7 @@ Parent: run `bash scripts/verify.sh` after all parallel agents finish. Do not ru
 
 ## 7 gaps under test (`zz_acceptance_test.go`)
 
-1. Client wiring — `opencodeMCPSnippet("system1", []string{"stdio","echo"})` contains `system1`, `-transport`, `stdio`; valid JSON.
+1. Client wiring — `opencodeMCPSnippet("walsy-system1", []string{"stdio","echo"})` contains `walsy-system1`, `-transport`, `stdio`; valid JSON.
 2. Mode default — `soMode()` is advisory by default, returns advisory/enforcing only.
 3. Transport flags — `-upstream` and `-print-client-config` registered (`flag.Lookup`).
 4. Capability opt-in — `soCapability()` empty by default; all fields true, `phase=before-model` with explicit `~/.walsy-system1/config.txt`.

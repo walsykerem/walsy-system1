@@ -118,7 +118,7 @@ func healthFingerprintWithEndpoint(endpoint string) map[string]any {
 		},
 		"degraded": healthState == "degraded",
 		"release_aliases": []string{
-			"systemone", "system one", "Smart Router (System One)",
+			"walsy-system1", "systemone", "system one", "Smart Router (System One)",
 		},
 		"release": map[string]any{
 			"version": "v0.5.109",

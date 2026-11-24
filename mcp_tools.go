@@ -27,7 +27,7 @@ var errFrameTooLarge = errors.New("tools frame too large")
 const cacheDirName = "walsy-system1-cache"
 
 // releaseAliases are the operator-facing release names exposed on MCP surfaces.
-const releaseAliases = "systemone, system one, Smart Router (System One)"
+const releaseAliases = "walsy-system1, systemone, system one, Smart Router (System One)"
 
 func cacheDir() string { return filepath.Join(os.TempDir(), cacheDirName) }
 

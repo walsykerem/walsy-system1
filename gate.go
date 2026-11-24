@@ -424,26 +424,149 @@ func routerBudgetLeft() int {
 	return routerState.budgetLeft
 }
 
-// askSOQOnce is the single bounded POST. Label validity is checked by the
-// parser; the caller applies the confidence cut and all admission policy.
+// soCandidate is one provider in the decision pool. Every candidate carries
+// its own credential: a key never travels to another provider's base.
+type soCandidate struct {
+	Name  string
+	Base  string
+	Key   string
+	Model string
+}
+
+func bakedProviderBase(base string) bool {
+	for i := range bakedProviders {
+		if bakedProviders[i].Base == base {
+			return true
+		}
+	}
+	return false
+}
+
+// soPool returns the operator's combo first, then the pinned System One
+// endpoint as the backstop. The pool only grows on the default endpoint: an
+// explicit override pins one platform and keeps stubbed tests hermetic.
+func soPool() []soCandidate {
+	if soEndpoint != soEndpointDefaultBase {
+		// FA9: an explicit override still honours the latency-aware endpoint list.
+		return []soCandidate{{Name: "systemone", Base: soSelectEndpoint(), Key: soAPIKey(), Model: soProbeModel}}
+	}
+	out := make([]soCandidate, 0, 4)
+	steps, serr := loadCombo()
+	providers, _, perr := loadRegistryWithOverrides()
+	if serr == nil && perr == nil {
+		seen := make(map[string]bool)
+		for _, s := range steps {
+			var p *provider
+			for i := range providers {
+				if providers[i].Name == s.Provider {
+					p = &providers[i]
+					break
+				}
+			}
+			if p == nil || p.Base == "" || seen[p.Base] || baseRejectReason(p.Base) != "" {
+				continue
+			}
+			// Enforcing pins the oracle: only baked-equivalent bases may carry a
+			// key, so a registry edit cannot route it to an unvetted endpoint.
+			if soMode() == soModeEnforcing && !bakedProviderBase(p.Base) {
+				continue
+			}
+			key := ""
+			if keys, _ := loadKeys(p.Name); len(keys) > 0 {
+				key = keys[0]
+			}
+			if key == "" {
+				key = os.Getenv(p.KeyEnv)
+			}
+			if key == "" {
+				continue
+			}
+			model := s.Model
+			if model == "" {
+				model = soProbeModel
+			}
+			seen[p.Base] = true
+			out = append(out, soCandidate{Name: p.Name, Base: p.Base, Key: key, Model: model})
+		}
+	}
+	back := soCandidate{Name: "systemone", Base: soEndpoint, Key: soAPIKey(), Model: soProbeModel}
+	if back.Key != "" && baseRejectReason(back.Base) == "" {
+		for _, c := range out {
+			if c.Base == back.Base {
+				return out
+			}
+		}
+		out = append(out, back)
+	}
+	return out
+}
+
+// askSOQOnce walks the decision pool inside one bounded budget. Label
+// validity is checked by the parser; the caller applies the confidence cut
+// and all admission policy.
 func askSOQOnce(state string, q soQuestion) soDecision {
 	if !questionApplicable(q, state) {
 		routerAudit("gate", "reason", "no-applicable-question", "status", "skipped")
 		return soDecision{}
 	}
-	// Fail closed before any POST if the resolved endpoint would leak the key.
-	if baseRejectReason(soEndpoint) != "" {
+	cands := soPool()
+	if len(cands) == 0 {
 		routerAudit("gate", "reason", "so-endpoint-rejected", "status", "denied")
 		return soDecision{}
 	}
-	key := soAPIKey()
-	if key == "" {
-		return soDecision{}
+	deadline := soTimeout
+	if soMode() == soModeEnforcing {
+		// T3: an enforcing request must not echo until the SO answers. The
+		// advisory 150ms cap stays intact for FA9/N15 latency guards.
+		deadline = soEnforcingTimeout
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	until := time.Now().Add(deadline)
+	var reason string
+	timedOut := false
+	for i, cand := range cands {
+		if ctx.Err() != nil {
+			timedOut = true
+			break
+		}
+		slice := time.Until(until) / time.Duration(len(cands)-i)
+		if slice <= 0 {
+			timedOut = true
+			break
+		}
+		d, ok := soAskCandidate(ctx, cand, state, q, slice)
+		if ok {
+			if cand.Name != "systemone" {
+				routerAudit("gate", "provider", cand.Name)
+			}
+			return d
+		}
+		if d.Reason != "" && reason == "" {
+			reason = d.Reason
+		}
+		if d.TimedOut {
+			timedOut = true
+		}
+	}
+	if reason != "" {
+		return soDecision{Reason: reason}
+	}
+	if timedOut {
+		return soDecision{TimedOut: true}
+	}
+	return soDecision{}
+}
 
+// soAskCandidate posts one gate question to one pool candidate. ok is true
+// only for a usable SO answer; a transport or body failure fails over to the
+// next candidate inside the shared deadline.
+func soAskCandidate(ctx context.Context, cand soCandidate, state string, q soQuestion, slice time.Duration) (soDecision, bool) {
+	cctx, cancel := context.WithTimeout(ctx, slice)
+	defer cancel()
 	// Stable identifiers are hashes only (never the raw prompt) so SO can cache
 	// across frames without receiving prompt bodies. See N6.
-	sid, pck := soStableIDs("clef", q, state)
+	sid, pck := soStableIDs(cand.Model, q, state)
 	questions := contextQuestions(state)
 	questions["gate"] = gateQuestion(q)
 	// Live SO rejects top-level session_id/prompt_cache_key (HTTP 422). Keep
@@ -454,47 +577,37 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 		State     string                `json:"state"`
 		Questions map[string]soQuestion `json:"questions"` // object, never array
 	}{
-		Model:     "clef",
+		Model:     cand.Model,
 		State:     wireState,
 		Questions: questions,
 	})
 	if err != nil {
-		return soDecision{}
+		return soDecision{}, false
 	}
-
-	deadline := soTimeout
-	if soMode() == soModeEnforcing {
-		// T3: an enforcing request must not echo until the SO answers. The
-		// advisory 150ms cap stays intact for FA9/N15 latency guards.
-		deadline = soEnforcingTimeout
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	ep := soSelectEndpoint()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost, cand.Base, bytes.NewReader(body))
 	if err != nil {
-		return soDecision{}
+		return soDecision{}, false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", key)
+	req.Header.Set("x-api-key", cand.Key)
 
 	start := time.Now()
 	outcome, respB := "error", 0
 	var usage map[string]any
 	defer func() {
 		latency := time.Since(start)
-		soRecordEndpoint(ep, latency)
+		soRecordEndpoint(cand.Base, latency)
 		logCall("systemone", outcome, latency, len(body), respB, usage)
 	}()
 
 	resp, err := soClient.Do(req)
 	if err != nil {
 		d := soDecision{}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(cctx.Err(), context.DeadlineExceeded) {
 			outcome = "timeout"
 			d.TimedOut = true
 		}
-		return d
+		return d, false
 	}
 	defer resp.Body.Close()
 	// Read one byte past the cap so an oversized body is rejected, never parsed
@@ -504,25 +617,27 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	if len(raw) > 1<<20 {
 		outcome = "malformed_response"
 		routerAudit("gate", "reason", "malformed_response", "status", "oversized")
-		return soDecision{Reason: "malformed_response"}
+		return soDecision{Reason: "malformed_response"}, false
 	}
 	if resp.StatusCode != http.StatusOK {
 		outcome = fmt.Sprintf("http_%d", resp.StatusCode)
-		return soDecision{}
+		return soDecision{}, false
 	}
 	if rerr != nil {
-		return soDecision{}
+		return soDecision{}, false
 	}
 
 	// Strict SO boundary: <=1 MiB (matching the read cap), exactly one JSON
 	// document, no duplicate/case-variant keys, top-level allowlist only.
+	// "provider" is a routing hint some platforms echo; it never steers.
 	fields, err := strictObject(raw, 1<<20, map[string]bool{
 		"model": true, "answers": true, "usage": true, "id": true,
 		"session_id": true, "prompt_cache_key": true, // FA8: only if echoed
+		"provider": true,
 	})
 	if err != nil {
 		outcome = "bad_json"
-		return soDecision{}
+		return soDecision{}, false
 	}
 	var out struct {
 		Answers map[string]soAnswer `json:"answers"`
@@ -538,12 +653,12 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	}
 	if out.Answers == nil {
 		outcome = "bad_json"
-		return soDecision{}
+		return soDecision{}, false
 	}
 	a, ok := out.Answers["gate"]
 	if !ok {
 		outcome = "invalid-response"
-		return soDecision{}
+		return soDecision{}, false
 	}
 	rawChoice := a.Choice
 	a, reason, valid := validSOAnswer(a, q)
@@ -553,12 +668,12 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 		// keep their precise invalid-response reason.
 		if reason == "invalid-response" && isGenericQuestion(q) && !knownRegistryLabel(rawChoice) {
 			outcome = "so-degraded"
-			return soDecision{}
+			return soDecision{}, false
 		}
 		// YC5: a missing, misrouted or malformed answer is never a decision.
 		outcome = reason
 		routerAudit("gate", "reason", reason, "status", "rejected")
-		return soDecision{Reason: reason}
+		return soDecision{Reason: reason}, false
 	}
 	d := soDecision{Choice: a.Choice, Conf: a.Confidence, AnswerType: a.Type,
 		Score: a.Score, Probabilities: a.Probabilities,
@@ -566,13 +681,14 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 	d.Trace = rankingTrace(d, "")
 	if a.Noul {
 		d.AnswerType = "noul" // explicit abstain, typed for FA11
-		return d
+		outcome = "ok"
+		return d, true
 	}
 	if len(a.Probabilities) >= 2 {
 		d.Margin, d.MarginKnown = answerMargin(a.Probabilities)
 	}
 	outcome = "ok"
-	return d
+	return d, true
 }
 
 // soAnswer is the whole decoded SO answer for one question. Strict decoding in

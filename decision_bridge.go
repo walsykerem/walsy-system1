@@ -295,15 +295,22 @@ func cacheResult(r routeResult) cachedDecision {
 	if r.Abstained {
 		return cachedDecision{Abstain: true, Reason: r.Reason, ConfBucket: r.ConfBucket}
 	}
-	return cachedDecision{Choice: "yes", ConfBucket: r.ConfBucket, Reason: "margin=1"}
+	label := r.Label
+	if label == "" {
+		label = r.LastDecision.Choice
+	}
+	return cachedDecision{Choice: "yes", ConfBucket: r.ConfBucket, Reason: "margin=1", Label: label, Steer: r.Steer}
 }
 
-// cachedResult never serves an abstain cell as a label or an admit.
+// cachedResult serves a stored LLM-backed label and steer without a second SO
+// POST. Raw confidence stays out of the cell, so LastDecision remains zero on
+// a hit; only the coarse bucket and the typed advice cross the boundary.
 func cachedResult(c cachedDecision) routeResult {
 	if c.Abstain {
 		return routeResult{Decision: decPass, Reason: c.Reason, Abstained: true, ConfBucket: c.ConfBucket}
 	}
-	return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true, ConfBucket: c.ConfBucket}
+	return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true,
+		ConfBucket: c.ConfBucket, Label: c.Label, Steer: c.Steer}
 }
 
 // cacheKey binds the request key to the engine generation and pinned oracle

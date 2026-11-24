@@ -451,7 +451,7 @@ func TestSimFA6HashOnlyCache(t *testing.T) {
 		t.Fatalf("cell key is not the hex digest: %s", cell.key)
 	}
 	typ := reflect.TypeOf(cell.dec)
-	allowed := map[string]bool{"Choice": true, "ConfBucket": true, "Reason": true, "Abstain": true}
+	allowed := map[string]bool{"Choice": true, "ConfBucket": true, "Reason": true, "Abstain": true, "Label": true, "Steer": true}
 	if typ.NumField() != len(allowed) {
 		t.Fatalf("cachedDecision has %d fields, want only typed decision/bucket", typ.NumField())
 	}

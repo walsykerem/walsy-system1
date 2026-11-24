@@ -177,7 +177,7 @@ func TestJSParityUIForms(t *testing.T) {
 		t.Fatal("sheet content leaked into home document")
 	}
 	sheet := parityGet(t, s, "/ui/providers/sheet?name=Evren+System+One")
-	for _, anchor := range []string{"ADD API KEY", "SYSTEM ONE CONFIG", "SAVE ENDPOINT", "KEY TEST"} {
+	for _, anchor := range []string{"ADD API KEY", "WALSY-SYSTEM1 CONFIG", "SAVE ENDPOINT", "KEY TEST"} {
 		if !strings.Contains(sheet, anchor) {
 			t.Fatalf("provider sheet document missing: %s", anchor)
 		}

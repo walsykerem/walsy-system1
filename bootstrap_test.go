@@ -58,9 +58,9 @@ func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
 	// at the self-contained tools server instead of a dead invocation.
 	raw = opencodeMCPSnippet("", "", "", "", nil)
 	got = parseBootstrapSnippet(t, raw)
-	srv, ok = got.MCP.Servers["system1"]
+	srv, ok = got.MCP.Servers["walsy-system1"]
 	if !ok {
-		t.Fatalf("empty name must default to system1: %s", raw)
+		t.Fatalf("empty name must default to walsy-system1: %s", raw)
 	}
 	if len(srv.Command) != 3 || srv.Command[1] != "-transport" || srv.Command[2] != "tools" {
 		t.Fatalf("empty-upstream command = %v, want -transport tools", srv.Command)

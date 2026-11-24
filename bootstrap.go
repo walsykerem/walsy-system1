@@ -15,7 +15,7 @@ import (
 // or other secrets.
 func opencodeMCPSnippet(name, transport, listen, upstreamAddr string, upstream []string) string {
 	if name == "" {
-		name = "system1"
+		name = "walsy-system1"
 	}
 	if transport == "" {
 		transport = "stdio"
