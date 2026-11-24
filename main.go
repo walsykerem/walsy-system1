@@ -62,7 +62,6 @@ func main() {
 }
 
 func runStdio(args []string) {
-	prepareCacheDir(os.Stderr)
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: walsy-system1 [-transport stdio] <upstream MCP command> [args...]")
 		os.Exit(2)

@@ -397,8 +397,9 @@ func TestSimFA8StickyPinStrictHit(t *testing.T) {
 		if r3.Reason != "cache-hit" || r3.Decision != decPin {
 			t.Fatalf("cache eventually broken: %s", w28_signature(r3))
 		}
-		if r3.ConfBucket != r1.ConfBucket || r3.LastDecision.Conf != 0 {
-			t.Fatalf("cache hit lost typed/bucket-only decision: %s", w28_signature(r3))
+		if r3.ConfBucket != r1.ConfBucket || r3.LastDecision.Conf != bucketConf(r1.ConfBucket) ||
+			r3.LastDecision.Choice != r1.LastDecision.Choice {
+			t.Fatalf("cache hit lost typed/bucket-derived decision: %s", w28_signature(r3))
 		}
 		if got := stub.count(); got != 1 {
 			t.Fatalf("POSTs after three identical decisions = %d, want 1 (strict immediate hit)", got)

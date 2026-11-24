@@ -191,6 +191,9 @@ type cachedDecision struct {
 const (
 	cacheTTLPositive = 24 * time.Hour
 	cacheTTNNegative = time.Hour
+	// shortcut: a hot key may coast one window past its cell TTL; upgrade to a
+	// per-item staleness budget when freshness matters more than latency.
+	warmStaleGrace = 30 * time.Second
 )
 
 type cacheCell struct {
@@ -213,22 +216,24 @@ func newDecisionCache() *decisionCache {
 func (c *decisionCache) lookup(key string) (cachedDecision, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.lookupLocked(key)
+	d, _, ok := c.lookupLocked(key)
+	return d, ok
 }
 
 // lookupLocked requires c.mu. Expired cells are evicted on sight (lazy TTL).
-func (c *decisionCache) lookupLocked(key string) (cachedDecision, bool) {
+// The expiry returns with the decision so the warm fallback stays bounded.
+func (c *decisionCache) lookupLocked(key string) (cachedDecision, time.Time, bool) {
 	if el, ok := c.idx[key]; ok {
 		cell := el.Value.(*cacheCell)
 		if !time.Now().Before(cell.expiresAt) {
 			delete(c.idx, key)
 			c.ll.Remove(el)
-			return cachedDecision{}, false
+			return cachedDecision{}, time.Time{}, false
 		}
 		c.ll.MoveToFront(el)
-		return cell.dec, true
+		return cell.dec, cell.expiresAt, true
 	}
-	return cachedDecision{}, false
+	return cachedDecision{}, time.Time{}, false
 }
 
 // store writes the cell under the mutex with a lifetime by decision type.
@@ -265,20 +270,22 @@ func (c *decisionCache) storeLocked(key string, d cachedDecision) {
 // shardedCache splits the LRU across eight fixed shards by the first key byte.
 // shortcut: static 8-way split, no dynamic resharding; upgrade only on measured p95 lock contention.
 type shardedCache struct {
-	shards     [8]*decisionCache
-	warmMu     sync.Mutex
-	warmHits   map[[32]byte]int
-	warmAt     map[[32]byte]time.Time
-	warmDec    map[[32]byte]cachedDecision
-	refreshing map[[32]byte]bool
+	shards      [8]*decisionCache
+	warmMu      sync.Mutex
+	warmHits    map[[32]byte]int
+	warmAt      map[[32]byte]time.Time
+	warmDec     map[[32]byte]cachedDecision
+	warmExpires map[[32]byte]time.Time // absolute ceiling: TTL + one hot window
+	refreshing  map[[32]byte]bool
 }
 
 func newShardedCache() *shardedCache {
 	c := &shardedCache{
-		warmHits:   make(map[[32]byte]int),
-		warmAt:     make(map[[32]byte]time.Time),
-		warmDec:    make(map[[32]byte]cachedDecision),
-		refreshing: make(map[[32]byte]bool),
+		warmHits:    make(map[[32]byte]int),
+		warmAt:      make(map[[32]byte]time.Time),
+		warmDec:     make(map[[32]byte]cachedDecision),
+		warmExpires: make(map[[32]byte]time.Time),
+		refreshing:  make(map[[32]byte]bool),
 	}
 	for i := range c.shards {
 		c.shards[i] = newDecisionCache()
@@ -297,12 +304,14 @@ func (c *shardedCache) needsPrewarm(k [32]byte, threshold int, window time.Durat
 		c.warmHits = make(map[[32]byte]int)
 		c.warmAt = make(map[[32]byte]time.Time)
 		c.warmDec = make(map[[32]byte]cachedDecision)
+		c.warmExpires = make(map[[32]byte]time.Time)
 		c.refreshing = make(map[[32]byte]bool)
 	}
 	now := time.Now()
 	if !c.warmAt[k].Add(window).After(now) {
 		c.warmHits[k], c.warmAt[k] = 0, now
 		delete(c.warmDec, k)
+		delete(c.warmExpires, k)
 	}
 	c.warmHits[k]++
 	if c.warmHits[k] < threshold || c.refreshing[k] {
@@ -330,7 +339,8 @@ func (c *shardedCache) lookup(k [32]byte) (cachedDecision, bool) {
 	s := c.shard(k)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.lookupLocked(hex.EncodeToString(k[:]))
+	d, _, ok := s.lookupLocked(hex.EncodeToString(k[:]))
+	return d, ok
 }
 
 // lookupForDecision keeps hot-key prewarm on the decision path only; the
@@ -340,11 +350,12 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 	s := c.shard(k)
 	key := hex.EncodeToString(k[:])
 	s.mu.Lock()
-	d, hit := s.lookupLocked(key)
+	d, expiresAt, hit := s.lookupLocked(key)
 	if hit {
 		s.mu.Unlock()
 		c.warmMu.Lock()
 		c.warmDec[k] = d
+		c.warmExpires[k] = expiresAt.Add(warmStaleGrace)
 		c.warmMu.Unlock()
 		if hot {
 			// Async TTL refresh from a lookup hit: no second SO POST.
@@ -359,12 +370,19 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 	if c.isHot(k, 4, 30*time.Second) {
 		c.warmMu.Lock()
 		warm, ok := c.warmDec[k]
+		deadline := c.warmExpires[k]
 		c.warmMu.Unlock()
-		if ok {
+		if ok && time.Now().Before(deadline) {
 			s.storeLocked(key, warm)
 			s.mu.Unlock()
 			c.refreshDone(k) // no async refresh was launched on this warm hit
 			return warm, true
+		}
+		if ok {
+			c.warmMu.Lock()
+			delete(c.warmDec, k)
+			delete(c.warmExpires, k)
+			c.warmMu.Unlock()
 		}
 	}
 	s.mu.Unlock()

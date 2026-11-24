@@ -100,7 +100,8 @@ func TestRound9EnforcingSkipsUnvettedBase(t *testing.T) {
 }
 
 // R9: a cache hit carries the stored LLM label and steer without a second
-// POST. Raw confidence stays out of the cell (FA8 invariant).
+// POST. Only the coarse bucket stays in the cell; the typed answer is rebuilt
+// from it so tools on a cache hit keep the live-call shape.
 func TestRound9CacheHitCarriesLLM(t *testing.T) {
 	admit := routeResult{Decision: decPin, Reason: "so-admit", Covered: true,
 		ConfBucket: "0.9", Label: "build", Steer: "continue",
@@ -111,8 +112,9 @@ func TestRound9CacheHitCarriesLLM(t *testing.T) {
 	}
 	hit := cachedResult(cell)
 	if hit.Reason != "cache-hit" || hit.Decision != decPin || hit.Label != "build" ||
-		hit.Steer != "continue" || hit.ConfBucket != "0.9" || hit.LastDecision.Conf != 0 {
-		t.Fatalf("cache hit = %+v, want label/steer with no raw conf", hit)
+		hit.Steer != "continue" || hit.ConfBucket != "0.9" || hit.LastDecision.Conf != 0.9 ||
+		hit.LastDecision.Choice != "build" {
+		t.Fatalf("cache hit = %+v, want label/steer and bucket-derived typed decision", hit)
 	}
 	// A generic admit has no registry label; the SO choice is the label.
 	generic := cacheResult(routeResult{Decision: decPin, Reason: "so-admit", Covered: true,

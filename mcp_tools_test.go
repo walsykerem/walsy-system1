@@ -199,7 +199,7 @@ func TestToolsDecideMissingArgs(t *testing.T) {
 		`{}`,
 	}
 	for _, args := range cases {
-		text, err := callTool("system1_decide", json.RawMessage(args))
+		text, err := callTool("system1_decide", json.RawMessage(args), newDecisionBridge())
 		if err != nil {
 			t.Fatalf("args %s: unexpected transport error: %v", args, err)
 		}

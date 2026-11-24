@@ -360,7 +360,13 @@ func auditSignalRows(rows []auditRow) []auditRow {
 	out := make([]auditRow, 0, len(rows))
 	for _, row := range rows {
 		switch row.Event {
-		case "call", "decision", "drift_alarm", "writeguard", "diffguard":
+		case "call":
+			// Combo probes are reachability checks, not decisions; the raw audit
+			// keeps them, but they must not accumulate on the LOGS sheet.
+			if row.Method != "combo" {
+				out = append(out, row)
+			}
+		case "decision", "drift_alarm", "writeguard", "diffguard":
 			out = append(out, row)
 		case "gate":
 			if row.Tool != "" || row.Decision != "" || row.Label != "" {

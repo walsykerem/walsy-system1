@@ -23,25 +23,8 @@ type frameLimitReader struct {
 
 var errFrameTooLarge = errors.New("tools frame too large")
 
-// cacheDirName is the single temp folder for cache and System One scratch files.
-const cacheDirName = "walsy-system1-cache"
-
 // releaseAliases are the operator-facing release names exposed on MCP surfaces.
 const releaseAliases = "walsy-system1, systemone, system one, Smart Router (System One)"
-
-func cacheDir() string { return filepath.Join(os.TempDir(), cacheDirName) }
-
-// prepareCacheDir wipes only the dedicated cache folder before an MCP stdin
-// transport starts. A failed wipe is reported but never blocks cold start.
-func prepareCacheDir(stderr io.Writer) {
-	dir := cacheDir()
-	if err := os.RemoveAll(dir); err != nil {
-		fmt.Fprintln(stderr, "cache remove:", err)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		fmt.Fprintln(stderr, "cache mkdir:", err)
-	}
-}
 
 func (l *frameLimitReader) Read(p []byte) (int, error) {
 	if l.n >= maxToolsFrame {
@@ -59,7 +42,6 @@ func (l *frameLimitReader) Read(p []byte) (int, error) {
 // dashboard state and the relay audit log as two read-only tools, so the proxy
 // is a visible MCP entry instead of only wrapping someone else's server.
 func runToolsServer(in io.Reader, out io.Writer) {
-	prepareCacheDir(os.Stderr)
 	lr := &frameLimitReader{r: in}
 	dec := json.NewDecoder(lr)
 	enc := json.NewEncoder(out)
@@ -82,7 +64,7 @@ func runToolsServer(in io.Reader, out io.Writer) {
 		if len(req.ID) == 0 {
 			continue // notification
 		}
-		_ = enc.Encode(toolsReply(req.ID, req.Method, req.Params, dec))
+		_ = enc.Encode(toolsReply(req.ID, req.Method, req.Params, d, dec))
 	}
 }
 
@@ -138,7 +120,7 @@ func toolsGateFrame(raw []byte, req struct {
 	return b
 }
 
-func toolsReply(id json.RawMessage, method string, params json.RawMessage, frameDec ...soDecision) map[string]any {
+func toolsReply(id json.RawMessage, method string, params json.RawMessage, d *decisionBridge, frameDec ...soDecision) map[string]any {
 	base := map[string]any{"jsonrpc": "2.0", "id": id}
 	switch method {
 	case "initialize":
@@ -158,7 +140,7 @@ func toolsReply(id json.RawMessage, method string, params json.RawMessage, frame
 			base["error"] = map[string]any{"code": -32602, "message": "invalid params"}
 			return base
 		}
-		text, err := callTool(call.Name, call.Arguments, frameDec...)
+		text, err := callTool(call.Name, call.Arguments, d, frameDec...)
 		if err != nil {
 			base["error"] = map[string]any{"code": -32602, "message": err.Error()}
 			return base
@@ -198,7 +180,7 @@ var toolDecideDef = map[string]any{
 	}},
 }
 
-func callTool(name string, args json.RawMessage, frameDec ...soDecision) (string, error) {
+func callTool(name string, args json.RawMessage, d *decisionBridge, frameDec ...soDecision) (string, error) {
 	switch name {
 	case "system1_status":
 		return toolsStatus()
@@ -228,7 +210,7 @@ func callTool(name string, args json.RawMessage, frameDec ...soDecision) (string
 		if a.Item == "" || a.State == "" {
 			return toolsError("item and state are required"), nil
 		}
-		return toolsDecide(a.Item, a.State, a.Phase, a.Strict, frameDec...), nil
+		return toolsDecideWithBridge(a.Item, a.State, a.Phase, a.Strict, d, frameDec...), nil
 	}
 	return "", errors.New("unknown tool")
 }
@@ -254,6 +236,12 @@ func toolsError(msg string) string {
 // SO answer rides on routeResult.LastDecision; routeResult's bucket alone is
 // too coarse for the label/confidence this tool must return.
 func toolsDecide(item, state, phase string, strict bool, frameDec ...soDecision) string {
+	return toolsDecideWithBridge(item, state, phase, strict, newDecisionBridge(), frameDec...)
+}
+
+// toolsDecideWithBridge keeps one cache for the lifetime of an MCP session; a
+// direct call without a session still gets a fresh bridge.
+func toolsDecideWithBridge(item, state, phase string, strict bool, bridge *decisionBridge, frameDec ...soDecision) string {
 	it, ok := decisionItemFor(item)
 	if !ok {
 		return toolsError("unknown item")
@@ -278,7 +266,7 @@ func toolsDecide(item, state, phase string, strict bool, frameDec ...soDecision)
 			"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
 			"authority": true, "calibrated": true, "opt_in": true,
 		})
-		_, d = newDecisionBridge().decideFull(req)
+		_, d = bridge.decideFull(req)
 	}
 	if d.TimedOut {
 		return toolsError("model timeout")

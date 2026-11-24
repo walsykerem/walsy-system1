@@ -109,6 +109,7 @@ func TestWarmHitClearsRefreshFlag(t *testing.T) {
 	c.warmHits[k] = 4
 	c.warmAt[k] = time.Now()
 	c.warmDec[k] = d
+	c.warmExpires[k] = time.Now().Add(time.Hour)
 	c.refreshing[k] = true
 	c.warmMu.Unlock()
 

@@ -302,15 +302,43 @@ func cacheResult(r routeResult) cachedDecision {
 	return cachedDecision{Choice: "yes", ConfBucket: r.ConfBucket, Reason: "margin=1", Label: label, Steer: r.Steer}
 }
 
+// bucketConf maps the stored allowlisted bucket back to its lower bound, so a
+// cache hit can return a typed answer without keeping a raw confidence in RAM.
+func bucketConf(bucket string) float64 {
+	switch bucket {
+	case "1.0":
+		return 1
+	case "0.9":
+		return 0.9
+	case "0.8":
+		return 0.8
+	}
+	return 0
+}
+
 // cachedResult serves a stored LLM-backed label and steer without a second SO
-// POST. Raw confidence stays out of the cell, so LastDecision remains zero on
-// a hit; only the coarse bucket and the typed advice cross the boundary.
+// POST. Only the coarse bucket crosses the cell boundary; the typed decision is
+// rebuilt from it so tools on a cache hit see the same shape as on a live call.
 func cachedResult(c cachedDecision) routeResult {
 	if c.Abstain {
 		return routeResult{Decision: decPass, Reason: c.Reason, Abstained: true, ConfBucket: c.ConfBucket}
 	}
+	label := c.Label
+	if label == "" {
+		label = c.Choice
+	}
 	return routeResult{Decision: decPin, Reason: "cache-hit", Covered: true,
-		ConfBucket: c.ConfBucket, Label: c.Label, Steer: c.Steer}
+		ConfBucket: c.ConfBucket, Label: label, Steer: c.Steer,
+		LastDecision: soDecision{Choice: label, Conf: bucketConf(c.ConfBucket)}}
+}
+
+// passesKeyConfRule enforces the rule already embedded in the cache key:
+// conf >= 0.8 and, when the endpoint supplies probabilities, margin >= 0.10.
+func passesKeyConfRule(d soDecision) bool {
+	if d.Conf < 0.8 {
+		return false
+	}
+	return !d.MarginKnown || d.Margin >= 0.10
 }
 
 // cacheKey binds the request key to the engine generation and pinned oracle
@@ -322,6 +350,7 @@ func (d *decisionBridge) cacheKey(request []byte, cap capabilityConfig, gen uint
 	_, _ = h.Write(base[:])
 	_ = binary.Write(h, binary.BigEndian, gen)
 	_, _ = h.Write(d.oraclePin)
+	_, _ = h.Write([]byte(d.endpointSnapshot)) // a shared cache must not mix endpoints
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out
@@ -408,9 +437,10 @@ func (d *decisionBridge) decide(request []byte) routeResult {
 	if finalGen != gen {
 		return r
 	}
-	if r.Decision == decPin || (r.Abstained && terminalNegative[r.Reason]) {
+	storeOK := r.Decision == decPin && passesKeyConfRule(r.LastDecision)
+	if storeOK || (r.Abstained && terminalNegative[r.Reason]) {
 		d.cache.store(key, cacheResult(r))
-		if r.Decision == decPin {
+		if storeOK {
 			d.setHold(finalGen, admitConf)
 		}
 	}

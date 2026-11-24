@@ -116,18 +116,18 @@ func TestLogsSheetDropsFrameworkChatterAndKeepsAuditTime(t *testing.T) {
 	rec := httptest.NewRecorder()
 	uiLogsSheet(rec, nil)
 	body := rec.Body.String()
-	for _, want := range []string{`data-ts="1760000000000"`, "combo", `data-ts="1760000001000"`, "admit"} {
+	for _, want := range []string{`data-ts="1760000001000"`, "admit"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("sheet missing %q: %s", want, body)
 		}
 	}
-	for _, drop := range []string{"resources/list", "initialize", "layer0-scope"} {
+	for _, drop := range []string{"resources/list", "initialize", "layer0-scope", `data-ts="1760000000000"`} {
 		if strings.Contains(body, drop) {
 			t.Errorf("framework chatter %q still rendered", drop)
 		}
 	}
-	if n := strings.Count(body, `class="log-usage"`); n != 2 {
-		t.Fatalf("rendered rows = %d, want 2", n)
+	if n := strings.Count(body, `class="log-usage"`); n != 1 {
+		t.Fatalf("rendered rows = %d, want 1 (combo probe is hidden)", n)
 	}
 }
 
