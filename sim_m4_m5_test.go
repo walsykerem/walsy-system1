@@ -37,7 +37,10 @@ type w20_check struct {
 const w20_key = "w20-sim-key-9f3a7c1d"
 const w20_sentinel = "w20-redaction-sentinel-7c1d"
 const w20_answer = `{"model":"clef","answers":{"gate":{"type":"choice","choice":"yes","confidence":0.96}},"usage":{}}`
-const w20_default_arch = "/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy-arch-map"
+
+// Same arch map CI sets (ci-go-core.yml): a repo-relative fixture, so a local
+// run without WALSY_SIM_ARCHMAP judges the same evidence CI does.
+const w20_default_arch = "testdata/ci-linux"
 
 func w20_add(t *testing.T, out *[]w20_check, id, verdict, detail string) {
 	t.Helper()
