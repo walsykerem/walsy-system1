@@ -1001,6 +1001,21 @@ func readFrame(br *bufio.Reader) ([]byte, error) {
 	}
 }
 
+// idleReadDeadline reports the per-frame read deadline for r. A stdio session
+// passes *os.File, where minutes of idle are normal and EOF is the termination
+// signal, so it gets no deadline: a timed-out read there leaves every later
+// upstream frame unread. Sockets keep the deadline because the unix transport
+// caps concurrent opens at 64 slots.
+func idleReadDeadline(r io.Reader) (time.Time, bool) {
+	if _, ok := r.(*os.File); ok {
+		return time.Time{}, false
+	}
+	if _, ok := r.(interface{ SetDeadline(time.Time) error }); !ok {
+		return time.Time{}, false
+	}
+	return time.Now().Add(httpReadTimeout), true
+}
+
 // bridgeStdio is the fail-safe stdio interceptor. Advisory client frames are
 // forwarded byte-for-byte before any decision work; enforcing frames are
 // gated first. Initialize results get the MCP marker added.
@@ -1033,10 +1048,12 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 		defer close(done)
 		br := bufio.NewReader(clientIn)
 		for {
-			// The accept-time deadline is one absolute instant; refresh it per
-			// frame so a long-lived session with traffic is never cut at t+30s.
+			// Refresh per frame so a long-lived socket session with traffic is
+			// never cut at t+30s; stdio gets no deadline at all (long idle).
 			if c, ok := clientIn.(interface{ SetDeadline(time.Time) error }); ok {
-				_ = c.SetDeadline(time.Now().Add(httpReadTimeout))
+				if deadline, arm := idleReadDeadline(clientIn); arm {
+					_ = c.SetDeadline(deadline)
+				}
 			}
 			frame, err := readFrame(br)
 			if len(frame) > 0 {
@@ -1069,10 +1086,12 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 	}()
 	br := bufio.NewReader(upstreamOut)
 	for {
-		// Mirror the client read loop: a silent upstream must not hold a
-		// bridge slot forever (the unix transport caps opens at 64).
+		// Mirror the client read loop: a silent socket must not hold one of the
+		// 64 unix-transport slots forever; a stdio session stays exempt.
 		if c, ok := upstreamOut.(interface{ SetDeadline(time.Time) error }); ok {
-			_ = c.SetDeadline(time.Now().Add(httpReadTimeout))
+			if deadline, arm := idleReadDeadline(upstreamOut); arm {
+				_ = c.SetDeadline(deadline)
+			}
 		}
 		frame, err := readFrame(br)
 		if len(frame) > 0 {

@@ -24,7 +24,7 @@ import (
 
 const (
 	w24ShippedBinary = "./walsy-system1"
-	w24ShippedSHA256 = "de2f288e7d22661e70345e89239bd4ee9f8efa5708613cbf13a9372b2d9e7407"
+	w24ShippedSHA256 = "c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8"
 	w24TestFile      = "sim_e1_e2_test.go"
 	w24VerifyScript  = "scripts/verify.sh"
 	w24Changelog     = "CHANGELOG.md"

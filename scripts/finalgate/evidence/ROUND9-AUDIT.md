@@ -78,7 +78,7 @@ Live sweep exposed two wire defects, both SO-approved and applied:
 - `scripts/verify.sh` — EXIT 0, 10/10 PASS, verbatim in `scripts/finalgate/evidence/K12.txt`
 - `scripts/relay56/TRANSCRIPT.txt` — 28 PASS, 0 FAIL, RELAY-OK
 - `scripts/finalgate/evidence/K15.txt` — 3 local, 55 admitted, 52 refused, 55 low-conf steered, 52 low-confidence non-proceed, 3 with no non-proceed label
-- shipped binary `047ec608927a8094e389c00e7f13d4c93606b8c13b19eb77c6433a7313e6ed6d`, 11141 pclntab funcs, AES S-box `0x899440`
+- shipped binary `c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8`, 11142 pclntab funcs, AES S-box `0x899440`
 - `scripts/finalgate/evidence/K16.txt` — honest degraded live sweep: `0 admitted, 0 refused, 0 low-conf, 55 degraded, 3 local`, PASS in 10.02s. Direct probe answered HTTP 200 with a valid typed choice in 13.07s, above the shipped 5s enforcing deadline at `gate.go:34`. Degradation is endpoint latency; no timeout constant was raised to manufacture green evidence. Stub sweeps carry the routing proof.
 
 ## Honest limitations
