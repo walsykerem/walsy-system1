@@ -25,8 +25,10 @@ import (
 )
 
 const (
-	w21_Heading    = "static map; advisory, fail-open by default"
-	w21_ReportDflt = "/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy-arch-map/RAPOR.md"
+	w21_Heading = "static map; advisory, fail-open by default"
+	// Root report next to the local binary; CI overrides WALSY_RAPOR with the
+	// testdata/ci-linux fixture.
+	w21_ReportDflt = "RAPOR.md"
 	// Out-of-scope destructive shell call: enforcingGate refuses it, advisory forwards.
 	w21_Frame    = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"command":"rm -rf /tmp/simq"}}}`
 	w21_Upstream = `{"jsonrpc":"2.0","id":7,"result":{"simq":"upstream-echo"}}`
@@ -99,7 +101,7 @@ func w21_ReportPath(t *testing.T) string {
 	if p := os.Getenv("WALSY_RAPOR"); p != "" {
 		return p
 	}
-	for _, p := range []string{w21_ReportDflt, filepath.Join("..", "walsy-arch-map", "RAPOR.md"), "RAPOR.md"} {
+	for _, p := range []string{w21_ReportDflt, filepath.Join("testdata", "ci-linux", "RAPOR.md"), filepath.Join("..", "walsy-arch-map", "RAPOR.md")} {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p
 		}

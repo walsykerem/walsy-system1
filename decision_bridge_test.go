@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -290,6 +292,68 @@ func TestN4MissingCapabilityFailClosed(t *testing.T) {
 	}
 }
 
+// TestAuditReasonForCapabilityMissing pins the audit contract: a frame with no
+// opt_in is a capability pass-through, so it writes one descriptive reason row
+// named for the missing capability and no JSON-RPC error code, and it does not
+// get the per-frame corpus token or a skip receipt. An opted-in policy skip
+// keeps both.
+func TestAuditReasonForCapabilityMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WALSY_SO_MODE", "")
+	t.Setenv("EVREN_API_KEY", "audit-key")
+	routerReset()
+	t.Cleanup(routerReset)
+
+	noOptIn := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","state":"classify this","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"phase":"before-model"}}`)
+	gateSkip := []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","state":"classify this","opt_in":true,"need_label":true,"no_scratch":true,"safe":false,"reversible":true,"authority":true,"calibrated":true,"phase":"before-model"}}`)
+
+	cases := []struct {
+		name       string
+		raw        []byte
+		wantReason string
+		corpus     bool
+	}{
+		{"no opt-in", noOptIn, "layer0-opt-in", false},
+		{"opted-in gate skip", gateSkip, "layer0-gate", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := len(auditRowsOrNil(t))
+			skipsBefore := strings.Count(auditChain(t), `"event":"skip"`)
+			if r := newDecisionBridge().decideFrame(c.raw); r.Reason != c.wantReason || !r.Passthrough {
+				t.Fatalf("reason=%q passthrough=%v, want %q/true", r.Reason, r.Passthrough, c.wantReason)
+			}
+			all := auditRowsOrNil(t)
+			if len(all) < before {
+				t.Fatalf("audit shrank: %d < %d", len(all), before)
+			}
+			rows := all[before:]
+			reasonRows, corpusRows := 0, 0
+			for _, row := range rows {
+				if strings.Contains(row, `"-32602"`) {
+					t.Fatalf("JSON-RPC error code used as audit reason: %s", row)
+				}
+				if strings.Contains(row, `"reason":"`+c.wantReason+`"`) {
+					reasonRows++
+				}
+				if strings.Contains(row, `"reason":"skip-audit"`) {
+					corpusRows++
+				}
+			}
+			if reasonRows != 1 {
+				t.Fatalf("%d rows named %q, want 1: %v", reasonRows, c.wantReason, rows)
+			}
+			if got := corpusRows == 1; got != c.corpus {
+				t.Fatalf("skip-audit rows=%d, want corpus=%v: %v", corpusRows, c.corpus, rows)
+			}
+			chain := auditChain(t)
+			if got := strings.Count(chain, `"event":"skip"`) - skipsBefore; (got == 1) != c.corpus {
+				t.Fatalf("skip receipts added=%d, want corpus=%v; chain=%q", got, c.corpus, chain)
+			}
+		})
+	}
+}
+
 // TestConfigDeclaredCapabilityNeverBackfillsMCP proves config.txt cannot mint
 // opt-ins into an MCP frame: consent must be explicit on the frame itself.
 func TestConfigDeclaredCapabilityNeverBackfillsMCP(t *testing.T) {
@@ -395,4 +459,35 @@ func TestEnforcingGateInitializeNotificationRefills(t *testing.T) {
 	if _, blocked := d.enforcingGate(call); blocked {
 		t.Fatal("first capped tool call after initialize notification must pass")
 	}
+}
+
+// auditRowsOrNil reads the router audit journal tolerantly: a fresh HOME has
+// no journal yet.
+func auditRowsOrNil(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), routerDir, routerAuditName))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+// auditChain returns the receipt chain text, empty when it does not exist yet.
+func auditChain(t *testing.T) string {
+	t.Helper()
+	p, err := receiptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

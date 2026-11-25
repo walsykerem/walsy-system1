@@ -27,7 +27,7 @@ func SteerText(reason, label string) string {
 }
 
 var steerTable = map[string]string{
-	"-32602":                 "add the decision capability to the request: opt_in true or capability.<name>.enabled.",
+	"layer0-opt-in":          "add the decision capability to the request: opt_in true or capability.<name>.enabled.",
 	"layer0-scope":           "add the missing scope evidence: authority, opt_in, calibrated and phase \"before-model\".",
 	"layer0-gate":            "fill the gate fields (need_label, no_scratch, safe, reversible) and set phase \"before-model\".",
 	"layer0-static":          "answer this static request directly; no model decision is needed.",

@@ -26,7 +26,7 @@ echo "root test functions: $(grep -h '^func Test' *_test.go | wc -l | tr -d ' ')
 
 echo "== 5/10 lrecon digest =="
 LRECON="${LRECON:-/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon}"
-RECON=/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/walsy_verify_lrecon.json
+RECON="${TMPDIR:-/tmp}/walsy_verify_lrecon.json"
 "$LRECON" --json ./walsy-system1 > "$RECON"
 go run ./scripts/recondigest "$RECON"
 

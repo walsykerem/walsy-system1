@@ -433,7 +433,7 @@ func routeInner(state string, p *pin) routeResult {
 	if !inScope(e) {
 		reason := "layer0-scope"
 		if !e.OptIn {
-			reason = "-32602" // capability missing: JSON-RPC invalid params code
+			reason = "layer0-opt-in" // capability missing: no opt_in on the frame
 		}
 		return passResult(reason, false)
 	}

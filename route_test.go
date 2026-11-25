@@ -227,7 +227,7 @@ func TestRouteTrustBoundary(t *testing.T) {
 		Authority: true, Calibrated: true,
 	})
 	r := route(string(b), nil)
-	if r.Reason != "-32602" || !r.Passthrough || called {
+	if r.Reason != "layer0-opt-in" || !r.Passthrough || called {
 		t.Fatalf("missing capability: %+v called=%v", r, called)
 	}
 }

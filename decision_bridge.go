@@ -266,8 +266,10 @@ func layer0SkipReason(state string) string {
 		return "no-state"
 	}
 	if !inScope(e) {
+		// The frame lacks the decision capability (opt_in): name the missing
+		// capability, not the JSON-RPC error code it used to be reported as.
 		if !e.OptIn {
-			return "-32602"
+			return "layer0-opt-in"
 		}
 		return "layer0-scope"
 	}
@@ -402,10 +404,14 @@ func (d *decisionBridge) decideWithKey(request []byte, base *[32]byte) routeResu
 		r := skipResult(reason)
 		recordPreflight(p, r, d.preflight)
 		routerAudit("gate", "reason", reason)
-		// skip-audit is an allowlisted reason value; routerAudit drops unknown
-		// keys, so the corpus token travels in the reason field.
-		routerAudit("gate", "reason", "skip-audit")
-		if strings.HasPrefix(reason, "layer0-") {
+		// skip-audit is an allowlisted corpus token for a policy skip. A frame
+		// that only lacks the decision capability is a pass-through, so it gets
+		// the descriptive reason row alone: no corpus token, no skip receipt.
+		policySkip := reason != "layer0-opt-in"
+		if policySkip {
+			routerAudit("gate", "reason", "skip-audit")
+		}
+		if strings.HasPrefix(reason, "layer0-") && policySkip {
 			d.emitReceiptDetailed(r, "", "", receiptDetails{Event: "skip", Force: true})
 		}
 		return r
@@ -876,7 +882,7 @@ var steerFailOpen = map[string]bool{
 	// SO outage is advice, never an enforcing verdict: the relay continues.
 	"so-degraded": true, "invalid-response": true,
 	"transient": true, "permanent": true, "unknown": true,
-	"no-key": true, "no-state": true, "-32602": true,
+	"no-key": true, "no-state": true, "layer0-opt-in": true,
 	"layer0-scope": true, "layer0-gate": true, "layer0-static": true,
 	"layer0-shape": true, "registry-local": true,
 	"so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,

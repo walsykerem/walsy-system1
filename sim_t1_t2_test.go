@@ -288,7 +288,7 @@ func TestSimT2ScopeMatrix(t *testing.T) {
 	cases := []tc{
 		{"other method", "tools/list", withState("before-model", "classify the list"), "layer0-scope", 0},
 		{"post-model phase", "tools/call", withState("after-model", "classify the result"), "layer0-scope", 0},
-		{"no opt-in", "tools/call", missingCap, "-32602", 0},
+		{"no opt-in", "tools/call", missingCap, "layer0-opt-in", 0},
 		{"static word", "tools/call", withState("before-model", "status"), "layer0-static", 0},
 		{"before_model spelling", "initialize", withState("before_model", "classify the request"), "so-admit", 1},
 	}
