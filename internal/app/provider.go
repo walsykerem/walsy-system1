@@ -1,15 +1,12 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -435,35 +432,3 @@ func (p *pin) markSuccess(name string) {
 
 // generation reports the current engine identity. Never a TTL or wall clock.
 func (p *pin) generation() uint64 { return p.gen.Load() }
-
-// rotateOnFailure drops the pin and moves to deterministic hash order's head.
-func (p *pin) rotateOnFailure() provider {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.gen.Add(1)
-	p.name = ""
-	p.expires = time.Time{}
-	ordered := rotationOrder(p.list)
-	if len(ordered) == 0 {
-		return provider{}
-	}
-	return ordered[0]
-}
-
-// rotationOrder: sort by sha256(Name), Name as tie-break. No score, no clock.
-func rotationOrder(list []provider) []provider {
-	ordered := append([]provider(nil), list...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].Cost != ordered[j].Cost {
-			return ordered[i].Cost < ordered[j].Cost
-		}
-		a := sha256.Sum256([]byte(ordered[i].Name))
-		b := sha256.Sum256([]byte(ordered[j].Name))
-		ha, hb := hex.EncodeToString(a[:]), hex.EncodeToString(b[:])
-		if ha == hb {
-			return ordered[i].Name < ordered[j].Name
-		}
-		return ha < hb
-	})
-	return ordered
-}

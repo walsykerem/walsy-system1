@@ -392,6 +392,12 @@ func (d *decisionBridge) decideWithKey(request []byte, base *[32]byte) routeResu
 		})
 	}
 	if !keySet {
+		// Advisory fails open; enforcing must not pass a frame it never judged.
+		if soMode() == soModeEnforcing {
+			recordDecisionReason("no-key")
+			return routeResult{Decision: decDeny, Reason: "no-key", Covered: true, Abstained: true,
+				Steer: withSteer("blocked", "no classifier credential in enforcing mode")}
+		}
 		return passResult("no-key", false)
 	}
 	cap := soCapability()
@@ -586,15 +592,6 @@ type receiptDetails struct {
 	Force                                                                bool // outbound receipts are recorded even for local passes
 }
 
-// latencyBudgetMS is the single SO latency threshold. It mirrors
-// routerState.latencyThreshold so gate.go's routerBudgetSpendLatency is the
-// only place that charges a slow call.
-// shortcut: mirrors the config key without editing router_policy.go; delete
-// this helper if gate.go consumes routerState.latencyThreshold directly.
-func latencyBudgetMS() int64 {
-	return int64(routerIntConfig("latency_threshold_ms", routerDefaultLatencyMS, 1, 10000))
-}
-
 func safeReceiptField(s string) string {
 	if v, ok := routerSafeField(s); ok {
 		return v
@@ -710,28 +707,6 @@ func explicitCapability(params []byte) bool {
 	// N24: phase is context, not a capability. A phase-less frame must not be
 	// refused in enforcing mode solely because the MCP client omitted it.
 	return true
-}
-
-// configCapabilityParams returns operator-declared opt-ins from the same
-// config.txt that selects so_mode. Incomplete declarations yield nil: nothing
-// is inferred and no flag defaults to true.
-// shortcut: kept only for sim_n4_n5_test.go:149; delete when that consumer is removed.
-func configCapabilityParams() []byte {
-	c := readSOConfig()
-	for _, k := range []string{"need_label", "no_scratch", "safe", "reversible", "authority", "calibrated", "opt_in"} {
-		if !strings.EqualFold(strings.TrimSpace(c[k]), "true") {
-			return nil
-		}
-	}
-	phase := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(c["phase"]), "_", "-"))
-	if phase != "before-model" && phase != "pre-model" {
-		return nil
-	}
-	b, _ := json.Marshal(map[string]any{
-		"need_label": true, "no_scratch": true, "safe": true, "reversible": true,
-		"authority": true, "calibrated": true, "opt_in": true, "phase": phase,
-	})
-	return b
 }
 
 func toolName(params json.RawMessage) string {

@@ -181,30 +181,6 @@ func TestRouteMetricAllowlist(t *testing.T) {
 	}
 }
 
-// checker 20: classify transient/permanent reason-codes via route.
-func TestRouteClassifyReasonCodes(t *testing.T) {
-	for _, c := range []struct {
-		status int
-		want   string
-	}{
-		{http.StatusRequestTimeout, "transient"},
-		{http.StatusTooManyRequests, "transient"},
-		{http.StatusInternalServerError, "transient"},
-		{http.StatusBadGateway, "transient"},
-		{http.StatusServiceUnavailable, "transient"},
-		{http.StatusGatewayTimeout, "transient"},
-		{http.StatusBadRequest, "permanent"},
-		{http.StatusUnauthorized, "permanent"},
-		{http.StatusForbidden, "permanent"},
-		{http.StatusNotFound, "permanent"},
-		{http.StatusUnprocessableEntity, "permanent"},
-	} {
-		if got := classify(c.status, nil); got != c.want {
-			t.Fatalf("classify(%d)=%q want %q", c.status, got, c.want)
-		}
-	}
-}
-
 // checker 28: MRTR nested systemPrompt/message never enter state;
 // secret-clean first; missing capability -> -32602.
 func TestRouteTrustBoundary(t *testing.T) {

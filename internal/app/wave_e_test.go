@@ -104,9 +104,9 @@ func TestYD2EngineGenerationGuard(t *testing.T) {
 		t.Fatalf("cache hit expected: SO calls=%d want 1", calls)
 	}
 	gen := d.pin.generation()
-	d.pin.rotateOnFailure()
+	d.pin.markSuccess("engine-B")
 	if d.pin.generation() == gen {
-		t.Fatal("rotateOnFailure did not bump generation")
+		t.Fatal("pin change did not bump generation")
 	}
 	if r := d.decide(req); r.Decision != decPin {
 		t.Fatalf("post-rotation call not admitted: %+v", r)

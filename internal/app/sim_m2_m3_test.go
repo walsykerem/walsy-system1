@@ -407,9 +407,9 @@ func TestSimM3w19PinAndCacheRollback(t *testing.T) {
 	}
 
 	gen := d.pin.generation()
-	d.pin.rotateOnFailure()
+	d.pin.markSuccess("engine-B")
 	if d.pin.generation() <= gen {
-		t.Fatal("pin rotation did not bump generation")
+		t.Fatal("pin change did not bump generation")
 	}
 	answer = w19SONo
 	afterRotate := d.decideFrame(frame)

@@ -51,6 +51,9 @@ type StateSkeleton struct {
 	Evidence   []string    `json:"evidence,omitempty"`
 	Omitted    []string    `json:"omitted,omitempty"`
 	Unverified []string    `json:"unverified,omitempty"`
+	// Truncated is mechanical: set only by distillSOState when the cap forced
+	// verbatim text out, so a caller can tell a cut state from a whole one.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // newPromptRef hashes a caller-supplied body and discards it. No body is kept.
@@ -144,6 +147,7 @@ func distillSOState(s StateSkeleton) (StateSkeleton, bool) {
 		}
 	}
 	out := s
+	out.Truncated = true
 	out.State, out.Request, out.Criteria, out.Evidence = "", "", nil, nil
 	out.Omitted = append(append([]string(nil), s.Omitted...), soOmittedMarker)
 	for _, line := range ordered {
