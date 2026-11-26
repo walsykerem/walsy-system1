@@ -149,6 +149,18 @@ func TestUIModelFormLoudFailures(t *testing.T) {
 	if list := models[name]; len(list) != maxModelsPerProvider {
 		t.Fatalf("failing forms changed the model list: %d entries", len(list))
 	}
+	// A ghost provider must not gain an orphan model row that a later provider of
+	// the same name would silently inherit.
+	ghost := postFormTest(t, h, "/ui/providers/models", url.Values{"name": {"Ghost"}, "action": {"add"}, "model": {"m9"}})
+	if want := "/ui/providers/sheet?name=Ghost&msg=" + url.QueryEscape("INVALID PROVIDER"); ghost.Header().Get("Location") != want {
+		t.Fatalf("ghost provider location = %q, want %q", ghost.Header().Get("Location"), want)
+	}
+	if models, err = loadModels(); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := models["Ghost"]; has {
+		t.Fatal("ghost provider model write persisted")
+	}
 	rec := postFormTest(t, h, "/ui/providers/models", url.Values{"name": {name}, "action": {"remove"}, "model": {"m0"}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("valid remove status = %d", rec.Code)

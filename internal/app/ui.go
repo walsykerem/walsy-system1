@@ -478,6 +478,10 @@ func uiProviderModel(w http.ResponseWriter, r *http.Request) {
 		uiGo(w, r, "/", "INVALID PROVIDER")
 		return
 	}
+	if view, err := providerView(); err != nil || !providerExists(view, name) {
+		uiGo(w, r, target, "INVALID PROVIDER")
+		return
+	}
 	// A form with a missing model field must say so, never silently no-op.
 	if !validModel(model) {
 		uiGo(w, r, target, "INVALID MODEL")
