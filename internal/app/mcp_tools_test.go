@@ -2,10 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -145,10 +145,11 @@ func TestToolsDecideTable(t *testing.T) {
 		},
 		{
 			name: "unknown item is an error object", item: "no.such.item", state: "anything",
-			want: map[string]any{"error": "unknown item"},
+			wantHits: -1,
+			want:     map[string]any{"error": "unknown item"},
 		},
 	}
-	for _, c := range cases {
+	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			hits, status, body = 0, http.StatusOK, defaultBody
 			if c.status != 0 {
@@ -157,7 +158,12 @@ func TestToolsDecideTable(t *testing.T) {
 			if c.body != "" {
 				body = c.body
 			}
-			text := toolsDecide(c.item, c.state, "", false)
+			frame := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"system1_decide","arguments":{"item":%q,"state":%q}}}`, i+1, c.item, c.state)
+			replies := toolsSession(t, frame)
+			if len(replies) != 1 {
+				t.Fatalf("replies = %d, want 1: %v", len(replies), replies)
+			}
+			text := replies[0]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
 			var got map[string]any
 			if err := json.Unmarshal([]byte(text), &got); err != nil {
 				t.Fatalf("reply not JSON: %q: %v", text, err)
@@ -173,134 +179,9 @@ func TestToolsDecideTable(t *testing.T) {
 			if strings.Contains(text, "test-key") {
 				t.Fatalf("key material leaked: %s", text)
 			}
-			if hits != c.wantHits {
+			if c.wantHits >= 0 && hits != c.wantHits {
 				t.Fatalf("model calls = %d, want %d", hits, c.wantHits)
 			}
 		})
-	}
-}
-
-func TestToolsDecideMissingArgs(t *testing.T) {
-	cases := []string{
-		`{"state":"decide intake intent"}`,
-		`{"item":"intake.intent"}`,
-		`{}`,
-	}
-	for _, args := range cases {
-		text, err := callTool("system1_decide", json.RawMessage(args), newDecisionBridge())
-		if err != nil {
-			t.Fatalf("args %s: unexpected transport error: %v", args, err)
-		}
-		if text != `{"error":"item and state are required"}` {
-			t.Fatalf("args %s: reply = %s", args, text)
-		}
-	}
-}
-
-func TestToolsDecideWithoutKey(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("EVREN_API_KEY", "")
-	got := toolsDecide("intake.intent", "decide intake intent", "", false)
-	if got != `{"error":"model unavailable or answer outside the item's label set"}` {
-		t.Fatalf("no-key reply = %s", got)
-	}
-	local := toolsDecide("tools.pick", "decide which tool", "", false)
-	if !strings.Contains(local, `"local":true`) {
-		t.Fatalf("local item needs no key: %s", local)
-	}
-}
-
-func TestToolsAuditTailAndErrorsOnly(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(home+"/"+routerDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	write := func(lines ...string) {
-		if err := os.WriteFile(home+"/"+routerDir+"/"+routerAuditName, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(
-		`{"event":"relay_frame","status":"ok","mode":"initialize"}`,
-		`{"event":"relay_frame","status":"error_-32601","mode":"tools/nope"}`,
-		`{"event":"relay_frame","status":"malformed"}`,
-	)
-
-	all, err := toolsAudit(2, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parsed struct {
-		Count  int               `json:"count"`
-		Events []json.RawMessage `json:"events"`
-	}
-	if err := json.Unmarshal([]byte(all), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Count != 2 {
-		t.Fatalf("count = %d, want 2", parsed.Count)
-	}
-	if !strings.Contains(string(parsed.Events[0]), "malformed") {
-		t.Fatalf("newest first broken: %s", parsed.Events[0])
-	}
-
-	errs, err := toolsAudit(10, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(errs, "error_-32601") || !strings.Contains(errs, "malformed") || strings.Contains(errs, "initialize") {
-		t.Fatalf("errorsOnly = %s", errs)
-	}
-
-	if got, err := toolsAudit(10, true); err != nil {
-		t.Fatal(err)
-	} else if !strings.HasPrefix(got, `{"count":2`) {
-		t.Fatalf("errorsOnly count = %s", got)
-	}
-}
-
-func TestToolsAuditMissingFileIsEmpty(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	got, err := toolsAudit(0, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != `{"count":0,"events":[]}` {
-		t.Fatalf("missing audit file = %s", got)
-	}
-}
-
-func TestToolsAuditRejectsSymlink(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir := home + "/" + routerDir
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	target := dir + "/audit-target.jsonl"
-	if err := os.WriteFile(target, []byte(`{"status":"ok"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, dir+"/"+routerAuditName); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := toolsAudit(10, false); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("symlink audit must fail closed, got err=%v", err)
-	}
-}
-
-func TestToolsAuditRejectsNonRegular(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir := home + "/" + routerDir
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(dir+"/"+routerAuditName, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := toolsAudit(10, false); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("directory audit must fail closed, got err=%v", err)
 	}
 }

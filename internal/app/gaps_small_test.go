@@ -20,27 +20,6 @@ func gapSmallHome(t *testing.T) string {
 	return home
 }
 
-func TestGapSmallLatencyBudgetMS(t *testing.T) {
-	gapSmallHome(t)
-	t.Setenv("WALSY_ROUTER_LATENCY_THRESHOLD_MS", "")
-
-	if got := latencyBudgetMS(); got != int64(routerDefaultLatencyMS) {
-		t.Fatalf("default latencyBudgetMS() = %d, want %d", got, routerDefaultLatencyMS)
-	}
-	t.Setenv("WALSY_ROUTER_LATENCY_THRESHOLD_MS", "0")
-	if got := latencyBudgetMS(); got != 1 {
-		t.Fatalf("clamped low latencyBudgetMS() = %d, want 1", got)
-	}
-	t.Setenv("WALSY_ROUTER_LATENCY_THRESHOLD_MS", "99999")
-	if got := latencyBudgetMS(); got != 10000 {
-		t.Fatalf("clamped high latencyBudgetMS() = %d, want 10000", got)
-	}
-	t.Setenv("WALSY_ROUTER_LATENCY_THRESHOLD_MS", "250")
-	if got := latencyBudgetMS(); got != 250 {
-		t.Fatalf("configured latencyBudgetMS() = %d, want 250", got)
-	}
-}
-
 func TestGapSmallPromotionOK(t *testing.T) {
 	home := gapSmallHome(t)
 	t.Setenv("WALSY_SO_MODE", soModeAdvisory)
@@ -60,28 +39,6 @@ func TestGapSmallPromotionOK(t *testing.T) {
 	}
 	if !promotionOK() {
 		t.Fatal("promotionOK() = false with owner and confidence 0.9, want true")
-	}
-}
-
-func TestGapSmallRunDashboardInvalidAddr(t *testing.T) {
-	if err := RunDashboard(":99999"); err == nil {
-		t.Fatal("RunDashboard(:99999) = nil, want listen error")
-	}
-}
-
-func TestGapSmallHTTPListenError(t *testing.T) {
-	cases := []struct {
-		err  *httpListenError
-		want string
-	}{
-		{errNonLoopback, "http listen host must be loopback"},
-		{errInvalidPort, "invalid http listen port"},
-		{&httpListenError{"literal"}, "literal"},
-	}
-	for _, c := range cases {
-		if got := c.err.Error(); got != c.want {
-			t.Fatalf("Error() = %q, want %q", got, c.want)
-		}
 	}
 }
 

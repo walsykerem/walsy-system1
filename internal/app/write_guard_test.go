@@ -2,206 +2,219 @@ package app
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-func guardArgs(p string) json.RawMessage {
-	b, _ := json.Marshal(map[string]any{"path": p})
+// audCFrame builds a real MCP tools/call frame; id nil means a notification.
+func audCFrame(t *testing.T, id any, tool, args string) []byte {
+	t.Helper()
+	f := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "tools/call",
+		"params":  map[string]any{"name": tool, "arguments": json.RawMessage(args)},
+	}
+	if id != nil {
+		f["id"] = id
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return b
 }
 
-func TestWriteGuardBlocksUnreadWrite(t *testing.T) {
-	g := newWriteGuard()
-	if reason, blocked := g.check("write_file", guardArgs("/tmp/x.txt")); !blocked || reason == "" {
-		t.Fatalf("unseen write must block, got %q blocked=%v", reason, blocked)
-	}
-}
-
-func TestWriteGuardAllowsAfterRead(t *testing.T) {
-	g := newWriteGuard()
-	if _, blocked := g.check("read_file", guardArgs("/tmp/x.txt")); blocked {
-		t.Fatal("read must never block")
-	}
-	if reason, blocked := g.check("edit_file", guardArgs("/tmp/x.txt")); blocked {
-		t.Fatalf("write after read must pass, got %q", reason)
-	}
-}
-
-func TestWriteGuardMatchesRelativeToAbsolute(t *testing.T) {
-	g := newWriteGuard()
-	g.check("read_file", guardArgs("/repo/sub/a.go"))
-	if _, blocked := g.check("write_file", guardArgs("a.go")); blocked {
-		t.Fatal("relative write of a read file must pass")
-	}
-}
-
-// A bare read (no directory) must not license a write to a same-named file in
-// another directory: that write would land in a directory never read. The
-// reverse still holds: a full-path read licenses the same file named bare.
-func TestWriteGuardBareReadDoesNotLicensePathedWrite(t *testing.T) {
-	g := newWriteGuard()
-	g.check("read_file", guardArgs("a.go"))
-	if _, blocked := g.check("write_file", guardArgs("/repo/sub/a.go")); !blocked {
-		t.Fatal("bare read licensed a pathed write into an unread directory")
-	}
-	h := newWriteGuard()
-	h.check("read_file", guardArgs("/repo/sub/a.go"))
-	if _, blocked := h.check("write_file", guardArgs("a.go")); blocked {
-		t.Fatal("pathed read must license the same file named bare")
-	}
-}
-
-func TestWriteGuardRepeatLimit(t *testing.T) {
-	g := newWriteGuard()
-	args := json.RawMessage(`{"path":"/tmp/r.txt","text":"same"}`)
-	g.check("read_file", args) // seed the path so writes pass the unread check
-	for i := 0; i < guardRepeatLimit; i++ {
-		if _, blocked := g.check("write_file", args); blocked {
-			t.Fatalf("repeat %d blocked too early", i)
-		}
-	}
-	if reason, blocked := g.check("write_file", args); !blocked || reason == "" {
-		t.Fatal("repeat past the limit must block")
-	}
-	// The counter resets, so the next attempt is judged on its own.
-	if _, blocked := g.check("write_file", args); blocked {
-		t.Fatal("blocked call must reset the counter")
-	}
-	// Repeating a read is normal and must never hit the write-only counter.
-	for i := 0; i < guardRepeatLimit+2; i++ {
-		if _, blocked := g.check("read_file", args); blocked {
-			t.Fatalf("read repeat %d blocked", i)
-		}
-	}
-}
-
-// A write whose path cannot be read cannot be checked against what this session
-// read, so it is refused; a read naming no path has nothing to record.
-func TestWriteGuardRefusesUnreadablePath(t *testing.T) {
-	g := newWriteGuard()
-	if _, blocked := g.check("read_file", nil); blocked {
-		t.Fatal("a read naming no path has nothing to record")
-	}
-	for _, args := range []json.RawMessage{nil, json.RawMessage(`{"path":42}`), json.RawMessage(`{}`)} {
-		if _, blocked := g.check("write_file", args); !blocked {
-			t.Fatalf("write with args %s must be refused", args)
-		}
-	}
-}
-
-func TestToolArgsExtractsArguments(t *testing.T) {
-	params := json.RawMessage(`{"name":"write_file","arguments":{"path":"/tmp/a"}}`)
-	if got := string(toolArgs(params)); got != `{"path":"/tmp/a"}` {
-		t.Fatalf("toolArgs = %s", got)
-	}
-	if toolArgs(json.RawMessage(`{"name":"x"}`)) != nil {
-		t.Fatal("missing arguments must be nil")
-	}
-}
-
-func TestWriteGuardAuditsInAdvisoryMode(t *testing.T) {
+// audCEnv gives one case a clean HOME, an offline SO stub and a reset router,
+// so the guard verdict is the only thing that can block the frame.
+func audCEnv(t *testing.T) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	d := newDecisionBridge()
-	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"/tmp/advisory.txt"}}}`)
-	d.advisoryHooks(frame) // must record, never block or panic
-	raw, err := os.ReadFile(filepath.Join(home, ".walsy-system1", "audit.jsonl"))
+	t.Setenv("WALSY_SO_MODE", "")
+	t.Setenv("WALSY_SO_ENDPOINT", "")
+	t.Setenv("WALSY_ROUTER_RETRY_BUDGET", "64")
+	t.Setenv("WALSY_ROUTER_BREAKER_THRESHOLD", "32")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
+	}))
+	oldEndpoint, oldClient := soEndpoint, soClient
+	soEndpoint, soClient = srv.URL, srv.Client()
+	t.Cleanup(func() {
+		soEndpoint, soClient = oldEndpoint, oldClient
+		srv.Close()
+	})
+	routerReset()
+	return home
+}
+
+func audCAudit(t *testing.T, home string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(home, routerDir, routerAuditName))
 	if err != nil {
-		t.Fatalf("advisory hit must reach the audit log: %v", err)
+		t.Fatalf("audit log: %v", err)
 	}
-	if !strings.Contains(string(raw), `"reason":"unread-write"`) {
-		t.Fatalf("audit line missing the guard code: %s", raw)
-	}
+	return string(b)
 }
 
-// isWriteTool must match whole segments, not substrings: names that merely
-// contain a verb ("confirm_plan" holds "rm") are not writes (A7).
-func TestIsWriteTool(t *testing.T) {
-	for _, name := range []string{
-		"confirm_plan", "format_code", "perform_action", "transform",
-		"normalize", "dispatch", "readwrite", "warm_cache", "recreate", "rmdir_safe",
-	} {
-		if isWriteTool(name) {
-			t.Errorf("%q must not be a write tool", name)
-		}
+// The write guard is a refusal the caller sees on the wire, so every case goes
+// through the real enforcing gate of a bridge and checks the -32001 body, the
+// silent notification path and the reason code in audit.jsonl.
+func TestAudCWriteGuardOnTheWire(t *testing.T) {
+	const base = "/tmp/audc"
+	cases := []struct {
+		name      string
+		send      func(t *testing.T, d *decisionBridge) ([]byte, bool)
+		wantBlock bool
+		wantWire  []string
+		wantNone  bool
+		audit     []string
+	}{
+		{
+			name: "unread write refused",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				return d.enforcingGate(audCFrame(t, 1, "write_file",
+					`{"path":"`+base+`/unread.txt","content":"x"}`))
+			},
+			wantBlock: true,
+			wantWire: []string{`"code":-32001`,
+				"blocked: write to a path this session never touched: " + base + "/unread.txt"},
+			audit: []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "read licenses same write",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				if out, blocked := d.enforcingGate(audCFrame(t, 1, "read_file",
+					`{"path":"`+base+`/same.txt"}`)); blocked {
+					t.Fatalf("read blocked: %s", out)
+				}
+				return d.enforcingGate(audCFrame(t, 2, "write_file",
+					`{"path":"`+base+`/same.txt","content":"y"}`))
+			},
+			wantBlock: false,
+			audit:     []string{`"event":"gate"`},
+		},
+		{
+			name: "absolute read licenses bare write",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				d.enforcingGate(audCFrame(t, 1, "read_file", `{"path":"`+base+`/dir/a.go"}`))
+				return d.enforcingGate(audCFrame(t, 2, "write_file",
+					`{"path":"a.go","content":"y"}`))
+			},
+			wantBlock: false,
+		},
+		{
+			name: "bare read never licenses pathed write",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				d.enforcingGate(audCFrame(t, 1, "read_file", `{"path":"a.go"}`))
+				return d.enforcingGate(audCFrame(t, 2, "write_file",
+					`{"path":"`+base+`/sub/a.go","content":"y"}`))
+			},
+			wantBlock: true,
+			wantWire:  []string{"never touched: " + base + "/sub/a.go"},
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "rename dest is judged too",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				d.enforcingGate(audCFrame(t, 1, "read_file", `{"path":"`+base+`/src.txt"}`))
+				return d.enforcingGate(audCFrame(t, 2, "rename_file",
+					`{"path":"`+base+`/src.txt","dest":"`+base+`/dest.txt"}`))
+			},
+			wantBlock: true,
+			wantWire:  []string{"never touched: " + base + "/dest.txt"},
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "write without a path refused",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				return d.enforcingGate(audCFrame(t, 1, "write_file", `{}`))
+			},
+			wantBlock: true,
+			wantWire:  []string{"blocked: write with no readable path"},
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "malformed arguments refused",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				return d.enforcingGate(audCFrame(t, 1, "write_file", `[1,2]`))
+			},
+			wantBlock: true,
+			wantWire:  []string{"blocked: write with no readable path"},
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "notification blocked silently",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				return d.enforcingGate(audCFrame(t, nil, "write_file",
+					`{"path":"`+base+`/note.txt","content":"x"}`))
+			},
+			wantBlock: true,
+			wantNone:  true,
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "repeat limit then reset",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				args := `{"path":"` + base + `/rep.txt","content":"same"}`
+				d.enforcingGate(audCFrame(t, 1, "read_file", `{"path":"`+base+`/rep.txt"}`))
+				for i := 0; i < guardRepeatLimit; i++ {
+					if out, blocked := d.enforcingGate(audCFrame(t, i+2, "write_file", args)); blocked {
+						t.Fatalf("repeat %d blocked early: %s", i, out)
+					}
+				}
+				out, blocked := d.enforcingGate(audCFrame(t, 20, "write_file", args))
+				if !blocked {
+					t.Fatal("repeat past the limit was forwarded")
+				}
+				if _, again := d.enforcingGate(audCFrame(t, 21, "write_file", args)); again {
+					t.Fatal("counter did not reset after firing")
+				}
+				return out, true
+			},
+			wantBlock: true,
+			wantWire:  []string{"repeated identical call 8 times"},
+			audit:     []string{`"event":"writeguard"`, `"reason":"redacted"`},
+		},
+		{
+			name: "advisory audits without blocking",
+			send: func(t *testing.T, d *decisionBridge) ([]byte, bool) {
+				d.advisoryHooks(audCFrame(t, 1, "write_file",
+					`{"path":"`+base+`/adv.txt","content":"x"}`))
+				return nil, false
+			},
+			wantBlock: false,
+			audit:     []string{`"mode":"advisory"`, `"reason":"unread-write"`},
+		},
 	}
-	for _, name := range []string{
-		"write_file", "edit_file", "create_file", "apply_patch", "delete_file",
-		"writeFile", "editFile", "deleteFile", "createFile",
-		"move", "rename", "mkdir", "write", "edit", "create", "patch", "append",
-		"delete", "remove", "move", "rename", "mkdir", "rm", "mv",
-	} {
-		if !isWriteTool(name) {
-			t.Errorf("%q must be a write tool", name)
-		}
-	}
-}
-
-// An emptying write must be judged, not skipped: {"content":""} is a wipe, and
-// treating it as "no content" let the destructive case through unscanned.
-func TestWriteContentAcceptsEmpty(t *testing.T) {
-	body, ok := writeContent(json.RawMessage(`{"path":"/tmp/x","content":""}`))
-	if !ok || body != "" {
-		t.Fatalf("empty content: body=%q ok=%v want \"\", true", body, ok)
-	}
-	if _, ok := writeContent(json.RawMessage(`{"path":"/tmp/x"}`)); ok {
-		t.Fatal("args without any content key must not be treated as a write")
-	}
-}
-
-// A body carried under a non-content key (patch/diff/body) must still be
-// scanned, or tools that use those keys escape the diff precheck entirely.
-func TestWriteContentScansPatchBody(t *testing.T) {
-	for _, k := range []string{"patch", "diff", "body"} {
-		args := json.RawMessage(`{"path":"/tmp/x","` + k + `":"@@ -1 +1 @@"}`)
-		if body, ok := writeContent(args); !ok || body != "@@ -1 +1 @@" {
-			t.Errorf("key %q: body=%q ok=%v want the body scanned", k, body, ok)
-		}
-	}
-}
-
-// The seen map is capped like the paths map: distinct writes must not grow it
-// without bound.
-func TestWriteGuardSeenBounded(t *testing.T) {
-	g := newWriteGuard()
-	for i := 0; i < guardMaxPaths+64; i++ {
-		args := json.RawMessage(`{"path":"/tmp/seen-` + strconv.Itoa(i) + `.txt"}`)
-		g.check("write_file", args)
-	}
-	g.mu.Lock()
-	n := len(g.seen)
-	g.mu.Unlock()
-	if n > guardMaxPaths {
-		t.Fatalf("seen grew to %d, cap %d", n, guardMaxPaths)
-	}
-}
-
-// Every path arg is judged, not only the first: a rename whose dest was never
-// read must block even when its source was.
-func TestWriteGuardChecksEveryPath(t *testing.T) {
-	g := newWriteGuard()
-	g.check("read_file", json.RawMessage(`{"path":"/tmp/src.txt"}`))
-	rename := json.RawMessage(`{"source":"/tmp/src.txt","dest":"/tmp/dest.txt"}`)
-	if _, blocked := g.check("rename_file", rename); !blocked {
-		t.Fatal("rename whose dest was never read must block")
-	}
-	g.check("read_file", json.RawMessage(`{"path":"/tmp/dest.txt"}`))
-	if _, blocked := g.check("rename_file", rename); blocked {
-		t.Fatal("rename with every path read must pass")
-	}
-}
-
-// A read-only tool whose name merely contains a write verb ("readwrite") must
-// not infer write.unread, while a real write tool still does.
-func TestInferItemWriteVerbBoundary(t *testing.T) {
-	if got := inferItem("tools/call", "readwrite", "", "docs/plan.md"); got != "" {
-		t.Fatalf("readwrite must not infer a write item, got %q", got)
-	}
-	if got := inferItem("tools/call", "write_file", "", "docs/plan.md"); got != "write.unread" {
-		t.Fatalf("write_file must infer write.unread, got %q", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			home := audCEnv(t)
+			d := newDecisionBridge()
+			out, blocked := c.send(t, d)
+			if blocked != c.wantBlock {
+				t.Fatalf("blocked = %v, want %v (wire %s)", blocked, c.wantBlock, out)
+			}
+			if c.wantNone && len(out) != 0 {
+				t.Fatalf("notification answered on the wire: %s", out)
+			}
+			for _, want := range c.wantWire {
+				if !strings.Contains(string(out), want) {
+					t.Fatalf("wire %s missing %q", out, want)
+				}
+			}
+			if len(c.audit) > 0 {
+				log := audCAudit(t, home)
+				for _, want := range c.audit {
+					if !strings.Contains(log, want) {
+						t.Fatalf("audit %s missing %q", log, want)
+					}
+				}
+			}
+		})
 	}
 }

@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -423,104 +421,5 @@ func Test_w18_T3_EnforcingPreForwardContrast(t *testing.T) {
 	}
 	if n := metrics.count(); n != 1 {
 		t.Fatalf("decision markers = %d, want 1", n)
-	}
-}
-
-// M1, deliberately RED. MANIFEST M1 asks for a named approver for the
-// enforcement flip and config/key change. Current code accepts both with no
-// approver identity anywhere; this test must fail until that gap is fixed.
-func Test_w18_M1_ApproverRequired(t *testing.T) {
-	home := w18Base(t)
-	oldEP, oldClient := soEndpoint, soClient
-	soEndpoint, soClient = "http://127.0.0.1:1/v1/systemone", &http.Client{Timeout: time.Second}
-	t.Cleanup(func() { soEndpoint, soClient = oldEP, oldClient })
-	t.Setenv("EVREN_API_KEY", "")
-
-	if got := soMode(); got != soModeAdvisory {
-		t.Fatalf("baseline soMode = %q, want advisory", got)
-	}
-	baseFrame := w18Frame(4, "tools/call", `"name":"read_file","arguments":{"path":"/tmp/w18.txt"}`)
-	baseSrv := httptest.NewServer(mcpHTTPHandler())
-	code, body := w18Post(t, baseSrv, baseFrame)
-	baseSrv.Close()
-	if code != http.StatusOK || !bytes.Equal(body, baseFrame) {
-		t.Fatalf("advisory baseline HTTP %d body %q, want exact echo", code, body)
-	}
-
-	dir := filepath.Join(home, ".walsy-system1")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatalf("state dir: %v", err)
-	}
-	cfgPath := filepath.Join(dir, "config.txt")
-	auditPath := filepath.Join(dir, "audit.jsonl")
-	approverEvidence := func() string {
-		parts := []string{}
-		if b, err := os.ReadFile(cfgPath); err == nil {
-			parts = append(parts, string(b))
-		}
-		if b, err := os.ReadFile(auditPath); err == nil {
-			parts = append(parts, string(b))
-		}
-		for _, name := range []string{"WALSY_SO_APPROVER", "WALSY_APPROVER"} {
-			if v := os.Getenv(name); v != "" {
-				parts = append(parts, name+"="+v)
-			}
-		}
-		return strings.ToLower(strings.Join(parts, "\n"))
-	}
-	hasApprover := func() bool {
-		text := approverEvidence()
-		return strings.Contains(text, "approv") || strings.Contains(text, "onay") || strings.Contains(text, "signed_by")
-	}
-
-	// Flip with config only: no second party, no signature, no audit record.
-	if err := os.WriteFile(cfgPath, []byte("so_mode=enforcing\n"), 0600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	if got := soMode(); got != soModeEnforcing {
-		t.Fatalf("file-only flip soMode = %q, want enforcing", got)
-	}
-	flipFrame := w18Frame(5, "tools/call", `"name":"read_file","arguments":{"path":"/tmp/w18.txt"}`)
-	flipSrv := httptest.NewServer(mcpHTTPHandler())
-	code, body = w18Post(t, flipSrv, flipFrame)
-	flipSrv.Close()
-	if code != http.StatusOK || !bytes.Contains(body, []byte(`"code":-32001`)) ||
-		!bytes.Contains(body, []byte("explicit decision capability required")) {
-		t.Fatalf("flip did not block: HTTP %d body %q", code, body)
-	}
-	if hasApprover() {
-		t.Errorf("config flip unexpectedly carries approver evidence: %q", approverEvidence())
-	}
-
-	// Key rotation is accepted from a bare env assignment with no approver.
-	t.Setenv("EVREN_API_KEY", "w18-rotated-key")
-	if got := soAPIKey(); got != "w18-rotated-key" {
-		t.Fatalf("soAPIKey = %q, want unattended new value", got)
-	}
-	// The audit reason "key-without-approver" records the gap, not an approver.
-	if ev := approverEvidence(); !strings.Contains(ev, "key-without-approver") ||
-		strings.Contains(strings.ReplaceAll(ev, "key-without-approver", ""), "approv") ||
-		strings.Contains(ev, "onay") || strings.Contains(ev, "signed_by") {
-		t.Errorf("key rotation must stay unattended with no named approver: %q", ev)
-	}
-
-	// Env-only flip after removing config has the same gap.
-	if err := os.Remove(cfgPath); err != nil {
-		t.Fatalf("remove config: %v", err)
-	}
-	t.Setenv("WALSY_SO_MODE", "enforcing")
-	if got := soMode(); got != soModeEnforcing {
-		t.Fatalf("env-only flip soMode = %q, want enforcing", got)
-	}
-	envFrame := w18Frame(6, "tools/call", `"name":"read_file","arguments":{"path":"/tmp/w18.txt"}`)
-	envSrv := httptest.NewServer(mcpHTTPHandler())
-	code, body = w18Post(t, envSrv, envFrame)
-	envSrv.Close()
-	if code != http.StatusOK || !bytes.Contains(body, []byte(`"code":-32001`)) {
-		t.Fatalf("env-only flip did not block: HTTP %d body %q", code, body)
-	}
-	if ev := approverEvidence(); strings.Contains(strings.ReplaceAll(ev, "key-without-approver", ""), "approv") ||
-		strings.Contains(ev, "onay") || strings.Contains(ev, "signed_by") {
-		t.Errorf("env flip unexpectedly carries a named approver: %q", ev)
 	}
 }

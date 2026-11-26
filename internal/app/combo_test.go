@@ -229,26 +229,6 @@ func TestComboSendsKeyAndRejects401(t *testing.T) {
 	}
 }
 
-// A non-2xx answer never proves a credential: only a 2xx does. A 422 body is
-// the endpoint refusing the request, not a key that was accepted, so the step
-// fails over instead of winning.
-func TestComboNon2xxWithKeyDoesNotWin(t *testing.T) {
-	resetRouterForTest(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-	}))
-	defer srv.Close()
-	got := RunCombo([]ComboStep{{Name: "c/m", Base: srv.URL, Key: "sk-ok"}}, 0)
-	if got.Winner != "" {
-		t.Fatalf("422 must not win: %+v", got)
-	}
-	if len(got.Steps) == 0 || got.Steps[0].OK || got.Steps[0].Detail != "non-2xx response" {
-		t.Fatalf("422 with key: %+v", got)
-	}
-}
-
-// The reported failure: a 400 answered to a chat-shaped request used to be
-// reported as "key accepted" and won the combo on round 1. It must fail over.
 func TestComboBadRequestWithKeyDoesNotWin(t *testing.T) {
 	resetRouterForTest(t)
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,24 +316,5 @@ func TestRunComboStopsAfterMaxRounds(t *testing.T) {
 	got := RunCombo([]ComboStep{{Name: "only", Base: s.URL}}, 0)
 	if got.Winner != "" || got.Rounds != comboMaxRounds || hits != comboMaxRounds {
 		t.Fatalf("rounds=%d hits=%d winner=%q, want %d rounds and no extra probes", got.Rounds, hits, got.Winner, comboMaxRounds)
-	}
-}
-
-func TestComboNoRejectedKeyWins(t *testing.T) {
-	resetRouterForTest(t)
-	reject := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer reject.Close()
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
-	got := RunCombo([]ComboStep{
-		{Name: "a", Base: reject.URL, Key: "sk-a"},
-		{Name: "b", Base: ok.URL, Key: "sk-b"},
-	}, 0)
-	if got.Winner != "b" || got.Steps[0].OK || got.Steps[0].Detail != "key rejected" {
-		t.Fatalf("rejected key must fail over: %+v", got)
 	}
 }

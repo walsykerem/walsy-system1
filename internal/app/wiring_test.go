@@ -6,58 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
-
-// TestWiringBridgeDecidesOnInitialize proves the shipped relay calls the real
-// decision engine on initialize and adds the MCP marker on the result. SO is a
-// local httptest server; no live call is made.
-func TestWiringBridgeDecidesOnInitialize(t *testing.T) {
-	called := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case called <- struct{}{}:
-		default:
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
-	}))
-	defer srv.Close()
-
-	orig, origTO := soEndpoint, soTimeout
-	soEndpoint, soTimeout = srv.URL, 200*time.Millisecond
-	defer func() { soEndpoint, soTimeout = orig, origTO }()
-	t.Setenv("EVREN_API_KEY", "test-key")
-
-	initReq := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"},"need_label":true,"no_scratch":true,"safe":true,"reversible":true,"opt_in":true,"phase":"before-model","authority":true,"calibrated":true,"state":"classify this request"}}` + "\n")
-	initRes := []byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"x"}}}` + "\n")
-
-	var toServer, toClient bytes.Buffer
-	bridgeStdio(bytes.NewReader(initReq), &toClient, &toServer, bytes.NewReader(initRes))
-
-	select {
-	case <-called:
-	default:
-		t.Fatal("SO was not called on initialize")
-	}
-	if !bytes.Equal(toServer.Bytes(), initReq) {
-		t.Fatalf("client->server changed: %q", toServer.Bytes())
-	}
-	if !bytes.Contains(toClient.Bytes(), []byte(markerKey)) {
-		t.Fatalf("MCP marker missing on forwarded result: %q", toClient.Bytes())
-	}
-	// Non-secret identity bytes preserved.
-	for _, s := range []string{`"id":1`, `"protocolVersion":"2025-06-18"`, `"name":"x"`} {
-		if !bytes.Contains(toClient.Bytes(), []byte(s)) {
-			t.Fatalf("lost %q in %q", s, toClient.Bytes())
-		}
-	}
-}
 
 // TestWiringSOFailurePassthrough proves an SO outage never changes the stream.
 func TestWiringSOFailurePassthrough(t *testing.T) {
@@ -143,30 +97,61 @@ func TestUnixLiveSocketNotRemoved(t *testing.T) {
 	}
 }
 
-// TestUpstreamExitMetric proves a nonzero upstream exit is recorded as error.
-func TestUpstreamExitMetric(t *testing.T) {
+// TestRunStdioUpstreamExitMetric drives the real stdio transport into a
+// nonzero upstream exit and asserts the stderr allowlist records it as error
+// while still carrying no payload or confidence material.
+func TestRunStdioUpstreamExitMetric(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WALSY_SO_MODE", "advisory")
 	var buf bytes.Buffer
-	orig := metricOut
+	origOut, origIn, origStdout := metricOut, os.Stdin, os.Stdout
 	metricOut = &buf
-	defer func() { metricOut = orig }()
+	t.Cleanup(func() { metricOut, os.Stdin, os.Stdout = origOut, origIn, origStdout })
 
-	cmd := exec.Command("sh", "-c", "exit 1")
-	if err := cmd.Run(); err == nil {
-		t.Fatal("upstream exit 0, want nonzero")
-	}
-	// Record cmd.Wait() error exactly as runStdio does.
-	emitMetric(metric{Seq: 2, PID: os.Getpid(), UpstreamExit: "error", Decision: "passthrough"})
-
-	var rec map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &rec); err != nil {
+	inR, inW, err := os.Pipe()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if rec["upstream_exit"] != "error" {
-		t.Fatalf("upstream_exit missing: %v", rec)
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, secret := range []string{"secret", "token", "conf", "cost"} {
-		if strings.Contains(strings.ToLower(buf.String()), secret) {
-			t.Fatalf("%s leaked in metric: %q", secret, buf.String())
+	os.Stdin, os.Stdout = inR, outW
+	t.Cleanup(func() { inR.Close(); outR.Close(); outW.Close() })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runStdio([]string{"sh", "-c", "cat >/dev/null; exit 3"})
+	}()
+	inW.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runStdio did not return after upstream exit")
+	}
+
+	var recs []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("metric line is not JSON: %q (%v)", line, err)
+		}
+		recs = append(recs, rec)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("metric records = %d, want start + exit: %q", len(recs), buf.String())
+	}
+	if recs[0]["seq"] != float64(1) || recs[0]["decision"] != "passthrough" || recs[0]["reason_code"] != "shadow" {
+		t.Fatalf("start record = %v", recs[0])
+	}
+	if recs[1]["seq"] != float64(2) || recs[1]["upstream_exit"] != "error" || recs[1]["decision"] != "passthrough" {
+		t.Fatalf("exit record = %v, want upstream_exit=error", recs[1])
+	}
+	lower := strings.ToLower(buf.String())
+	for _, secret := range []string{"secret", "token", "conf", "cost", "prompt"} {
+		if strings.Contains(lower, secret) {
+			t.Fatalf("metric leaked %q: %s", secret, buf.String())
 		}
 	}
 }

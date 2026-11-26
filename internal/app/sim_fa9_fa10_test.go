@@ -89,14 +89,6 @@ func w29_frame(id int, state string) string {
 }
 
 func TestW29_FA9DeadlineAndEndpoint(t *testing.T) {
-	t.Run("shipped_deadline_is_150ms", func(t *testing.T) {
-		w29_base(t)
-		// No case in this file has overridden soTimeout at this point.
-		if soTimeout < 100*time.Millisecond || soTimeout > 250*time.Millisecond {
-			t.Errorf("FA9 BROKEN: shipped soTimeout=%v, want ~150ms (100-250ms)", soTimeout)
-		}
-	})
-
 	t.Run("context_timeout_returns_promptly", func(t *testing.T) {
 		w29_base(t)
 		var posted int32

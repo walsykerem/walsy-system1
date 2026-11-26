@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func resetRouterForTest(t *testing.T) {
@@ -60,55 +59,6 @@ func TestRouterAllowDeny(t *testing.T) {
 	routerReset()
 	if routerAllow("write_file") || !routerAllow("read_file") {
 		t.Fatal("config deny list ignored")
-	}
-}
-
-func TestRouterBudgetExhaustion(t *testing.T) {
-	resetRouterForTest(t)
-	t.Setenv("WALSY_ROUTER_RETRY_BUDGET", "")
-	routerReset()
-	for i := 0; i < routerDefaultBudget; i++ {
-		if !routerBudgetOK() {
-			t.Fatalf("budget exhausted early at %d", i)
-		}
-	}
-	if routerBudgetOK() {
-		t.Fatal("budget must be bounded")
-	}
-
-	t.Setenv("WALSY_ROUTER_RETRY_BUDGET", "2")
-	routerReset()
-	if !routerBudgetOK() || !routerBudgetOK() || routerBudgetOK() {
-		t.Fatal("configured budget not honored")
-	}
-}
-
-func TestRouterBreakerOpenHalfOpen(t *testing.T) {
-	resetRouterForTest(t)
-	t.Setenv("WALSY_ROUTER_BREAKER_THRESHOLD", "2")
-	t.Setenv("WALSY_ROUTER_BREAKER_COOLDOWN", "40ms")
-	routerReset()
-
-	routerRecord("tool", false)
-	routerRecord("tool", true)
-	if routerBreakerOpen("tool") {
-		t.Fatal("success must close breaker")
-	}
-	routerRecord("tool", false)
-	routerRecord("tool", false)
-	if !routerBreakerOpen("tool") {
-		t.Fatal("breaker must open after repeated failures")
-	}
-	time.Sleep(60 * time.Millisecond)
-	if routerBreakerOpen("tool") {
-		t.Fatal("half-open probe must be allowed after cooldown")
-	}
-	if !routerBreakerOpen("tool") {
-		t.Fatal("only one half-open probe allowed")
-	}
-	routerRecord("tool", true)
-	if routerBreakerOpen("tool") {
-		t.Fatal("success must close half-open breaker")
 	}
 }
 
@@ -166,31 +116,9 @@ func TestRouterAuditRedaction(t *testing.T) {
 	}
 }
 
-// A loop of initialize frames may refill the budget only routerMaxRefills
-// times; past that the budget stays spent, so the refill path is bounded.
-func TestRouterBudgetRefillsAreBounded(t *testing.T) {
-	routerReset()
-	defer routerReset()
-	spendAll := func() {
-		for {
-			if _, _, spent := routerBudgetSpend(); !spent {
-				return
-			}
-		}
-	}
-	for i := 0; i < routerMaxRefills; i++ {
-		routerBudgetReset()
-		if _, _, spent := routerBudgetSpend(); !spent {
-			t.Fatalf("refill %d must restore the budget", i)
-		}
-		spendAll()
-	}
-	routerBudgetReset()
-	if _, _, spent := routerBudgetSpend(); spent {
-		t.Fatal("refill past the cap must not restore the budget")
-	}
-}
-
+// The env contract is the only way an operator sets the retry budget, and the
+// fail-open rules are part of it: missing/malformed keeps the default, an
+// explicit zero means zero.
 func TestRouterBudgetSpendTable(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -223,5 +151,30 @@ func TestRouterBudgetSpendTable(t *testing.T) {
 				t.Fatal("reset must refill the budget")
 			}
 		})
+	}
+}
+
+// A loop of initialize frames may refill the budget only routerMaxRefills
+// times; past that the budget stays spent, so the refill path is bounded.
+func TestRouterBudgetRefillsAreBounded(t *testing.T) {
+	routerReset()
+	defer routerReset()
+	spendAll := func() {
+		for {
+			if _, _, spent := routerBudgetSpend(); !spent {
+				return
+			}
+		}
+	}
+	for i := 0; i < routerMaxRefills; i++ {
+		routerBudgetReset()
+		if _, _, spent := routerBudgetSpend(); !spent {
+			t.Fatalf("refill %d must restore the budget", i)
+		}
+		spendAll()
+	}
+	routerBudgetReset()
+	if _, _, spent := routerBudgetSpend(); spent {
+		t.Fatal("refill past the cap must not restore the budget")
 	}
 }

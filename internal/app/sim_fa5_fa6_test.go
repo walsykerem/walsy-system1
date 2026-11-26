@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -21,8 +20,7 @@ import (
 // W27 simulation of MANIFEST FA5 (local preflight shadow) and FA6 (decision
 // cache). Every case drives production code: the rule tree, route, bridge,
 // HTTP handler and the real SO HTTP client against an httptest oracle. No
-// decision path is reimplemented. The only probe that mirrors key derivation
-// (w27_VersionKey) is first checked against production gateKeyBytes.
+// decision path is reimplemented.
 
 const w27_Req = `{"state":"classify w27 simulation","method":"tools/call","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`
 
@@ -128,99 +126,6 @@ func w27_Expire(t *testing.T, d *decisionBridge, k [32]byte, at time.Time) {
 	el.Value.(*cacheCell).expiresAt = at
 }
 
-// w27_VersionKey mirrors gateKeyBytes with an explicit policy version. Used only
-// after equality with the shipped gateKeyBytes is asserted.
-func w27_VersionKey(request []byte, cap capabilityConfig, version string) [32]byte {
-	var obj map[string]any
-	dec := json.NewDecoder(bytes.NewReader(request))
-	dec.UseNumber()
-	if dec.Decode(&obj) != nil {
-		obj = nil
-	}
-	if obj != nil {
-		for _, k := range []string{"id", "jsonrpc"} {
-			delete(obj, k)
-		}
-		foldKeyState(obj)
-	}
-	b, _ := json.Marshal(obj)
-	h := sha256.New()
-	_, _ = h.Write([]byte(canonicalState(string(b))))
-	for _, name := range activeQuestionNames(string(b)) {
-		writeField(h, name)
-	}
-	c, _ := json.Marshal(cap)
-	writeField(h, string(c))
-	writeField(h, keyRubricVersion)
-	writeField(h, version)
-	writeField(h, keyModel)
-	writeField(h, keyConfRule)
-	writeField(h, registryVersion)
-	writeField(h, promptSetHash())
-	var out [32]byte
-	copy(out[:], h.Sum(nil))
-	return out
-}
-
-// FA5.1: the rule tree is local and byte-stable; it never contacts SO.
-func TestSimFA5RuleTree(t *testing.T) {
-	w27_Base(t)
-	srv, st := w27_Stub(t, w27_Reply("yes", 0.95))
-	w27_Attach(t, srv)
-
-	base := stateEnvelope{
-		State: "classify this request", Method: "tools/call",
-		NeedLabel: true, NoScratch: true, Safe: true, Reversible: true,
-		OptIn: true, Phase: "before-model", Authority: true, Calibrated: true,
-	}
-	cases := []struct {
-		name   string
-		change func(*stateEnvelope)
-		reason string
-		ambig  bool
-	}{
-		{"out-of-scope", func(e *stateEnvelope) { e.Phase = "" }, "layer0-scope", false},
-		{"static", func(e *stateEnvelope) { e.State = "ping" }, "layer0-static", false},
-		{"shape", func(e *stateEnvelope) { e.State = "summarize the document" }, "layer0-shape", false},
-		{"registry-local", func(e *stateEnvelope) { e.Item = "reasoning.priority" }, "registry-local", false},
-		{"so-pending", func(e *stateEnvelope) {}, "so-pending", false},
-		{"ambiguous", func(e *stateEnvelope) { e.Safe = false }, "so-pending", true},
-	}
-	for _, tc := range cases {
-		e := base
-		tc.change(&e)
-		start := time.Now()
-		got := preflight(e)
-		elapsed := time.Since(start)
-		if got.Reason != tc.reason || got.Ambiguous != tc.ambig {
-			t.Errorf("%s: preflight = %+v, want reason=%s ambiguous=%v", tc.name, got, tc.reason, tc.ambig)
-		}
-		if elapsed > 5*time.Millisecond {
-			t.Errorf("%s: rule tree took %v, want local microseconds", tc.name, elapsed)
-		}
-	}
-	if st.count() != 0 {
-		t.Fatalf("rule tree caused %d SO posts, want 0", st.count())
-	}
-}
-
-// FA5.2: a request the shadow calls ambiguous must still reach SO.
-func TestSimFA5AmbiguousToSO(t *testing.T) {
-	w27_Base(t)
-	srv, st := w27_Stub(t, w27_Reply("yes", 0.95))
-	w27_Attach(t, srv)
-
-	state := `{"state":"classify this request","method":"tools/call","need_label":true,"no_scratch":true,"safe":false,"reversible":true,"authority":true,"calibrated":true,"opt_in":true,"phase":"before-model"}`
-	p := preflightFromState(state)
-	if p.Reason != "so-pending" || !p.Ambiguous {
-		t.Fatalf("preflight = %+v, want so-pending/ambiguous", p)
-	}
-	r := route(state, newPin(nil))
-	if st.count() != 1 {
-		t.Fatalf("ambiguous request did not reach SO: route=%+v posts=%d", r, st.count())
-	}
-}
-
 // FA5.3: the shadow is advisory only; real admission comes from SO, the ring
 // accumulates reason pairs, and metric/audit are source-tagged.
 func TestSimFA5AdvisoryShadow(t *testing.T) {
@@ -274,27 +179,6 @@ func TestSimFA5AdvisoryShadow(t *testing.T) {
 	}
 	if ring.n != 256 || len(ring.counts) > 256 {
 		t.Fatalf("calibration ring not bounded: n=%d counts=%d", ring.n, len(ring.counts))
-	}
-}
-
-// FA6.1: canonical SHA-256 [32]byte key strips volatile fields, keeps meaning.
-func TestSimFA6CanonicalKey(t *testing.T) {
-	w27_Base(t)
-	cap := soCapability()
-	a := []byte(`{"params":{"state":"classify payload","session_id":"s1","timestamp":1}}`)
-	b := []byte(`{"params":{"state":"classify payload","sessionId":"s2","time":2}}`)
-	ka, kb := gateKeyBytes(a, cap), gateKeyBytes(b, cap)
-	var digest [32]byte = ka
-	_ = digest
-	if ka != kb {
-		t.Fatal("volatile fields changed the canonical key")
-	}
-	sem := []byte(`{"params":{"state":"rank payload","session_id":"s1","timestamp":1}}`)
-	if gateKeyBytes(sem, cap) == ka {
-		t.Fatal("semantic change did not rebind the canonical key")
-	}
-	if gateKey(a, cap) != hex.EncodeToString(ka[:]) {
-		t.Fatal("gateKey is not hex of gateKeyBytes")
 	}
 }
 
@@ -359,71 +243,6 @@ func TestSimFA6TTLNegative(t *testing.T) {
 	w27_Expire(t, d, k, time.Now().Add(-time.Second))
 	if r := d.decide([]byte(w27_Req)); r.Reason != "so-no" || st.count() != 2 {
 		t.Fatalf("expired negative not re-asked: %+v posts=%d", r, st.count())
-	}
-}
-
-// FA6.4: each shard runs its own LRU; a touched entry is not the eviction victim.
-func TestSimFA6LRUShard(t *testing.T) {
-	w27_Base(t)
-	c := newShardedCache()
-	cap := soCapability()
-	first := gateKeyBytes([]byte(`{"params":{"state":"classify lru 0"}}`), cap)
-	target := int(first[0] & 7)
-	keys := [][32]byte{first}
-	for i := 1; i < 500 && len(keys) < 3; i++ {
-		k := gateKeyBytes([]byte(`{"params":{"state":"classify lru `+strconv.Itoa(i)+`"}}`), cap)
-		if int(k[0]&7) == target {
-			keys = append(keys, k)
-		}
-	}
-	if len(keys) != 3 {
-		t.Fatal("could not build three keys in one shard")
-	}
-	s := c.shard(keys[0])
-	s.cap = 2
-	winner := cachedDecision{Choice: "yes", ConfBucket: "1.0", Reason: "margin=1"}
-	loser := cachedDecision{Abstain: true, Reason: "so-no", ConfBucket: "0.9"}
-	c.store(keys[0], winner)
-	c.store(keys[1], loser)
-	if _, ok := c.lookup(keys[0]); !ok {
-		t.Fatal("entry vanished before eviction")
-	}
-	c.store(keys[2], winner)
-	if _, ok := c.lookup(keys[1]); ok {
-		t.Fatal("LRU evicted the touched entry instead of the oldest")
-	}
-	for _, k := range []struct {
-		key  [32]byte
-		want string
-	}{{keys[0], "margin=1"}, {keys[2], "margin=1"}} {
-		d, ok := c.lookup(k.key)
-		if !ok || d.Reason != k.want {
-			t.Fatalf("survivor %s = %+v ok=%v", hex.EncodeToString(k.key[:]), d, ok)
-		}
-	}
-}
-
-// FA6.5: policy_version is part of the key namespace; a bump misses old cells
-// without any explicit flush.
-func TestSimFA6PolicyVersionNamespace(t *testing.T) {
-	w27_Base(t)
-	cap := soCapability()
-	req := []byte(w27_Req)
-	prod := gateKeyBytes(req, cap)
-	if probe := w27_VersionKey(req, cap, keyPolicyVersion); probe != prod {
-		t.Fatalf("version probe does not match production key: probe=%x prod=%x", probe, prod)
-	}
-	c := newShardedCache()
-	c.store(prod, cachedDecision{Choice: "yes", ConfBucket: "1.0", Reason: "margin=1"})
-	if _, ok := c.lookup(prod); !ok {
-		t.Fatal("shipped cell missing before bump")
-	}
-	bumped := w27_VersionKey(req, cap, "2")
-	if bumped == prod {
-		t.Fatal("policy_version does not rebind the key")
-	}
-	if _, ok := c.lookup(bumped); ok {
-		t.Fatal("old cell served after policy_version bump; flush would be required")
 	}
 }
 

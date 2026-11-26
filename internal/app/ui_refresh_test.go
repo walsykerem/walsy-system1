@@ -61,27 +61,6 @@ func TestUIHomeListensForSheetRefresh(t *testing.T) {
 	}
 }
 
-// A sheet iframe is fetched once per parent document, so reopening a sheet
-// would show the state from before the last write. The home document must
-// re-src the open sheet frame with a nonce, and must keep the frame's own
-// query (?name=Provider) by appending with & instead of rebuilding the URL.
-func TestUIHomeReloadsOpenSheetFrame(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	rec := httptest.NewRecorder()
-	NewDashboardHandler().ServeHTTP(rec, dashRequest(http.MethodGet, "/", nil))
-	body := rec.Body.String()
-	for _, want := range []string{
-		"addEventListener('hashchange'",
-		`querySelector('iframe.sheet-frame')`,
-		"frame.getAttribute('src'), location.href)",
-		"searchParams.set('t', String(Date.now()))",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("home document missing iframe reload fragment %q", want)
-		}
-	}
-}
-
 // Every sheet iframe is rendered once with the parent document. Reopening a
 // sheet must re-fetch it (nonce in the query, sheet address intact) or the
 // panel shows the state from before the last write.

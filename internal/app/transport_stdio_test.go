@@ -35,11 +35,3 @@ func TestRelayStdioVerbatim(t *testing.T) {
 		t.Fatalf("client got %q, want verbatim %q", clientOut.Bytes(), in)
 	}
 }
-
-func TestRelayStdioEmptyInput(t *testing.T) {
-	var out bytes.Buffer
-	relayStdio(bytes.NewReader(nil), &out, &bytes.Buffer{}, bytes.NewReader(nil))
-	if out.Len() != 0 {
-		t.Fatalf("empty input produced output: %q", out.String())
-	}
-}

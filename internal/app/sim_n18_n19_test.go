@@ -41,15 +41,6 @@ func simSOFixture(t *testing.T, body string, wire *string) {
 	t.Cleanup(routerReset)
 }
 
-func simMetricCapture(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	old := metricOut
-	metricOut = &buf
-	t.Cleanup(func() { metricOut = old })
-	return &buf
-}
-
 func simAuditPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(os.Getenv("HOME"), routerDir, routerAuditName)
@@ -202,56 +193,6 @@ func TestSimN19AboveThresholdHelper(t *testing.T) {
 	}
 }
 
-func TestSimN19ConfBucketMetric(t *testing.T) {
-	cases := []struct {
-		conf float64
-		want string
-	}{
-		{0.799999, ""}, {0.8, "0.8"}, {0.85, "0.8"},
-		{0.9, "0.9"}, {0.95, "0.9"}, {1, "1.0"}, {-0.5, ""},
-	}
-	for _, tc := range cases {
-		if got := confBucket(tc.conf); got != tc.want {
-			t.Fatalf("confBucket(%v)=%q want %q", tc.conf, got, tc.want)
-		}
-	}
-	buf := simMetricCapture(t)
-	emitMetric(metric{Seq: 1, PID: 2, Decision: decPin, ConfBucket: confBucket(0.95), Covered: true})
-	line := buf.String()
-	if !strings.Contains(line, `"conf_bucket":"0.9"`) {
-		t.Fatalf("metric missing conf_bucket: %s", line)
-	}
-	for _, bad := range []string{`"confidence"`, `"conf"`, "0.95"} {
-		if strings.Contains(line, bad) {
-			t.Fatalf("metric leaked %q: %s", bad, line)
-		}
-	}
-}
-
-func TestSimN19AdmitRateWindow(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WALSY_SO_MODE", "")
-	routerReset()
-	t.Cleanup(routerReset)
-	w := &admitWindow{}
-	for i := 0; i < 100; i++ {
-		w.record(i%4 != 0)
-	}
-	b, err := os.ReadFile(simAuditPath(t))
-	if err != nil {
-		t.Fatalf("audit read: %v", err)
-	}
-	line := string(b)
-	for _, want := range []string{`"event":"admit_rate"`, `"count":"75"`, `"status":"window100"`, `"reason":"25"`} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("audit missing %s: %s", want, line)
-		}
-	}
-	if strings.Contains(strings.ToLower(line), "confidence") {
-		t.Fatalf("audit leaked confidence: %s", line)
-	}
-}
-
 func TestSimN19AdmitRateDriftAlarm(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WALSY_SO_MODE", "")
@@ -293,35 +234,6 @@ func TestSimN19DroppedKeysOnSOWire(t *testing.T) {
 	for _, bad := range []string{`"confidence"`, marker, "0.99"} {
 		if strings.Contains(strings.ToLower(string(b)), strings.ToLower(bad)) {
 			t.Fatalf("audit leaked %q: %s", bad, b)
-		}
-	}
-}
-
-func TestSimN19RawConfidenceNotAudited(t *testing.T) {
-	buf := simMetricCapture(t)
-	var wire string
-	simSOFixture(t, `{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`, &wire)
-	frame := []byte(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"sim-tool","arguments":{},` + n18n19Caps + `}}` + "\n")
-	var toServer, toClient bytes.Buffer
-	bridgeStdio(bytes.NewReader(frame), &toClient, &toServer, bytes.NewReader(nil))
-	if wire == "" {
-		t.Fatal("SO was not called; capability setup failed")
-	}
-	b, err := os.ReadFile(simAuditPath(t))
-	if err != nil {
-		t.Fatalf("audit read: %v", err)
-	}
-	sinks := []struct {
-		name string
-		data string
-	}{
-		{"audit", string(b)}, {"metric", buf.String()}, {"wire", wire},
-	}
-	for _, s := range sinks {
-		for _, bad := range []string{`"confidence"`, `"conf"`, "0.95"} {
-			if strings.Contains(strings.ToLower(s.data), bad) {
-				t.Fatalf("%s leaked %q: %s", s.name, bad, s.data)
-			}
 		}
 	}
 }

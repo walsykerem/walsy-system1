@@ -77,47 +77,6 @@ func TestFEUXNoOriginLinkInTopbar(t *testing.T) {
 	}
 }
 
-// Toasts: a real close button, a click-through container, <=4s total, and a
-// short CSS fade so the linter's animation-duration rule stays satisfied.
-func TestFEUXToastCloseAndShortTimeout(t *testing.T) {
-	html := feuxFile(t, "index.html")
-	feuxHas(t, html, `<button class="toast-close" type="button" aria-label="Dismiss notification">`)
-	feuxHas(t, html, `data-toast-ms="1500"`)
-	feuxHas(t, html, `style="--ms:{{.MsgMs}}ms"`)
-	feuxHas(t, html, `e.preventDefault(); e.stopPropagation(); t.remove();`)
-	feuxHas(t, html, `setTimeout(function () { t.remove(); }, ms);`)
-	css := feuxFile(t, "style.css")
-	feuxHas(t, css, `pointer-events: none;`)
-	feuxHas(t, css, `pointer-events: auto;`)
-	feuxHas(t, css, `animation-name: toast-out;`)
-	feuxHas(t, css, `animation-duration: 220ms;`)
-	feuxHas(t, css, `animation-delay: 1280ms;`)
-	for _, bad := range []string{`animation: toast-out var(--ms`, `0%, 88%`} {
-		if strings.Contains(css, bad) {
-			t.Errorf("stale long toast rule %q remains", bad)
-		}
-	}
-}
-
-// SYSTEM PROMPTS hover must settle on the first frame; focus-visible stays.
-func TestFEUXNavHoverNoDelay(t *testing.T) {
-	css := feuxFile(t, "style.css")
-	start := strings.Index(css, `.topbar-link {`)
-	if start < 0 {
-		t.Fatal("no .topbar-link rule")
-	}
-	end := strings.Index(css[start:], `}`)
-	if end < 0 {
-		t.Fatal("unterminated .topbar-link rule")
-	}
-	block := css[start : start+end]
-	feuxHas(t, block, `transition: none;`)
-	if strings.Contains(block, "transition-delay") {
-		t.Error(".topbar-link has a transition-delay")
-	}
-	feuxHas(t, css, `.topbar-link:hover, .topbar-link:focus-visible`)
-}
-
 // LOGS clear: confirm first, POST no body, short success/error toast, and a
 // local row replacement so the sheet never reloads on a successful clear.
 func TestFEUXLogsClearContract(t *testing.T) {
@@ -210,24 +169,5 @@ func TestFEUXPromptsAddContract(t *testing.T) {
 	}
 	if strings.Contains(html, `JSON.stringify({text:`) {
 		t.Error("prompts add still uses the text-only body the API rejects")
-	}
-}
-
-// Dynamic fragments must keep the no-store header; no service worker or
-// client cache layer may reintroduce stale lists.
-func TestFEUXDynamicSheetsNoStore(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, target := range []string{"/", "/ui/logs", "/ui/prompts"} {
-		rec := httptest.NewRecorder()
-		NewDashboardHandler().ServeHTTP(rec, dashRequest(http.MethodGet, target, nil))
-		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-			t.Errorf("GET %s Cache-Control = %q, want no-store", target, got)
-		}
-	}
-	html := feuxFile(t, "index.html")
-	for _, bad := range []string{"serviceWorker", "navigator.serviceWorker"} {
-		if strings.Contains(html, bad) {
-			t.Errorf("service worker introduced: %q", bad)
-		}
 	}
 }

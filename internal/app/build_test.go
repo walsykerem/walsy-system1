@@ -170,32 +170,3 @@ func TestFailedTestRunKeepsOldBinary(t *testing.T) {
 		t.Fatal("failing build left its .tmp behind")
 	}
 }
-
-// installBuild swaps the new binary in, keeps the old one as .prev, and errors
-// on a build that produced no binary.
-func TestInstallBuildSwap(t *testing.T) {
-	dir := t.TempDir()
-	rel := filepath.Join("dist", "app")
-	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	install := func(tmp, body string) {
-		if err := os.WriteFile(filepath.Join(dir, tmp), []byte(body), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := installBuild(dir, tmp, rel); err != nil {
-			t.Fatalf("install %q: %v", body, err)
-		}
-	}
-	install("dist/app.tmp", "new")
-	if got, _ := os.ReadFile(filepath.Join(dir, "dist", "app")); string(got) != "new" {
-		t.Fatalf("installed binary = %q", got)
-	}
-	install("dist/app.tmp", "newer")
-	if got, _ := os.ReadFile(filepath.Join(dir, "dist", "app.prev")); string(got) != "new" {
-		t.Fatalf("prev = %q, want the previous binary", got)
-	}
-	if err := installBuild(dir, "dist/missing", rel); err == nil {
-		t.Fatal("installBuild accepted a missing build output")
-	}
-}

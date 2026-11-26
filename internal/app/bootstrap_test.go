@@ -2,7 +2,7 @@ package app
 
 import (
 	"encoding/json"
-	"path/filepath"
+	"os"
 	"strings"
 	"testing"
 )
@@ -25,82 +25,74 @@ func parseBootstrapSnippet(t *testing.T, raw string) bootstrapSnippet {
 	return got
 }
 
-func TestBootstrapOpenCodeMCPSnippet(t *testing.T) {
-	raw := opencodeMCPSnippet("system1", "stdio", "", "", []string{"--flag", "value"})
-	if strings.Contains(strings.ToLower(raw), "environment") ||
-		strings.Contains(strings.ToLower(raw), "token") ||
-		strings.Contains(raw, "sk-") || strings.Contains(raw, testSecret) {
-		t.Fatalf("snippet leaked a secret or env block: %s", raw)
+// -print-client-config is the shipped CLI entry for client wiring, so the
+// transport matrix is checked through Main instead of the snippet helper.
+func TestBootstrapPrintClientConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		*flagTransport, *flagListen, *flagUpstream, *flagPrintConfig = "stdio", "", "", false
+	})
+	cases := []struct {
+		name   string
+		args   []string
+		server string
+		want   []string
+	}{
+		{
+			name: "default stdio without upstream falls back to tools",
+			args: []string{"walsy-system1", "-print-client-config"},
+			want: []string{"-transport", "tools"},
+		},
+		{
+			name: "explicit stdio keeps positional upstream argv",
+			args: []string{"walsy-system1", "-transport", "stdio", "-print-client-config", "npx", "@example/mcp"},
+			want: []string{"-transport", "stdio", "npx", "@example/mcp"},
+		},
+		{
+			name: "unix listen and upstream",
+			args: []string{"walsy-system1", "-transport", "unix", "-listen", "/tmp/s1.sock", "-upstream", "/tmp/up.sock", "-print-client-config"},
+			want: []string{"-transport", "unix", "-listen", "/tmp/s1.sock", "-upstream", "/tmp/up.sock"},
+		},
+		{
+			name: "http listen",
+			args: []string{"walsy-system1", "-transport", "http", "-listen", "127.0.0.1:8787", "-print-client-config"},
+			want: []string{"-transport", "http", "-listen", "127.0.0.1:8787"},
+		},
 	}
-	got := parseBootstrapSnippet(t, raw)
-	srv, ok := got.MCP.Servers["system1"]
-	if !ok {
-		t.Fatalf("missing mcp.servers.system1: %s", raw)
-	}
-	if srv.Type != "local" {
-		t.Fatalf("type = %q, want local", srv.Type)
-	}
-	want := []string{"-transport", "stdio", "--flag", "value"}
-	if len(srv.Command) != len(want)+1 {
-		t.Fatalf("command = %v, want binary + %v", srv.Command, want)
-	}
-	bin := srv.Command[0]
-	if !filepath.IsAbs(bin) && bin != "walsy-system1" {
-		t.Fatalf("command[0] = %q, want absolute binary path or walsy-system1", bin)
-	}
-	for i, v := range want {
-		if srv.Command[i+1] != v {
-			t.Fatalf("command[%d] = %q, want %q", i+1, srv.Command[i+1], v)
-		}
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			*flagTransport, *flagListen, *flagUpstream, *flagPrintConfig = "stdio", "", "", false
+			os.Args = tc.args
 
-	// stdio cannot run without an upstream command, so the snippet must point
-	// at the self-contained tools server instead of a dead invocation.
-	raw = opencodeMCPSnippet("", "", "", "", nil)
-	got = parseBootstrapSnippet(t, raw)
-	srv, ok = got.MCP.Servers["walsy-system1"]
-	if !ok {
-		t.Fatalf("empty name must default to walsy-system1: %s", raw)
-	}
-	if len(srv.Command) != 3 || srv.Command[1] != "-transport" || srv.Command[2] != "tools" {
-		t.Fatalf("empty-upstream command = %v, want -transport tools", srv.Command)
-	}
+			raw, _ := gapMainCapture(t, Main)
+			raw = strings.TrimSpace(raw)
+			if strings.Contains(strings.ToLower(raw), "environment") ||
+				strings.Contains(strings.ToLower(raw), "token") ||
+				strings.Contains(raw, "sk-") || strings.Contains(raw, testSecret) {
+				t.Fatalf("snippet leaked a secret or env block: %s", raw)
+			}
 
-	raw = opencodeMCPSnippet("system1", "tools", "", "", nil)
-	got = parseBootstrapSnippet(t, raw)
-	if cmd := got.MCP.Servers["system1"].Command; len(cmd) != 3 || cmd[2] != "tools" {
-		t.Fatalf("tools transport not honored: %v", cmd)
+			got := parseBootstrapSnippet(t, raw)
+			srv, ok := got.MCP.Servers["walsy-system1"]
+			if !ok {
+				t.Fatalf("missing mcp.servers.walsy-system1: %s", raw)
+			}
+			if srv.Type != "local" {
+				t.Fatalf("type = %q, want local", srv.Type)
+			}
+			if len(srv.Command) != len(tc.want)+1 {
+				t.Fatalf("command = %v, want binary + %v", srv.Command, tc.want)
+			}
+			if srv.Command[0] == "" {
+				t.Fatalf("command[0] is empty: %v", srv.Command)
+			}
+			for i, v := range tc.want {
+				if srv.Command[i+1] != v {
+					t.Fatalf("command[%d] = %q, want %q (command %v)", i+1, srv.Command[i+1], v, srv.Command)
+				}
+			}
+		})
 	}
-}
-
-func TestBootstrapSnippetRoundTripJSON(t *testing.T) {
-	raw := opencodeMCPSnippet("upstream", "stdio", "", "", []string{"npx", "-y", "@example/mcp"})
-	got := parseBootstrapSnippet(t, raw)
-	cmd := got.MCP.Servers["upstream"].Command
-	if len(cmd) != 6 || cmd[len(cmd)-3] != "npx" || cmd[len(cmd)-2] != "-y" || cmd[len(cmd)-1] != "@example/mcp" {
-		t.Fatalf("upstream args not preserved: %v", cmd)
-	}
-}
-
-func assertBootstrapCommand(t *testing.T, raw, name string, want ...string) {
-	t.Helper()
-	cmd := parseBootstrapSnippet(t, raw).MCP.Servers[name].Command
-	if len(cmd) != len(want)+1 {
-		t.Fatalf("command = %v, want binary + %v", cmd, want)
-	}
-	for i, v := range want {
-		if cmd[i+1] != v {
-			t.Fatalf("command[%d] = %q, want %q", i+1, cmd[i+1], v)
-		}
-	}
-}
-
-func TestBootstrapSnippetUnixListenAndUpstream(t *testing.T) {
-	assertBootstrapCommand(t, opencodeMCPSnippet("system1", "unix", "/tmp/s1.sock", "/tmp/up.sock", nil), "system1",
-		"-transport", "unix", "-listen", "/tmp/s1.sock", "-upstream", "/tmp/up.sock")
-}
-
-func TestBootstrapSnippetHTTPListen(t *testing.T) {
-	assertBootstrapCommand(t, opencodeMCPSnippet("system1", "http", "127.0.0.1:8787", "", nil), "system1",
-		"-transport", "http", "-listen", "127.0.0.1:8787")
 }

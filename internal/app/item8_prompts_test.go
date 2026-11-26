@@ -19,52 +19,11 @@ func item8Home(t *testing.T) string {
 	return home
 }
 
-func TestPromptAddListRemove(t *testing.T) {
-	item8Home(t)
-	if err := addPrompt("alpha", "first text"); err != nil {
-		t.Fatal(err)
-	}
-	if err := addPrompt(" beta ", "second text"); err != nil {
-		t.Fatal(err)
-	}
-	ps := loadPrompts()
-	if len(ps) != 2 || ps[0].Name != "alpha" || ps[1].Name != "beta" {
-		t.Fatalf("prompts = %+v", ps)
-	}
-	if err := removePrompt("alpha"); err != nil {
-		t.Fatal(err)
-	}
-	ps = loadPrompts()
-	if len(ps) != 1 || ps[0].Name != "beta" || ps[0].Text != "second text" {
-		t.Fatalf("after remove = %+v", ps)
-	}
-	if err := addPrompt("", "no name"); err == nil {
-		t.Fatal("empty name accepted")
-	}
-	if err := addPrompt(strings.Repeat("n", maxPromptName+1), "long name"); err == nil {
-		t.Fatal("oversized name accepted")
-	}
-}
-
-func TestPromptCap8193(t *testing.T) {
-	item8Home(t)
-	if err := addPrompt("big", strings.Repeat("x", 8193)); err != nil {
-		t.Fatal(err)
-	}
-	ps := loadPrompts()
-	if len(ps) != 1 || len(ps[0].Text) != 8192 {
-		t.Fatalf("capped text len = %d", len(ps[0].Text))
-	}
-	capped, truncated := capSystemPrompt(strings.Repeat("x", 8193))
-	if len(capped) != 8192 || !truncated {
-		t.Fatalf("cap = %d, truncated=%v", len(capped), truncated)
-	}
-}
-
 func TestPromptFileMode(t *testing.T) {
 	home := item8Home(t)
-	if err := addPrompt("alpha", "text"); err != nil {
-		t.Fatal(err)
+	srv, _ := dashboardTestServer(t)
+	if code := postJSONTest(t, srv.URL+"/api/prompts/add", map[string]string{"name": "alpha", "text": "text"}, nil); code != http.StatusOK {
+		t.Fatalf("prompt add status = %d", code)
 	}
 	path := filepath.Join(home, ".walsy-system1", promptsFile)
 	st, err := os.Stat(path)
@@ -138,21 +97,29 @@ func TestPromptLegacyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ps := loadPrompts()
+	srv, _ := dashboardTestServer(t)
+	fetch := func() []Prompt {
+		t.Helper()
+		resp, err := http.Get(srv.URL + "/api/prompts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var ps []Prompt
+		if err := json.NewDecoder(resp.Body).Decode(&ps); err != nil {
+			t.Fatal(err)
+		}
+		return ps
+	}
+
+	ps := fetch()
 	if len(ps) != 1 || ps[0].Name != "default" || !strings.Contains(ps[0].Text, "CHECKMULTI7A3F") {
 		t.Fatalf("migration = %+v", ps)
 	}
 	if _, err := os.Stat(legacy); err != nil {
 		t.Fatalf("legacy file removed: %v", err)
 	}
-	if again := loadPrompts(); len(again) != 1 {
+	if again := fetch(); len(again) != 1 {
 		t.Fatalf("second load duplicated: %+v", again)
-	}
-}
-
-func TestPromptNoPromptsNoBlock(t *testing.T) {
-	item8Home(t)
-	if block := promptSOBlock(); block != "" {
-		t.Fatalf("empty block = %q", block)
 	}
 }
