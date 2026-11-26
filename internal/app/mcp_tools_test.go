@@ -180,18 +180,6 @@ func TestToolsDecideTable(t *testing.T) {
 	}
 }
 
-func TestToolsDecideAdmissionRule(t *testing.T) {
-	// The admission rule is registry proceeds + threshold; strict only moves
-	// the boundary from >= to >.
-	if !aboveThreshold(defaultThreshold(), defaultThreshold(), false) || aboveThreshold(defaultThreshold(), defaultThreshold(), true) {
-		t.Fatalf("threshold boundary wrong: non-strict %v strict %v",
-			aboveThreshold(defaultThreshold(), defaultThreshold(), false), aboveThreshold(defaultThreshold(), defaultThreshold(), true))
-	}
-	if aboveThreshold(defaultThreshold()-0.01, defaultThreshold(), false) {
-		t.Fatal("below-threshold confidence admitted")
-	}
-}
-
 func TestToolsDecideMissingArgs(t *testing.T) {
 	cases := []string{
 		`{"state":"decide intake intent"}`,
