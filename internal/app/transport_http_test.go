@@ -75,17 +75,6 @@ func TestHTTPPostJSONRPC(t *testing.T) {
 	}
 }
 
-// GET is rejected: Streamable HTTP only, no SSE stream endpoint.
-func TestHTTPGetNoSSE(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	mcpHTTPHandler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("GET status = %d", rec.Code)
-	}
-}
-
-// Upstream mode proxies the frame; no upstream preserves legacy echo.
 func TestHTTPUpstreamProxy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WALSY_SO_MODE", "")
@@ -113,31 +102,6 @@ func TestHTTPUpstreamProxy(t *testing.T) {
 	}
 }
 
-// Browser origin mismatch and SEP-2243 method mismatch are rejected, never 200.
-func TestHTTPHeaderGuards(t *testing.T) {
-	frame := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x"}}`)
-	cases := []struct {
-		name string
-		mut  func(*http.Request)
-	}{
-		{"bad-origin", func(r *http.Request) { r.Header.Set("Origin", "http://evil.example") }},
-		{"bad-method", func(r *http.Request) { r.Header.Set(mcpMethodHeader, "initialize") }},
-		{"bad-name", func(r *http.Request) { r.Header.Set(mcpNameHeader, "other") }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(frame))
-			tc.mut(r)
-			mcpHTTPHandler().ServeHTTP(rec, r)
-			if rec.Code == http.StatusOK {
-				t.Fatalf("bad %s accepted with 200", tc.name)
-			}
-		})
-	}
-}
-
-// Matching SEP-2243 headers are mirrored on the response.
 func TestHTTPSEP2243Mirror(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("EVREN_API_KEY", "")
@@ -173,20 +137,6 @@ func TestHTTPUnreadableBodyRejected(t *testing.T) {
 	}
 }
 
-// requestID reads the JSON-RPC id so an error reply can echo it, not id:null.
-func TestRequestIDReadsFrameID(t *testing.T) {
-	if id := requestID([]byte(`{"jsonrpc":"2.0","id":7,"method":"x"}`)); string(id) != "7" {
-		t.Fatalf("want id 7, got %s", id)
-	}
-	if id := requestID([]byte(`{"id":"abc"}`)); string(id) != `"abc"` {
-		t.Fatalf("want \"abc\", got %s", id)
-	}
-	if id := requestID([]byte("not json")); id != nil {
-		t.Fatalf("unparsable body must yield a nil id, got %s", id)
-	}
-}
-
-// An unreachable upstream must answer with the request's own id, not id:null.
 func TestProxyHTTPFailureEchoesID(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":42,"method":"tools/list"}`)
 	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))

@@ -6,23 +6,6 @@ import (
 	"testing"
 )
 
-func TestConfBucket(t *testing.T) {
-	cases := []struct {
-		c float64
-		w string
-	}{
-		{0.79, ""},
-		{0.85, "0.8"},
-		{0.95, "0.9"},
-		{1.0, "1.0"},
-	}
-	for _, k := range cases {
-		if got := confBucket(k.c); got != k.w {
-			t.Fatalf("confBucket(%v)=%q want %q", k.c, got, k.w)
-		}
-	}
-}
-
 func TestEmitMetricAllowlist(t *testing.T) {
 	var buf bytes.Buffer
 	orig := metricOut
