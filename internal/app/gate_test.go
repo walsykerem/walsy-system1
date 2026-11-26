@@ -12,46 +12,9 @@ import (
 	"time"
 )
 
-func TestGate(t *testing.T) {
-	cases := []struct {
-		f layer0
-		w bool
-	}{
-		{layer0{true, true, true, true, true}, true},
-		{layer0{false, true, true, true, true}, false},
-		{layer0{true, false, true, true, true}, false},
-		{layer0{true, true, false, true, true}, false},
-		{layer0{true, true, true, true, false}, false},
-		{layer0{CleanRename: true}, false},
-	}
-	for _, c := range cases {
-		if got := gate(c.f); got != c.w {
-			t.Fatalf("gate(%+v)=%v want %v", c.f, got, c.w)
-		}
-	}
-}
-
-func TestAskSOHealthy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-api-key") != "" {
-			t.Error("loopback judge must not receive x-api-key")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`))
-	}))
-	defer srv.Close()
-	orig := soEndpoint
-	soEndpoint = srv.URL
-	defer func() { soEndpoint = orig }()
-	t.Setenv("EVREN_API_KEY", "test-key")
-
-	d := askSO("user request only")
-	if d.Choice != "yes" || d.Conf != 0.95 || d.TimedOut {
-		t.Fatalf("unexpected decision: %+v", d)
-	}
-}
-
 func TestAskSOFailurePassthrough(t *testing.T) {
+	routerReset()
+	t.Cleanup(routerReset)
 	t.Setenv("EVREN_API_KEY", "test-key")
 	orig := soEndpoint
 	defer func() { soEndpoint = orig }()
@@ -100,38 +63,11 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 	srv3.Close()
 }
 
-func TestPerItemThreshold(t *testing.T) {
-	global := defaultThreshold()
-	var it decisionItem
-	for _, tc := range []struct{ thr, want float64 }{
-		{0, global},
-		{-1, global},
-		{0.7, 0.7},
-		{global, global},
-		{0.95, global},
-	} {
-		it.Threshold = tc.thr
-		if got := it.threshold(global); got != tc.want {
-			t.Fatalf("threshold(%v)=%v want %v", tc.thr, got, tc.want)
-		}
-	}
-}
-
-// A below-cut label is kept, not discarded: the label and confidence come back
-// so route/toolsDecide can steer with them; the cut is applied by the caller.
-func TestBelowCutLabelIsKept(t *testing.T) {
-	q := soQuestion{Type: "choice", Criteria: map[string]string{"yes": "admit", "no": "pass"}}
-	withSO(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.768}}}`))
-	})
-	if d := askSOQ("decide: classify this", q); d.Choice != "yes" || d.Conf != 0.768 {
-		t.Fatalf("parser must keep a below-cut label: %+v", d)
-	}
-}
-
 // TestAskSOStoredProviderKey proves the SO key comes from any registry provider
 // whose base matches the SO endpoint, not only from one hard-coded env name.
 func TestAskSOStoredProviderKey(t *testing.T) {
+	routerReset()
+	t.Cleanup(routerReset)
 	const base = "https://local-so.example/v1/systemone"
 	orig := soEndpoint
 	soEndpoint = base

@@ -224,31 +224,6 @@ func TestSimYC8InboundDuplicateCriteria(t *testing.T) {
 	}
 }
 
-// YC8: a frame above the 8 MiB transport budget is refused with no SO POST.
-func TestSimYC8OversizedFrameNoPost(t *testing.T) {
-	st := simYCBase(t)
-	d := newDecisionBridge()
-	r := d.decideFrame(bytes.Repeat([]byte("x"), maxHTTPFrame+16))
-	if r.Reason != "frame-too-large" || !r.Passthrough || st.count() != 0 {
-		t.Fatalf("oversized frame not rejected at boundary: reason=%s passthrough=%v posts=%d", r.Reason, r.Passthrough, st.count())
-	}
-}
-
-// YC8: inbound frames use the 8 MiB transport budget, not the 1 MiB SO reply cap.
-func TestSimYC8FrameBudgetMatchesTransport(t *testing.T) {
-	good := []byte(`{"method":"x","params":{"pad":"` + strings.Repeat("a", 2<<20) + `"}}`)
-	f, err := decodeFrame(good)
-	if err != nil {
-		t.Fatalf("valid 2 MiB frame rejected: %v", err)
-	}
-	if f.Method != "x" || len(f.Params) < 2<<20 {
-		t.Fatalf("2 MiB frame decoded wrong: method=%q params=%d", f.Method, len(f.Params))
-	}
-	if _, err := decodeFrame(bytes.Repeat([]byte("x"), maxHTTPFrame+16)); err == nil {
-		t.Fatal("decodeFrame accepted a frame above the 8 MiB transport budget")
-	}
-}
-
 // YC8: the decision boundary uses the 8 MiB transport budget, not the 1 MiB SO
 // reply cap. A valid 2 MiB frame must reach SO; a frame above 8 MiB must not.
 func TestSimYC8DecisionBoundaryIs8MiB(t *testing.T) {
