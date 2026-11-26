@@ -34,6 +34,7 @@ type w20_check struct {
 	detail  string
 }
 
+// w20_key is a synthetic redaction sentinel, not a credential: no service accepts it.
 const w20_key = "w20-sim-key-9f3a7c1d"
 const w20_sentinel = "w20-redaction-sentinel-7c1d"
 const w20_answer = `{"model":"clef","answers":{"gate":{"type":"choice","choice":"yes","confidence":0.96}},"usage":{}}`
