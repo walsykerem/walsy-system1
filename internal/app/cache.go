@@ -275,7 +275,7 @@ type shardedCache struct {
 	warmHits    map[[32]byte]int
 	warmAt      map[[32]byte]time.Time
 	warmDec     map[[32]byte]cachedDecision
-	warmExpires map[[32]byte]time.Time // absolute ceiling: TTL + one hot window
+	warmExpires map[[32]byte]time.Time // refreshed on every hit; a hot key coasts while traffic stays hot
 	refreshing  map[[32]byte]bool
 }
 
