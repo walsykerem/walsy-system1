@@ -124,7 +124,7 @@ func buildTestBin(ep string) string {
 		die(err)
 	}
 	out := filepath.Join(dir, "relay56-test")
-	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-X main.soEndpointDefaultBase="+ep, "-o", out, ".")
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-X walsy-system1/internal/app.soEndpointDefaultBase="+ep, "-o", out, "./cmd/walsy-system1")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if b, err := cmd.CombinedOutput(); err != nil {

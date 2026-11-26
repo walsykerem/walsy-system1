@@ -37,8 +37,8 @@ func TestCheckerAuditScript(t *testing.T) {
 // The redaction tokens the checker runs against must stay in the test sources.
 func TestAuditRedactionTokensPresent(t *testing.T) {
 	for path, token := range map[string]string{
-		"../item36_test.go":    "sk-item2-DO-NOT-LEAK",
-		"../relay_log_test.go": "sk-secret",
+		"../internal/app/item36_test.go":    "sk-item2-DO-NOT-LEAK",
+		"../internal/app/relay_log_test.go": "sk-secret",
 	} {
 		b, err := os.ReadFile(path)
 		if err != nil {

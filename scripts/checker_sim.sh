@@ -21,15 +21,15 @@ no() { echo "FAIL $1"; fail=$((fail + 1)); }
 # 1. Test inventory floor: 49+ checker tests must be discoverable.
 # Count the repo's own sources, not `go test -list ./...`: that output silently
 # shrinks to the packages that happen to compile (24 vs 516 under contention).
-n="$(grep -h '^func Test' *_test.go | wc -l | tr -d ' ')"
+n="$(grep -h '^func Test' internal/app/*_test.go | wc -l | tr -d ' ')"
 if [ "$n" -ge 49 ]; then ok "tests>=49 ($n)"; else no "tests>=49 ($n)"; fi
 
 # 2. Cache dir wiped on both stdin transports, persistent state untouched.
 # Both tests pin TMPDIR/HOME to their own t.TempDir(); nothing here shares a path.
-if go test -count=1 -run '^Test(NoDiskCacheDirOnMCPStart|ColdStartNeedsNoCacheDir)$' . >/dev/null 2>&1; then ok "cache-dir"; else no "cache-dir"; fi
+if go test -count=1 -run '^Test(NoDiskCacheDirOnMCPStart|ColdStartNeedsNoCacheDir)$' ./internal/app >/dev/null 2>&1; then ok "cache-dir"; else no "cache-dir"; fi
 
 # 3. SO state build benchmark still runs (short smoke, not the 200k timing run).
-if go test -bench='^BenchmarkSOStateBuild$' -run='^$' -benchtime=200x . >/dev/null 2>&1; then
+if go test -bench='^BenchmarkSOStateBuild$' -run='^$' -benchtime=200x ./internal/app >/dev/null 2>&1; then
   ok "bench-so-state"
 else
   no "bench-so-state"

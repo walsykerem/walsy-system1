@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha='0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a'
+          sha='2ec4526bef5588f524f42be2714b8a5dbc5adefb924b496e1310535d1ff0dde6'
           src='scripts/finalgate/main.go'
           tr='scripts/relay56/TRANSCRIPT.txt'
           k12='scripts/finalgate/evidence/K12.txt'

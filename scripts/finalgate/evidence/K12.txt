@@ -2,22 +2,23 @@
 == 2/10 go vet ==
 == 3/10 go build ==
 == 4/10 go test -race ==
-ok  	walsy-system1	55.337s
-ok  	walsy-system1/scripts	18.052s
-ok  	walsy-system1/scripts/asciiscan	4.099s
-ok  	walsy-system1/scripts/finalgate	2.168s
-ok  	walsy-system1/scripts/recondigest	3.392s
-ok  	walsy-system1/scripts/relay56	7.102s
-ok  	walsy-system1/scripts/releasegate	3.442s
-root test functions: 571
+?   	walsy-system1/cmd/walsy-system1	[no test files]
+ok  	walsy-system1/internal/app	61.839s
+ok  	walsy-system1/scripts	22.147s
+ok  	walsy-system1/scripts/asciiscan	3.736s
+ok  	walsy-system1/scripts/finalgate	1.375s
+ok  	walsy-system1/scripts/recondigest	4.466s
+ok  	walsy-system1/scripts/relay56	8.535s
+ok  	walsy-system1/scripts/releasegate	2.401s
+app test functions: 571
 == 5/10 lrecon digest ==
-lrecon digest: 0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a
+lrecon digest: 2ec4526bef5588f524f42be2714b8a5dbc5adefb924b496e1310535d1ff0dde6
 lrecon kind: macho
 == 6/10 non-ascii scan ==
 ascii clean: 151 files
 == 7/10 subpackage vet ==
 == 8/10 decision_items signature ==
-decision_items.json: OK
+internal/app/decision_items.json: OK
 == 9/10 release gate ==
 release gate: PASS
 == 10/10 verdict ==

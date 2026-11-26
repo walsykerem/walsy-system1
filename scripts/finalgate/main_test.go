@@ -14,7 +14,7 @@ func TestExcerptInlinesCitedArtifact(t *testing.T) {
 	t.Chdir("../..")
 	// Find the cited line by content: production edits move `decide: ` between
 	// line numbers; the invariant is that those exact bytes get inlined.
-	b, err := os.ReadFile("decision_bridge.go")
+	b, err := os.ReadFile("internal/app/decision_bridge.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,9 +26,9 @@ func TestExcerptInlinesCitedArtifact(t *testing.T) {
 		}
 	}
 	if line == 0 {
-		t.Fatal(`decision_bridge.go: no line contains "decide: "`)
+		t.Fatal(`internal/app/decision_bridge.go: no line contains "decide: "`)
 	}
-	ex, err := excerpt(citation{"decision_bridge.go", line, line})
+	ex, err := excerpt(citation{"internal/app/decision_bridge.go", line, line})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestResolveFailsClosed(t *testing.T) {
 	if err := resolve(claim{"K", "see no_such_file.go:1"}); err == nil {
 		t.Fatal("missing cited path did not fail closed")
 	}
-	if err := resolve(claim{"K", "see decision_bridge.go:99999"}); err == nil {
+	if err := resolve(claim{"K", "see internal/app/decision_bridge.go:99999"}); err == nil {
 		t.Fatal("out-of-range cited line did not fail closed")
 	}
 }

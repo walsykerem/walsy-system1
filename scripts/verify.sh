@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== 1/10 gofmt =="
-unformatted="$(gofmt -l *.go scripts/*/*.go)"
+unformatted="$(gofmt -l ./cmd ./internal ./scripts)"
 if [ -n "$unformatted" ]; then
   echo "gofmt needed for:" >&2
   echo "$unformatted" >&2
@@ -15,14 +15,14 @@ echo "== 2/10 go vet =="
 CGO_ENABLED=0 go vet ./...
 
 echo "== 3/10 go build =="
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1
 
 echo "== 4/10 go test -race =="
 # The race detector needs cgo; do not inherit an ambient CGO_ENABLED=0.
 CGO_ENABLED=1 go test -race -count=1 ./...
 # The root package test count, so the evidence file can carry the number a
 # claim quotes instead of the claim counting test functions on its own.
-echo "root test functions: $(grep -h '^func Test' *_test.go | wc -l | tr -d ' ')"
+echo "app test functions: $(grep -h '^func Test' internal/app/*_test.go | wc -l | tr -d ' ')"
 
 echo "== 5/10 lrecon digest =="
 LRECON="${LRECON:-/Users/keremurhan/.config/opencode/skills/walsyrea/macos/lrecon}"
@@ -32,7 +32,7 @@ go run ./scripts/recondigest "$RECON"
 
 echo "== 6/10 non-ascii scan =="
 files=()
-for f in *.go web/*; do
+for f in internal/app/*.go internal/app/web/*; do
   [ -e "$f" ] || continue
   files+=("$f")
 done

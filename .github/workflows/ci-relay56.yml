@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           # The harness uses its own loopback stub and test key; no live call, no key here.
-          CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1
           export RELAY56_BIN="$PWD/walsy-system1"
           CGO_ENABLED=0 go run ./scripts/relay56 > /tmp/relay56-transcript.txt || { cat /tmp/relay56-transcript.txt; exit 1; }
           cat /tmp/relay56-transcript.txt

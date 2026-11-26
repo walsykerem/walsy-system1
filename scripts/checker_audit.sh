@@ -12,6 +12,6 @@ export HOME="$tmp"
 export CGO_ENABLED=0
 export GOCACHE="${GOCACHE:-/private/var/folders/_h/qvftqp9j125dppqpdv8kyb8m0000gn/T/opencode/gocache}"
 
-go test -count=1 -run 'TestRelayLogRecordsOutcomeWithoutPayload|TestBridgeLogsBothDirections|TestAuditRotatesAtCap|TestItem2APILogsFromAuditJSONL|TestLogCallCapsRingAndCounts|TestUsageLineFlattensNumbers|TestLogsSheetRendersRecordedCall|TestLogTimestampsUseLocalClock' .
+go test -count=1 ./internal/app -run 'TestRelayLogRecordsOutcomeWithoutPayload|TestBridgeLogsBothDirections|TestAuditRotatesAtCap|TestItem2APILogsFromAuditJSONL|TestLogCallCapsRingAndCounts|TestUsageLineFlattensNumbers|TestLogsSheetRendersRecordedCall|TestLogTimestampsUseLocalClock' ./internal/app
 
 echo AUDIT-OK

@@ -25,14 +25,14 @@ jobs:
 
       - name: Hermetic rebuild
         shell: bash
-        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -o walsy-system1 .
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1
 
       - name: Assert shipped SHA256 claims
         shell: bash
         run: |
           set -euo pipefail
           got="$(sha256sum walsy-system1 | awk '{print $1}')"
-          lit="$(grep -oE 'w24ShippedSHA256[[:space:]]*=[[:space:]]*"[0-9a-f]{64}"' sim_e1_e2_test.go | grep -oE '[0-9a-f]{64}' | head -n1)"
+          lit="$(grep -oE 'w24ShippedSHA256[[:space:]]*=[[:space:]]*"[0-9a-f]{64}"' internal/app/sim_e1_e2_test.go | grep -oE '[0-9a-f]{64}' | head -n1)"
           dig="$(grep -oE '"file_sha256"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' walsy-system1.digest.json | grep -oE '[0-9a-f]{64}' | head -n1)"
           echo "rebuilt sha256 = $got"
           echo "test literal   = $lit"

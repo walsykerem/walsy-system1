@@ -23,9 +23,9 @@ jobs:
       - name: go vet
         run: CGO_ENABLED=0 go vet ./...
       - name: Hermetic build
-        run: CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 .
+        run: CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1
       - name: Cross-build Mach-O artifact for static Q3/Q5 checks
-        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -o "$RUNNER_TEMP/walsy-system1-darwin" .
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -buildvcs=false -o "$RUNNER_TEMP/walsy-system1-darwin" ./cmd/walsy-system1
       - name: Point simulations at checked-in Linux fixtures
         run: |
           set -euo pipefail
