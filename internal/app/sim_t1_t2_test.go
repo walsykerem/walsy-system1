@@ -18,7 +18,6 @@ import (
 // is a local dummy so soAPIKey never reads the machine's registry or secrets.
 
 const simT1T2Admit = `{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`
-const simT1T2HTTP500 = `{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95}}}`
 
 type simT1T2SO struct {
 	posts     atomic.Int64
