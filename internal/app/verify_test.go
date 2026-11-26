@@ -36,6 +36,11 @@ func TestFailureSignatureStable(t *testing.T) {
 	if failureSignature(a) == failureSignature(c) {
 		t.Fatal("different failures share a signature")
 	}
+	d := "--- FAIL: TestX (0.02s)\n    x_test.go:12: expected 1 got 2\n    elapsed 1m2s"
+	e := "--- FAIL: TestX (0.02s)\n    x_test.go:12: expected 1 got 2\n    elapsed 9m59s"
+	if sd, se := failureSignature(d), failureSignature(e); sd != se {
+		t.Fatalf("compound duration changed the failure key: %q vs %q", sd, se)
+	}
 	sig := failureSignature(a)
 	if !strings.HasPrefix(sig, failTest+":") {
 		t.Fatalf("signature lost its bucket: %q", sig)
