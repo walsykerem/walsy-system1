@@ -20,6 +20,7 @@ func TestDiffSecurityCheck(t *testing.T) {
 		old, new string
 		code     string
 	}{
+		// These bodies are synthetic secret shapes for the guard, not credentials.
 		{"clean write", "a.go", "", "package main\n", ""},
 		{"private key", "a.go", "", "key: -----BEGIN RSA PRIVATE KEY-----\n", "diff-secret"},
 		{"openssh key", "a.go", "", "-----BEGIN OPENSSH PRIVATE KEY-----\n", "diff-secret"},
