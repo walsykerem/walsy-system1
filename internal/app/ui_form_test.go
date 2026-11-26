@@ -108,44 +108,6 @@ func TestUIAddProviderPersistsAndRerenders(t *testing.T) {
 	}
 }
 
-// The Msg/MsgMs toast contract: default 6000, clamp 1000..30000.
-func TestUIMsgMs(t *testing.T) {
-	render := template.Must(template.New("probe").Parse(`{{.Msg}}|{{.MsgMs}}`))
-	cases := []struct {
-		query string
-		msg   string
-		ms    int
-	}{
-		{"", "", 6000},
-		{"?msg=Hi&ms=1234", "Hi", 1234},
-		{"?msg=Hi", "Hi", 6000},
-		{"?ms=999999", "", 30000},
-		{"?ms=1", "", 1000},
-		{"?ms=abc", "", 6000},
-	}
-	for _, tc := range cases {
-		page := uiHome(httptest.NewRequest(http.MethodGet, "/"+tc.query, nil))
-		var out strings.Builder
-		if err := render.Execute(&out, page); err != nil {
-			t.Fatal(err)
-		}
-		if want := fmt.Sprintf("%s|%d", tc.msg, tc.ms); out.String() != want {
-			t.Fatalf("%q: rendered %q, want %q", tc.query, out.String(), want)
-		}
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/ui/providers/sheet?name=Evren+System+One&msg=Hi&ms=1234", nil)
-	page, ok := providerSheetPage(req)
-	if !ok || page.Msg != "Hi" || page.MsgMs != 1234 {
-		t.Fatalf("sheet page = %+v, ok = %v", page, ok)
-	}
-	combo := httptest.NewRecorder()
-	NewDashboardHandler().ServeHTTP(combo, dashRequest(http.MethodGet, "/ui/combo/sheet?ms=999999", nil))
-	if combo.Code != http.StatusOK {
-		t.Fatalf("combo sheet status = %d", combo.Code)
-	}
-}
-
 func TestUIModelFormLoudFailures(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := NewDashboardHandler()

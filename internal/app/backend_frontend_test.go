@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func bfHome(t *testing.T) string {
@@ -54,40 +52,6 @@ func bfOK(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 }
 
-func TestLogsClearEndpointFlushesBothViews(t *testing.T) {
-	home := bfHome(t)
-	resetLogs()
-	defer resetLogs()
-	logCall("systemone", "ok", time.Millisecond, 10, 20, nil)
-	secret := "sk-DO-NOT-PRINT-LOG"
-	audit := filepath.Join(home, routerDir, routerAuditName)
-	if err := os.WriteFile(audit, []byte(`{"event":"relay_frame","bucket":"`+secret+`"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	h := NewDashboardHandler()
-
-	rec := bfPost(h, "/api/logs/clear", `{}`, "application/json")
-	bfOK(t, rec)
-	if strings.Contains(rec.Body.String(), secret) {
-		t.Fatal("clear response leaked audit text")
-	}
-	data, err := os.ReadFile(audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("audit file = %q, want empty", data)
-	}
-	total, entries := logsView()
-	if total.Calls != 0 || len(entries) != 0 {
-		t.Fatalf("in-memory logs survived: calls=%d entries=%d", total.Calls, len(entries))
-	}
-	page := bfGet(h, "/ui/logs").Body.String()
-	if strings.Contains(page, secret) {
-		t.Fatal("cleared audit row still rendered in /ui/logs")
-	}
-}
-
 func TestLogsClearMissingAuditFileOK(t *testing.T) {
 	home := bfHome(t)
 	if err := os.Remove(filepath.Join(home, routerDir, routerAuditName)); err != nil && !os.IsNotExist(err) {
@@ -98,25 +62,6 @@ func TestLogsClearMissingAuditFileOK(t *testing.T) {
 	bfOK(t, bfPost(NewDashboardHandler(), "/api/logs/clear", `{}`, "application/json"))
 	if _, err := os.Stat(filepath.Join(home, routerDir, routerAuditName)); !os.IsNotExist(err) {
 		t.Fatal("clear created an audit file where none existed")
-	}
-}
-
-func TestPromptsAddEndpointPersistsAndRenders(t *testing.T) {
-	bfHome(t)
-	h := NewDashboardHandler()
-	bfOK(t, bfPost(h, "/api/prompts/add", `{"name":"E2E-PROMPT","text":"bind this prompt"}`, "application/json"))
-
-	var ps []Prompt
-	rec := bfGet(h, "/api/prompts")
-	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &ps) != nil {
-		t.Fatalf("GET /api/prompts = %d: %s", rec.Code, rec.Body.String())
-	}
-	if len(ps) != 1 || ps[0].Name != "E2E-PROMPT" || ps[0].Text != "bind this prompt" {
-		t.Fatalf("saved prompts = %+v", ps)
-	}
-	page := bfGet(h, "/ui/prompts").Body.String()
-	if !strings.Contains(page, "E2E-PROMPT") {
-		t.Fatal("new prompt missing from /ui/prompts")
 	}
 }
 

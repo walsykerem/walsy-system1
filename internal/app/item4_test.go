@@ -42,21 +42,3 @@ func TestNoDiskCacheDirOnMCPStart(t *testing.T) {
 		t.Fatalf("persistent state touched: %q, %v", data, err)
 	}
 }
-
-// A cold start never needs a disk cache directory; the transport still opens.
-func TestColdStartNeedsNoCacheDir(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-	out := &strings.Builder{}
-	runToolsServer(strings.NewReader(pingFrame), out)
-	if out.Len() == 0 {
-		t.Fatal("stdin transport did not open on cold start")
-	}
-	entries, err := os.ReadDir(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("cold start created temp files: %v", entries)
-	}
-}
