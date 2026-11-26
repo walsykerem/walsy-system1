@@ -1,0 +1,50 @@
+package app
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// A populated chain truncated in place must fail closed, not restart at seq 1.
+func TestLoadReceiptChainRejectsTruncatedPopulatedStore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	c := loadReceiptChain()
+	if c == nil {
+		t.Fatal("fresh chain should load")
+	}
+	if _, err := c.appendReceipt(receipt{Event: "test"}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	path, err := receiptStorePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if loadReceiptChain() != nil {
+		t.Fatal("truncated populated store must fail closed")
+	}
+}
+
+// A store that never received a completed append is still a fresh chain.
+func TestLoadReceiptChainAcceptsInitialEmptyStore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	path, err := receiptStorePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if loadReceiptChain() == nil {
+		t.Fatal("initial empty store should load as a fresh chain")
+	}
+}
