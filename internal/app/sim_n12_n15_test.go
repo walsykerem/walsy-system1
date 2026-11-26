@@ -151,7 +151,7 @@ func TestSimN15CheapestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "providers.txt")
-	data := fmt.Sprintf("Cheap,%s,TEST_KEY,1\nPricey,%s,TEST_KEY,100\n", cheap.URL, pricey.URL)
+	data := fmt.Sprintf("Pricey,%s,TEST_KEY,100\nCheap,%s,TEST_KEY,1\n", pricey.URL, cheap.URL)
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestSimN15CheapestFirst(t *testing.T) {
 	steps := make([]ComboStep, 0, len(list))
 	for _, p := range list {
 		if strings.HasPrefix(p.Base, "http://127.0.0.1") || strings.HasPrefix(p.Base, "http://localhost") {
-			steps = append(steps, ComboStep{Name: p.Name, Base: p.Base})
+			steps = append(steps, ComboStep{Name: p.Name, Base: p.Base, Cost: p.Cost})
 		}
 	}
 	if len(steps) != 2 {

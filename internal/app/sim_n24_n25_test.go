@@ -271,7 +271,7 @@ func TestSimN25BinaryHTTPHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Fatalf("binary unavailable: %v", err)
+		bin = w33_Build(t)
 	}
 	metricPath := filepath.Join(t.TempDir(), "metric.log")
 	lf, err := os.Create(metricPath)
