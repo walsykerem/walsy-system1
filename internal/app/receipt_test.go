@@ -48,3 +48,38 @@ func TestLoadReceiptChainAcceptsInitialEmptyStore(t *testing.T) {
 		t.Fatal("initial empty store should load as a fresh chain")
 	}
 }
+
+// A post-write failure (a foreign evidence file is refused) must leave the
+// in-memory chain on the durable line, or the next append reuses its seq and
+// the store stops loading.
+func TestAppendReceiptAdvancesAfterPostWriteFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	evidence, err := receiptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(evidence), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidence, []byte("foreign\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	c := loadReceiptChain()
+	if c == nil {
+		t.Fatal("fresh chain should load")
+	}
+	if _, err := c.appendReceipt(receipt{Event: "test"}); err == nil {
+		t.Fatal("foreign evidence file must fail the append")
+	}
+	if c.seq != 1 || len(c.head) == 0 {
+		t.Fatalf("chain state = seq %d head %x, want the durable line counted", c.seq, c.head)
+	}
+	if _, err := c.appendReceipt(receipt{Event: "test"}); err == nil {
+		t.Fatal("second append must fail on the same foreign file")
+	}
+	if loadReceiptChain() == nil {
+		t.Fatal("store must stay loadable after a post-write failure")
+	}
+}

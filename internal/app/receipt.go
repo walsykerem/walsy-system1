@@ -241,6 +241,15 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 	if _, err := f.Write(line); err != nil {
 		return "", err
 	}
+	// The line is durable now: advance the in-memory chain before the sidecar
+	// steps, or a later failure reuses this seq and breaks every later append.
+	c.head, c.seq = sum[:], r.Seq
+	if r.Event != "outbound_response" && r.FrameID != "" {
+		if c.frames == nil {
+			c.frames = map[string]bool{}
+		}
+		c.frames[r.FrameID] = true
+	}
 	evidence, err := receiptPath()
 	if err != nil {
 		return "", err
@@ -254,13 +263,6 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 	}
 	if err := os.WriteFile(hp, []byte(hex.EncodeToString(sum[:])+"\n"), 0600); err != nil {
 		return "", err
-	}
-	c.head, c.seq = sum[:], r.Seq
-	if r.Event != "outbound_response" && r.FrameID != "" {
-		if c.frames == nil {
-			c.frames = map[string]bool{}
-		}
-		c.frames[r.FrameID] = true
 	}
 	return hex.EncodeToString(sum[:]), nil
 }
