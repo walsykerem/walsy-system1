@@ -102,6 +102,33 @@ func linkReceiptEvidence(store, evidence string) error {
 	return nil
 }
 
+// receiptHeadPath is a durable sidecar written after every successful append.
+// Its presence means a chain once held records, so an empty or missing store
+// is truncation/loss, not a fresh chain.
+func receiptHeadPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, routerDir, "receipt.chain.head"), nil
+}
+
+// chainWasPopulated reports whether a prior append ever completed.
+func chainWasPopulated() (bool, error) {
+	hp, err := receiptHeadPath()
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Lstat(hp)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 // loadReceiptChain rebuilds in-memory chain state from the persisted tail.
 // It fails closed (nil) on an unreadable, tampered or truncated chain.
 func loadReceiptChain() *receiptChain {
@@ -109,18 +136,28 @@ func loadReceiptChain() *receiptChain {
 	if err != nil {
 		return &receiptChain{}
 	}
+	populated, err := chainWasPopulated()
+	if err != nil {
+		return nil
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && !populated {
 			return &receiptChain{}
 		}
 		return nil
 	}
-	// A store that exists but holds no record is empty, not tampered: the file
-	// is created before its first line is written, so a failed write leaves it
-	// at zero length and it must not disable every later receipt.
-	if len(bytes.TrimSpace(raw)) == 0 {
+	// A zero-length store is only a fresh chain if no prior append ever
+	// completed. A populated chain truncated in place must not reset to seq 1.
+	// Whitespace-only content is never a valid chain.
+	if len(raw) == 0 {
+		if populated {
+			return nil
+		}
 		return &receiptChain{}
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
 	}
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 	var prev []byte
@@ -209,6 +246,13 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 		return "", err
 	}
 	if err := linkReceiptEvidence(path, evidence); err != nil {
+		return "", err
+	}
+	hp, err := receiptHeadPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(hp, []byte(hex.EncodeToString(sum[:])+"\n"), 0600); err != nil {
 		return "", err
 	}
 	c.head, c.seq = sum[:], r.Seq
