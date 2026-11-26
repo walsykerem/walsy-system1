@@ -43,6 +43,10 @@ func simShippedBinary(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("resolve shipped binary path: %v", err)
 	}
+	// The artifact is gitignored, so a clean checkout has none to inspect.
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("shipped binary absent (build it with CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1): %v", err)
+	}
 	return p
 }
 

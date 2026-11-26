@@ -20,6 +20,7 @@ func TestDiffSecurityCheck(t *testing.T) {
 		old, new string
 		code     string
 	}{
+		// These bodies are synthetic secret shapes for the guard, not credentials.
 		{"clean write", "a.go", "", "package main\n", ""},
 		{"private key", "a.go", "", "key: -----BEGIN RSA PRIVATE KEY-----\n", "diff-secret"},
 		{"openssh key", "a.go", "", "-----BEGIN OPENSSH PRIVATE KEY-----\n", "diff-secret"},
@@ -88,6 +89,3 @@ func TestOldContentOnDisk(t *testing.T) {
 		t.Fatalf("emptying write on real file = %+v want diff-wipe", v)
 	}
 }
-
-// A call with no file body (shell redirect, unknown schema) is scanned at the
-// argument level, so the secret arm is not limited to the five content keys.

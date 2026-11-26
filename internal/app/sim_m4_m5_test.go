@@ -34,6 +34,7 @@ type w20_check struct {
 	detail  string
 }
 
+// w20_key is a synthetic redaction sentinel, not a credential: no service accepts it.
 const w20_key = "w20-sim-key-9f3a7c1d"
 const w20_sentinel = "w20-redaction-sentinel-7c1d"
 const w20_answer = `{"model":"clef","answers":{"gate":{"type":"choice","choice":"yes","confidence":0.96}},"usage":{}}`
@@ -198,7 +199,15 @@ func w20_run_binary(t *testing.T, home, endpoint string) string {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Fatalf("shipped binary not found at %s: %v", bin, err)
+		// Go writes its build cache and telemetry counters under HOME; build
+		// under a scratch HOME so the audited HOME stays pristine.
+		cache := os.Getenv("GOCACHE")
+		if cache == "" {
+			cache = t.TempDir()
+		}
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("GOCACHE", cache)
+		bin = w33_Build(t)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

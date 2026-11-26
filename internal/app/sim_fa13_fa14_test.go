@@ -340,9 +340,10 @@ func TestSimFA13(t *testing.T) {
 
 	// FA13.4: the shipped binary, not just in-process code, writes a chain.
 	childHome := t.TempDir()
+	binPath := w33_Build(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "./walsy-system1", "-transport", "tools")
+	cmd := exec.CommandContext(ctx, binPath, "-transport", "tools")
 	cmd.Env = faChildEnv(childHome, so.srv.URL)
 	// Two real in-scope frames: one receipt cannot exercise a hash link.
 	twoFrames := append(fa1314Frame(200, "fa13 binary frame one", true), fa1314Frame(201, "fa13 binary frame two", true)...)

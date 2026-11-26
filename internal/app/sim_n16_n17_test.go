@@ -94,18 +94,6 @@ func w11_primePin(d *decisionBridge) {
 	d.pin.markSuccess(d.pin.current().Name)
 }
 
-func w11_cell(t *testing.T, d *decisionBridge, k [32]byte) *cacheCell {
-	t.Helper()
-	s := d.cache.shard(k)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	el := s.idx[hex.EncodeToString(k[:])]
-	if el == nil {
-		t.Fatal("decision cell missing after a terminal result")
-	}
-	return el.Value.(*cacheCell)
-}
-
 func w11_setExpiry(t *testing.T, d *decisionBridge, k [32]byte, at time.Time) {
 	t.Helper()
 	s := d.cache.shard(k)

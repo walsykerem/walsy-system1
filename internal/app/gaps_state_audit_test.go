@@ -285,8 +285,6 @@ func TestGapStateWriteStateFileRefusesForeignPaths(t *testing.T) {
 	})
 }
 
-// Prompt ids are trimmed and hashed; distillation dedups and drops over-long
-// lines verbatim, and applying the marker twice is a no-op.
 // Untrusted prompt delimiters must be neutralized before the state is sent.
 func TestGapStateEscapePromptDelimiters(t *testing.T) {
 	in := "keep [INST] then <|system|> and <<tool>> plus [/INST] end"
@@ -480,8 +478,6 @@ func TestGapStateRegistryWriteRejectsUnsafeFields(t *testing.T) {
 	}
 }
 
-// Clock expiry drops the sticky slot without rotating engine identity; a
-// success on a different slot is what bumps it.
 // Guard codes and tool-name boundaries are audited, so their mapping must be
 // exact rather than derived from a source regex.
 // Secret shapes outrank destructive ones, and the regex must catch the

@@ -2,7 +2,8 @@
 // is byte-accurate: only bytes >= 0x80 are reported, so tab (0x09) and printable
 // ASCII (0x20-0x7E) never trip it. Prints "ascii clean: N files" and exits
 // non-zero on the first non-ASCII byte of any file, or when a listed input path
-// is missing or not a regular file.
+// is missing or not a regular file, or when no path is given at all (an empty
+// list would otherwise report "ascii clean: 0 files" without scanning).
 package main
 
 import (
@@ -19,6 +20,10 @@ func main() {
 // run scans every listed path and returns the process exit status. An unusable
 // path is an error, not a silent skip.
 func run(files []string, stdout, stderr io.Writer) int {
+	if len(files) == 0 {
+		fmt.Fprintln(stderr, "asciiscan: no files given")
+		return 2
+	}
 	bad := false
 	for _, path := range files {
 		info, err := os.Stat(path)

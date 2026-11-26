@@ -116,6 +116,12 @@ func loadReceiptChain() *receiptChain {
 		}
 		return nil
 	}
+	// A store that exists but holds no record is empty, not tampered: the file
+	// is created before its first line is written, so a failed write leaves it
+	// at zero length and it must not disable every later receipt.
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return &receiptChain{}
+	}
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 	var prev []byte
 	frames := map[string]bool{}

@@ -52,7 +52,7 @@ func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 		}
 	}
 
-	state := buildSOState(`{"state":"classify this request","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"opt_in":true,"phase":"before-model","authority":true,"calibrated":true}`)
+	state := buildSOState(`{"state":"classify this request","method":"tools/call","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"opt_in":true,"phase":"before-model","authority":true,"calibrated":true}`)
 	var e stateEnvelope
 	if err := json.Unmarshal([]byte(state), &e); err != nil {
 		t.Fatal(err)
@@ -79,6 +79,9 @@ func TestPromptSOBlockMultiMulti7A3F(t *testing.T) {
 	defer func() { soEndpoint, soClient = origEndpoint, origClient }()
 	t.Setenv("EVREN_API_KEY", "test-key")
 	_ = route(state, nil)
+	if got == "" {
+		t.Fatal("route did not post SO state")
+	}
 	for _, leak := range []string{"## USER PROMPTS", "[one]", "[two]", token} {
 		if strings.Contains(got, leak) {
 			t.Fatalf("SO state leaked %q: %s", leak, got)

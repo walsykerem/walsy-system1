@@ -327,19 +327,18 @@ func TestSimN2(t *testing.T) {
 
 	bin := simShippedBinary(t)
 	if _, err := os.Stat(bin); err != nil {
-		w05_Add(t, &out, "N2.5", "PARTIAL", fmt.Sprintf("shipped binary unavailable: %v", err))
+		bin = w33_Build(t)
+	}
+	stub.fail.Store(false)
+	w05_Drain(stub)
+	before := stub.posts.Load()
+	binFrame := w05_Frame("initialize", w05_Caps("classify this binary n2 request", "before-model"))
+	reply := w05_RunBinary(t, bin, stub, binFrame)
+	saw := w05_WaitSO(t, stub, true)
+	if !strings.Contains(reply, `"result"`) || !saw || stub.posts.Load() != before+1 {
+		w05_Add(t, &out, "N2.5", "BROKEN", fmt.Sprintf("binary reply=%q SO posts %d->%d saw=%v", reply, before, stub.posts.Load(), saw))
 	} else {
-		stub.fail.Store(false)
-		w05_Drain(stub)
-		before := stub.posts.Load()
-		binFrame := w05_Frame("initialize", w05_Caps("classify this binary n2 request", "before-model"))
-		reply := w05_RunBinary(t, bin, stub, binFrame)
-		saw := w05_WaitSO(t, stub, true)
-		if !strings.Contains(reply, `"result"`) || !saw || stub.posts.Load() != before+1 {
-			w05_Add(t, &out, "N2.5", "BROKEN", fmt.Sprintf("binary reply=%q SO posts %d->%d saw=%v", reply, before, stub.posts.Load(), saw))
-		} else {
-			w05_Add(t, &out, "N2.5", "WORKS", "shipped binary tools transport: reply plus one shadow SO POST")
-		}
+		w05_Add(t, &out, "N2.5", "WORKS", "shipped binary tools transport: reply plus one shadow SO POST")
 	}
 }
 

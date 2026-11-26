@@ -69,7 +69,7 @@ var (
 	sigAddr      = regexp.MustCompile(`0x[0-9a-f]+`)
 	sigGoroutine = regexp.MustCompile(`goroutine \d+`)
 	sigGoPos     = regexp.MustCompile(`\.go:\d+(?::\d+)?`)
-	sigDuration  = regexp.MustCompile(`\b\d+(?:\.\d+)?(?:ns|\x{00b5}s|us|ms|s|m|h)\b`)
+	sigDuration  = regexp.MustCompile(`\b(?:\d+(?:\.\d+)?(?:ns|\x{00b5}s|us|ms|s|m|h))+\b`)
 	sigClock     = regexp.MustCompile(`\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b`)
 	sigDate      = regexp.MustCompile(`\b\d{4}/\d{2}/\d{2}\b`)
 	sigPID       = regexp.MustCompile(`\bpid[:= ]?\d+\b`)

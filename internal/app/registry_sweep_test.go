@@ -22,6 +22,13 @@ import (
 // aggregate test over the whole registry, not a spot check of two items.
 func TestEveryDecisionPointSteers(t *testing.T) {
 	t.Setenv("EVREN_API_KEY", "sweep-test-key")
+	// A transient stub delay can record slow SO samples or failures; the
+	// breaker this opens would turn the remaining items and later tests into
+	// so-degraded.
+	t.Setenv("WALSY_ROUTER_BREAKER_THRESHOLD", "32")
+	t.Setenv("WALSY_ROUTER_LATENCY_THRESHOLD_MS", "5000")
+	routerReset()
+	t.Cleanup(routerReset)
 	var calls int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&calls, 1)
