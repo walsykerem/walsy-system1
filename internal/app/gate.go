@@ -729,10 +729,6 @@ type soAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// validSOAnswer requires a compatible answer type, a label from the question's
-// own set, and a finite confidence in [0,1]. It normalizes the winner and the
-// probability map. Returns the normalized answer, a typed failure reason
-// (empty on success) and ok.
 // isGenericQuestion identifies the router's yes/no/other gate question.
 func isGenericQuestion(q soQuestion) bool {
 	if len(q.Criteria) != 3 {
@@ -767,6 +763,10 @@ func knownRegistryLabel(label string) bool {
 	return false
 }
 
+// validSOAnswer requires a compatible answer type, a label from the question's
+// own set, and a finite confidence in [0,1]. It normalizes the winner and the
+// probability map. Returns the normalized answer, a typed failure reason
+// (empty on success) and ok.
 func validSOAnswer(a soAnswer, q soQuestion) (soAnswer, string, bool) {
 	qt := strings.ToLower(strings.TrimSpace(q.Type))
 	if qt == "" {
@@ -805,7 +805,7 @@ func validSOAnswer(a soAnswer, q soQuestion) (soAnswer, string, bool) {
 			found := ""
 			for k := range q.Criteria {
 				if strings.EqualFold(k, a.Choice) {
-					found = strings.ToLower(strings.TrimSpace(k))
+					found = strings.TrimSpace(k)
 					break
 				}
 			}
