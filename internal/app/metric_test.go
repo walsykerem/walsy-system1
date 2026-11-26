@@ -24,3 +24,17 @@ func TestEmitMetricAllowlist(t *testing.T) {
 		t.Fatal("raw conf must not be logged")
 	}
 }
+
+// Upstream stderr shares the metric channel, so every line of a multi-line
+// chunk must carry the prefix; otherwise a forged record looks like a metric.
+func TestPrefixWriterTagsEveryLine(t *testing.T) {
+	var buf bytes.Buffer
+	p := &prefixWriter{w: &buf, prefix: []byte("upstream: ")}
+	if _, err := p.Write([]byte("warn\n{\"seq\":1,\"pid\":1}\n")); err != nil {
+		t.Fatal(err)
+	}
+	want := "upstream: warn\nupstream: {\"seq\":1,\"pid\":1}\n"
+	if buf.String() != want {
+		t.Fatalf("output = %q, want %q", buf.String(), want)
+	}
+}

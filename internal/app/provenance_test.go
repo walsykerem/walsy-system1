@@ -31,3 +31,32 @@ func TestN12CallAuditCarriesLatencyAndCredits(t *testing.T) {
 		t.Fatalf("cost per call = %v", totals.CostPerCall)
 	}
 }
+
+// The store file is created before its first line is written, so an empty one
+// is an empty chain, not a tampered ledger that disables every receipt.
+func TestReceiptChainEmptyStoreStaysUsable(t *testing.T) {
+	resetRouterForTest(t)
+	path, err := receiptStorePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := loadReceiptChain()
+	if c == nil {
+		t.Fatal("empty store treated as a broken chain")
+	}
+	if c.seq != 0 {
+		t.Fatalf("seq = %d, want 0", c.seq)
+	}
+	if _, err := c.appendReceipt(receipt{Event: "gate", Decision: "admit"}); err != nil {
+		t.Fatalf("append to empty store: %v", err)
+	}
+	if c.seq != 1 {
+		t.Fatalf("seq after append = %d, want 1", c.seq)
+	}
+}

@@ -406,6 +406,9 @@ func uiLogsSheet(w http.ResponseWriter, r *http.Request) {
 			_, extra := auditLogEntries(mcp)
 			entries = append(entries, extra...)
 		}
+		// Each source is newest-first; the merged list must be too, or the sheet
+		// shows MCP rows after every in-memory call regardless of their time.
+		sort.SliceStable(entries, func(i, j int) bool { return entries[i].TS > entries[j].TS })
 	}
 	msg, msgMs := "", 0
 	if r != nil {
