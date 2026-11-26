@@ -1,0 +1,13 @@
+{
+  "name": "walsy-system1",
+  "version": "0.0.1",
+  "description": "Name reservation for walsy-system1 - local MCP relay that routes LLM calls through System One decisions. Beta soon.",
+  "keywords": ["mcp", "llm", "router", "system-one", "proxy"],
+  "homepage": "https://github.com/walsykerem/walsy-system1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/walsykerem/walsy-system1.git"
+  },
+  "license": "UNLICENSED",
+  "files": ["README.md"]
+}
