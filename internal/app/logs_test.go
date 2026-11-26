@@ -49,6 +49,29 @@ func TestLogsSheetAuditTailBounded(t *testing.T) {
 	}
 }
 
+func TestLogsSheetAuditTailRejectsSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, routerDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(dir, "real.jsonl")
+	row := `{"event":"relay_frame","method":"SYMLINKED","status":"ok"}` + "\n"
+	if err := os.WriteFile(real, []byte(row), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, routerAuditName)); err != nil {
+		t.Skipf("symlink unsupported here: %v", err)
+	}
+	resetLogs()
+	defer resetLogs()
+
+	if rows, err := auditLogRowsTail(10); err == nil {
+		t.Fatalf("symlinked audit file accepted: %d rows", len(rows))
+	}
+}
+
 func TestLogsSheetRendersRecordedCall(t *testing.T) {
 	resetLogs()
 	defer resetLogs()

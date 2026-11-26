@@ -266,7 +266,9 @@ func auditLogRowsTail(limit int) ([]auditRow, error) {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	// Lstat, not f.Stat: os.Open follows a symlink, so a stat of the handle can
+	// never report ModeSymlink and the rejection below would be dead code.
+	st, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
