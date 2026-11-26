@@ -39,8 +39,9 @@ func (l *frameLimitReader) Read(p []byte) (int, error) {
 }
 
 // runToolsServer is walsy-system1's own MCP stdio server: it exposes the
-// dashboard state and the relay audit log as two read-only tools, so the proxy
-// is a visible MCP entry instead of only wrapping someone else's server.
+// dashboard state and the relay audit log as read-only tools plus the gated
+// system1_decide tool, so the proxy is a visible MCP entry instead of only
+// wrapping someone else's server.
 func runToolsServer(in io.Reader, out io.Writer) {
 	lr := &frameLimitReader{r: in}
 	dec := json.NewDecoder(lr)
