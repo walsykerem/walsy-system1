@@ -281,8 +281,8 @@ func TestSimFA6HashOnlyCache(t *testing.T) {
 	}
 }
 
-// FA6.7: exact-only keying has no semantic tier. Two equivalent phrasings must
-// share a cached decision for this item to WORK; today each phrase pays SO.
+// FA6.7: keying folds exact polite/filler tokens (foldKeyState), so a lightly
+// padded rephrase shares the cell; no embedding or paraphrase tier exists.
 func TestSimFA6SemanticThreshold(t *testing.T) {
 	w27_Base(t)
 	srv, st := w27_Stub(t, w27_Reply("no", 0.95))
