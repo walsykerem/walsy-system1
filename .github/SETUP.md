@@ -12,13 +12,11 @@ This PR adds workflow YAML only. Every item below is a **repository/organization
 
 ## Hermetic workflows
 
-All 21 workflows in the suite are hermetic: no live System One stage runs in any of them. The four in this PR:
+All 15 workflows in the suite are hermetic: no live System One stage runs in any of them. The four in this PR:
 
 | Workflow | Runner | Purpose |
 | --- | --- | --- |
-| `mach-o-claim-fixture-check.yml` | `macos-14` | Rebuild digest matches both fixture claims; function-count literal present (native symbol count needs walsyrea/lrecon locally). |
 | `offline-checker-sim-green.yml` | `ubuntu-latest` | `CHECKER_SIM_SKIP_LIVE=1` checker sim, tmp-only `GOCACHE`. |
 | `signed-provenance-attestation-manual.yml` | `ubuntu-latest` | Dispatch-only; verifies human-supplied SHA after hermetic rebuild; prints manual instruction, no signing/publish. |
-| `loopback-egress-assertion.yml` | `ubuntu-latest` | Offline checker sim plus static loopback / no-wildcard-bind / no-PR-target assertions. |
 
 No `pull_request_target`, no `secrets:` references, no `scripts/verify.sh` stage 9, no live network and no key in CI. True signed provenance requires an org-level trusted signer configured by org admins.
