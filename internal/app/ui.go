@@ -634,9 +634,11 @@ func uiComboAdd(w http.ResponseWriter, r *http.Request) {
 		uiGo(w, r, target, "STATE UNAVAILABLE")
 		return
 	}
+	// Identity is the provider/model pair; Weight is only a priority hint, so a
+	// weighted stored step must still block a duplicate add.
 	step := stateStep{Provider: provider, Model: model}
 	for _, s := range steps {
-		if s == step {
+		if s.Provider == step.Provider && s.Model == step.Model {
 			uiGo(w, r, target, "MODEL ALREADY IN COMBO")
 			return
 		}
