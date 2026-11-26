@@ -198,7 +198,15 @@ func w20_run_binary(t *testing.T, home, endpoint string) string {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(bin); err != nil {
-		t.Fatalf("shipped binary not found at %s: %v", bin, err)
+		// Go writes its build cache and telemetry counters under HOME; build
+		// under a scratch HOME so the audited HOME stays pristine.
+		cache := os.Getenv("GOCACHE")
+		if cache == "" {
+			cache = t.TempDir()
+		}
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("GOCACHE", cache)
+		bin = w33_Build(t)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
