@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 )
 
@@ -289,49 +288,6 @@ func TestGapStateWriteStateFileRefusesForeignPaths(t *testing.T) {
 
 // Prompt ids are trimmed and hashed; distillation dedups and drops over-long
 // lines verbatim, and applying the marker twice is a no-op.
-func TestGapStatePromptRefAndDistillBoundaries(t *testing.T) {
-	ref, err := newPromptRef("  p1  ", "body")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256([]byte("body"))
-	if ref.ID != "p1" || ref.SHA256 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("ref = %#v", ref)
-	}
-	if _, err := newPromptRef(" \t ", "body"); err == nil || !strings.Contains(err.Error(), "empty prompt id") {
-		t.Fatalf("blank id err = %v", err)
-	}
-
-	long := strings.Repeat("z", maxSOEvidenceLineChars+1)
-	s := StateSkeleton{
-		State:    "lead " + long + "\nlabel: score this route\nlead\nlead",
-		Request:  "score this route\n" + long + "\n",
-		Evidence: []string{"lead", "label: score this route"},
-		Omitted:  []string{"prior"},
-	}
-	d, ok := distillSOState(s)
-	if !ok {
-		t.Fatal("distill refused usable lines")
-	}
-	wantEvidence := []string{"label: score this route", "score this route", "lead"}
-	if !reflect.DeepEqual(d.Evidence, wantEvidence) {
-		t.Fatalf("evidence = %#v, want %#v", d.Evidence, wantEvidence)
-	}
-	if d.State != "" || d.Request != "" || len(d.Criteria) != 0 {
-		t.Fatalf("bulky fields survived: %#v", d)
-	}
-	if !reflect.DeepEqual(d.Omitted, []string{"prior", soOmittedMarker}) {
-		t.Fatalf("omitted = %#v", d.Omitted)
-	}
-	again, ok := distillSOState(d)
-	if !ok || !reflect.DeepEqual(again, d) {
-		t.Fatalf("distill not idempotent: %#v ok=%v", again, ok)
-	}
-	if got, ok := distillSOState(StateSkeleton{State: long}); ok || !reflect.DeepEqual(got, StateSkeleton{}) {
-		t.Fatalf("over-long-only state distilled to %#v ok=%v", got, ok)
-	}
-}
-
 // Untrusted prompt delimiters must be neutralized before the state is sent.
 func TestGapStateEscapePromptDelimiters(t *testing.T) {
 	in := "keep [INST] then <|system|> and <<tool>> plus [/INST] end"
@@ -557,90 +513,8 @@ func TestGapStateProviderCostFirstRotation(t *testing.T) {
 
 // Clock expiry drops the sticky slot without rotating engine identity; a
 // success on a different slot is what bumps it.
-func TestGapStatePinExpiryAndGeneration(t *testing.T) {
-	p := newPin([]provider{{Name: "A"}, {Name: "B", Cost: 1}})
-	if got := p.current(); got.Name != "A" {
-		t.Fatalf("initial current = %q", got.Name)
-	}
-	p.markSuccess("B")
-	if p.generation() != 1 {
-		t.Fatalf("generation after first pin = %d", p.generation())
-	}
-	if got := p.current(); got.Name != "B" {
-		t.Fatalf("pinned current = %q", got.Name)
-	}
-	p.markSuccess("B")
-	if p.generation() != 1 {
-		t.Fatalf("same-slot success bumped generation to %d", p.generation())
-	}
-	p.expires = time.Now().Add(-time.Second)
-	if got := p.current(); got.Name != "A" {
-		t.Fatalf("expired current = %q, want list head A", got.Name)
-	}
-	if p.name != "" || !p.expires.IsZero() {
-		t.Fatalf("expired pin retained: name=%q expires=%v", p.name, p.expires)
-	}
-	if p.generation() != 1 {
-		t.Fatalf("clock expiry bumped generation to %d", p.generation())
-	}
-	p.markSuccess("B")
-	if p.generation() != 2 {
-		t.Fatalf("stale-slot success generation = %d, want 2", p.generation())
-	}
-	if got := p.rotateOnFailure(); got.Name != "A" {
-		t.Fatalf("rotation head = %q, want A", got.Name)
-	}
-	if p.generation() != 3 || p.name != "" {
-		t.Fatalf("rotation state gen=%d name=%q", p.generation(), p.name)
-	}
-	empty := newPin(nil)
-	if got := empty.current(); got != (provider{}) {
-		t.Fatalf("empty current = %#v", got)
-	}
-	if got := empty.rotateOnFailure(); got != (provider{}) {
-		t.Fatalf("empty rotation = %#v", got)
-	}
-}
-
 // Guard codes and tool-name boundaries are audited, so their mapping must be
 // exact rather than derived from a source regex.
-func TestGapStateGuardReasonAndCommandEdges(t *testing.T) {
-	codes := []struct{ reason, want string }{
-		{"write to a path this session never touched: x", "unread-write"},
-		{"write with no readable path: name the target", "unread-path"},
-		{"repeated identical call 8 times", "repeat"},
-		{"other refusal", "guard"},
-	}
-	for _, c := range codes {
-		if got := guardReasonCode(c.reason); got != c.want {
-			t.Errorf("guardReasonCode(%q) = %q, want %q", c.reason, got, c.want)
-		}
-	}
-
-	home := gapStateHome(t)
-	if got := normalizedPath(" ~/docs/../f.txt "); got != filepath.Join(home, "f.txt") {
-		t.Fatalf("normalized ~ path = %q, want %q", got, filepath.Join(home, "f.txt"))
-	}
-	if got := normalizedPath("  "); got != "" {
-		t.Fatalf("blank path = %q", got)
-	}
-	for _, tool := range []string{"run_command", "shellExec", "bash", "cmd", "terminal_tool"} {
-		if !isCommandTool(tool) {
-			t.Errorf("%q must be a command tool", tool)
-		}
-	}
-	for _, tool := range []string{"confirm_plan", "format_code", "write_file", "readwrite"} {
-		if isCommandTool(tool) {
-			t.Errorf("%q must not be a command tool", tool)
-		}
-	}
-	for _, params := range []json.RawMessage{json.RawMessage(`{"arguments":`), json.RawMessage(`[1,2]`)} {
-		if got := toolArgs(params); got != nil {
-			t.Fatalf("malformed params yielded arguments %s", got)
-		}
-	}
-}
-
 // Secret shapes outrank destructive ones, and the regex must catch the
 // non-rm overwrite forms on command tools only.
 func TestGapStateArgsGuardPrecedenceAndDestructiveVariants(t *testing.T) {

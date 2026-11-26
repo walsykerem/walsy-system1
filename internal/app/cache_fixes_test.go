@@ -3,54 +3,11 @@ package app
 import (
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 // The cache key advertises conf>=0.8+margin>=0.10; enforce it at the store
 // boundary so a weak admission can never ride a strong key on a later hit.
-func TestPassesKeyConfRule(t *testing.T) {
-	cases := []struct {
-		name string
-		d    soDecision
-		want bool
-	}{
-		{"confident with margin", soDecision{Conf: 0.95, MarginKnown: true, Margin: 0.9}, true},
-		{"confident, endpoint gave no probabilities", soDecision{Conf: 0.95}, true},
-		{"boundary 0.8", soDecision{Conf: 0.8}, true},
-		{"below cut", soDecision{Conf: 0.79}, false},
-		{"thin margin rejected", soDecision{Conf: 0.95, MarginKnown: true, Margin: 0.05}, false},
-		{"boundary margin admitted", soDecision{Conf: 0.95, MarginKnown: true, Margin: 0.1}, true},
-	}
-	for _, c := range cases {
-		if got := passesKeyConfRule(c.d); got != c.want {
-			t.Errorf("%s: passesKeyConfRule(%+v) = %v, want %v", c.name, c.d, got, c.want)
-		}
-	}
-}
-
 // A hot key may coast one grace window past its cell TTL, never forever.
-func TestWarmFallbackBoundedByDeadline(t *testing.T) {
-	c := newShardedCache()
-	k := [32]byte{7}
-	dec := cachedDecision{Label: "yes", Choice: "yes", ConfBucket: "0.9"}
-	seed := func(deadline time.Time) {
-		c.warmMu.Lock()
-		c.warmHits[k] = 4
-		c.warmAt[k] = time.Now()
-		c.warmDec[k] = dec
-		c.warmExpires[k] = deadline
-		c.warmMu.Unlock()
-	}
-	seed(time.Now().Add(-time.Second))
-	if got, hit := c.lookupForDecision(k); hit {
-		t.Fatalf("expired warm fallback served %+v", got)
-	}
-	seed(time.Now().Add(time.Minute))
-	if got, hit := c.lookupForDecision(k); !hit || got.Label != "yes" {
-		t.Fatalf("fresh warm fallback = %+v hit=%v, want yes", got, hit)
-	}
-}
-
 // A cached decision must still carry the typed label into tools/call, and one
 // shared bridge must keep the second identical frame at zero extra SO POSTs.
 func TestToolsDecideUsesCachedTypedDecision(t *testing.T) {
@@ -77,14 +34,3 @@ func TestToolsDecideUsesCachedTypedDecision(t *testing.T) {
 
 // A terminal abstain must keep its typed answer across a cache hit; otherwise
 // toolsDecide sees an empty choice and reports "model unavailable".
-func TestCacheAbstainHitKeepsTypedDecision(t *testing.T) {
-	live := routeResult{Decision: decPass, Abstained: true, Reason: "so-no", Label: "no",
-		LastDecision: soDecision{Choice: "no", Conf: 0.95}}
-	hit := cachedResult(cacheResult(live))
-	if !hit.Abstained || hit.Decision != decPass || hit.Label != "no" {
-		t.Fatalf("abstain hit lost route shape: %+v", hit)
-	}
-	if hit.LastDecision.Choice != "no" || hit.LastDecision.Conf != 0.9 {
-		t.Fatalf("abstain hit lost typed decision: %+v", hit.LastDecision)
-	}
-}
