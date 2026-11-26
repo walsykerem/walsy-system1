@@ -400,7 +400,6 @@ func main() {
 
 	// 2) after the path is read, the same write is refused for the secret it
 	// would add, and the file is measured on disk.
-	// The secret shapes in 2 and 2b are synthetic fixtures for the guard, not credentials.
 	c = spawn(ep)
 	handshake(c, 1)
 	_ = os.Remove("/tmp/relay56-b.txt")
