@@ -101,6 +101,7 @@ func gapE2ESetup(t *testing.T, mode string, status int, body string) (string, *g
 	metricOut = io.Discard
 	t.Cleanup(func() { metricOut = oldMetric })
 	routerReset()
+	t.Cleanup(routerReset) // a refused SO opens the breaker; do not leak it into later tests
 	resetLogs()
 	return home, stub
 }
