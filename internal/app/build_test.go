@@ -134,6 +134,57 @@ func TestBuildSlotRejectsConcurrentBuild(t *testing.T) {
 	<-done
 }
 
+// installBuild keeps the replaced binary at <binary>.prev, and refuses a swap
+// when the build produced no binary.
+func TestInstallBuildSwap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join("dist", "walsy-system1-test")
+	tmp := rel + ".tmp"
+	write := func(p, s string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, p), []byte(s), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(p string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	write(tmp, "first")
+	if err := installBuild(dir, tmp, rel); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	if got := read(rel); got != "first" {
+		t.Fatalf("after first install binary = %q, want first", got)
+	}
+
+	write(tmp, "second")
+	if err := installBuild(dir, tmp, rel); err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if got := read(rel); got != "second" {
+		t.Fatalf("after second install binary = %q, want second", got)
+	}
+	if got := read(rel + ".prev"); got != "first" {
+		t.Fatalf("replaced binary at .prev = %q, want first", got)
+	}
+
+	if err := installBuild(dir, filepath.Join("dist", "missing.tmp"), rel); err == nil {
+		t.Fatal("install with no built binary: want error")
+	}
+	if got := read(rel); got != "second" {
+		t.Fatalf("failed install changed the live binary: %q", got)
+	}
+}
+
 // A failing test run must never replace the working binary: tests run before
 // the swap, so the old binary stays live and the banner says so.
 func TestFailedTestRunKeepsOldBinary(t *testing.T) {
