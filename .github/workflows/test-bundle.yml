@@ -1,0 +1,48 @@
+name: Test bundle
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          persist-credentials: false
+
+      # The tests cannot be moved out of their packages (they are `package app`
+      # and use unexported identifiers), so this folder is built at run time and
+      # is always the tree of the commit being tested.
+      - name: Collect every Go test file into one folder
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/test-bundle"
+          rm -rf "$out"
+          while IFS= read -r -d '' f; do
+            mkdir -p "$out/$(dirname "$f")"
+            cp "$f" "$out/$f"
+          done < <(find . -name '*_test.go' -not -path './.git/*' -print0)
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "files: $(find "$out" -name '*_test.go' | wc -l)"
+            echo "lines: $(find "$out" -name '*_test.go' -exec cat {} + | wc -l)"
+          } > "$out/MANIFEST.txt"
+          cat "$out/MANIFEST.txt"
+
+      - name: Upload test bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-test-bundle
+          path: ${{ runner.temp }}/test-bundle
+          if-no-files-found: error
+          retention-days: 30
