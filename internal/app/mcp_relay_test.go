@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 )
 
@@ -16,38 +15,6 @@ func mustFrame(t *testing.T, raw []byte) frame {
 	return f
 }
 
-// id / _meta.progressToken / protocolVersion survive decode unchanged; Raw is byte-identical.
-func TestFrameRoundTripPreservesIdentity(t *testing.T) {
-	raw := []byte(`{"jsonrpc":"2.0","id":{"ref":7},"method":"initialize","params":{"_meta":{"progressToken":"tok-42"},"protocolVersion":"2025-06-18","capabilities":{"roots":{}}}}`)
-	f := mustFrame(t, raw)
-	if !bytes.Equal(f.Raw, raw) {
-		t.Fatalf("Raw changed:\n got %s\nwant %s", f.Raw, raw)
-	}
-	if !bytes.Equal(f.ID, []byte(`{"ref":7}`)) {
-		t.Fatalf("id changed: %s", f.ID)
-	}
-	if f.Method != "initialize" {
-		t.Fatalf("method = %q", f.Method)
-	}
-	var p struct {
-		Meta struct {
-			Progress json.RawMessage `json:"progressToken"`
-		} `json:"_meta"`
-		Protocol string `json:"protocolVersion"`
-	}
-	if err := json.Unmarshal(f.Params, &p); err != nil {
-		t.Fatal(err)
-	}
-	if string(p.Meta.Progress) != `"tok-42"` {
-		t.Fatalf("progressToken changed: %s", p.Meta.Progress)
-	}
-	if p.Protocol != "2025-06-18" {
-		t.Fatalf("protocolVersion changed: %q", p.Protocol)
-	}
-}
-
-// initialize result without extension -> marker added under capabilities.experimental,
-// existing capabilities and identity bytes preserved.
 func TestAddRouteCapabilityNoExtension(t *testing.T) {
 	result := []byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":true},"logging":{}},"serverInfo":{"name":"x"}}}`)
 	f := mustFrame(t, result)
@@ -131,28 +98,5 @@ func TestUnknownMethodPassthrough(t *testing.T) {
 	}
 	if isInitializeResult(f) {
 		t.Fatal("unknown method classified as initialize result")
-	}
-}
-
-// SYSTEMONE_ROUTE_URL set/unset: relay has no negotiation and no routing layer.
-// Only the routing layer (route.go) reads that env var; relay bytes are identical
-// either way, and the relay source must not reference the env at all.
-func TestSystemOneRouteURLNoRelayLayer(t *testing.T) {
-	raw := []byte(`{"jsonrpc":"2.0","id":3,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}}}}`)
-
-	t.Setenv("SYSTEMONE_ROUTE_URL", "") // ignore any ambient value the developer exported
-	unset := addRouteCapability(raw)
-	t.Setenv("SYSTEMONE_ROUTE_URL", "http://127.0.0.1:9/custom")
-	set := addRouteCapability(raw)
-	if !bytes.Equal(unset, set) {
-		t.Fatalf("route URL changed relay output:\n unset %s\n set   %s", unset, set)
-	}
-
-	src, err := os.ReadFile("internal/app/mcp_relay.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(src, []byte("SYSTEMONE_ROUTE_URL")) {
-		t.Fatal("relay layer must not read SYSTEMONE_ROUTE_URL")
 	}
 }

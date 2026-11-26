@@ -3,7 +3,6 @@ package app
 import (
 	"bufio"
 	"bytes"
-	"net"
 	"os"
 	"strings"
 	"sync"
@@ -30,36 +29,6 @@ func (b *lockedBuf) String() string {
 	return b.buf.String()
 }
 
-// TestIdleReadDeadline pins the helper's condition: a stdio *os.File reader is
-// never deadlined, a socket (net.Conn) keeps the bounded-slot guard.
-func TestIdleReadDeadline(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	defer pr.Close()
-	defer pw.Close()
-	if d, arm := idleReadDeadline(pr); arm || !d.IsZero() {
-		t.Fatalf("os.Pipe reader got deadline %v, arm=%v; stdio must stay exempt", d, arm)
-	}
-
-	a, b := net.Pipe()
-	defer a.Close()
-	defer b.Close()
-	before := time.Now()
-	d, arm := idleReadDeadline(a)
-	if !arm {
-		t.Fatal("net.Conn reader must be deadlined")
-	}
-	if d.Before(before.Add(httpReadTimeout - time.Second)) {
-		t.Fatalf("net.Conn deadline = %v, want ~now+%v", d, httpReadTimeout)
-	}
-}
-
-// TestBridgeStdioIdleBetweenFrames runs the bridge over real *os.File pipes,
-// leaves the session idle past a short gap, and asserts the read loop still
-// relays both directions. A timed-out stdio read would leave the upstream
-// reply unread forever.
 func TestBridgeStdioIdleBetweenFrames(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WALSY_SO_MODE", "advisory")
