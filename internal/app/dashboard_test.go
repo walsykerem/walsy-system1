@@ -702,3 +702,30 @@ func TestDashboardReleaseMalformedJSON(t *testing.T) {
 		t.Fatalf("malformed /api/release body missing error envelope: %q", rec.Body.String())
 	}
 }
+
+// A provider with no stored key is a request error, not an invalid key: the
+// old answer told the operator a key was refused when none had been sent.
+func TestKeytestWithoutStoredKeyIsNotInvalidKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	check(t, saveCustomProvider("NO-KEY", "http://127.0.0.1:9/v1", "K") == nil, "seed provider")
+	check(t, saveModels(map[string][]string{"NO-KEY": {"m1"}}) == nil, "seed models")
+
+	req := dashRequest(http.MethodPost, "/api/keytest", strings.NewReader(`{"provider":"NO-KEY","model":"m1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	NewDashboardHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("zero-key probe status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Status int    `json:"status"`
+		Result string `json:"result"`
+		Winner string `json:"winner"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("zero-key probe body not JSON: %v %q", err, rec.Body.String())
+	}
+	if out.Status != http.StatusBadRequest || out.Result != "NO KEY STORED" || out.Winner != "" {
+		t.Fatalf("zero-key probe = %+v, want 400/NO KEY STORED/no winner", out)
+	}
+}
