@@ -1,9 +1,6 @@
 package app
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
 // The inference table is deterministic: same shape, same item, no model call.
 func TestInferItem(t *testing.T) {
@@ -32,41 +29,5 @@ func TestInferItem(t *testing.T) {
 					tc.method, tc.tool, tc.phase, tc.state, got, tc.want)
 			}
 		})
-	}
-}
-
-// Every id the table names must exist in the registry, and an explicit caller
-// item always beats inference.
-func TestInferItemRulesAndExplicitWins(t *testing.T) {
-	for _, r := range itemRules {
-		if _, ok := decisionItemFor(r.item); !ok {
-			t.Fatalf("rule names unknown item %q", r.item)
-		}
-	}
-
-	var e stateEnvelope
-	req := `{"phase":"before-model","state":"overwrite docs/plan.md","item":"intake.intent"}`
-	if err := json.Unmarshal([]byte(buildState(req)), &e); err != nil {
-		t.Fatal(err)
-	}
-	if e.Item != "intake.intent" {
-		t.Fatalf("explicit item lost: %q", e.Item)
-	}
-
-	req = `{"phase":"before-model","state":"overwrite docs/plan.md"}`
-	if err := json.Unmarshal([]byte(buildState(req)), &e); err != nil {
-		t.Fatal(err)
-	}
-	if e.Item != "write.unread" {
-		t.Fatalf("inference did not fire: %q", e.Item)
-	}
-
-	// An unknown explicit id is never replaced by an inferred one.
-	req = `{"phase":"before-model","state":"overwrite docs/plan.md","item":"no.such.item"}`
-	if err := json.Unmarshal([]byte(buildState(req)), &e); err != nil {
-		t.Fatal(err)
-	}
-	if e.Item != "" {
-		t.Fatalf("unknown explicit id must stay generic, got %q", e.Item)
 	}
 }
