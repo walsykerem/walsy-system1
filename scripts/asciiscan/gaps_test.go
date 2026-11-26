@@ -48,8 +48,9 @@ func TestGapScriptHighByteLineNumbers(t *testing.T) {
 	}
 }
 
-// One bad file must not stop the scan of later files; an empty list is still
-// a clean run with a zero count.
+// One bad file must not stop the scan of later files; an empty list is a
+// failure, because verify.sh builds the list from globs and nothing scanned is
+// not a clean tree.
 func TestGapScriptScansAllFilesAndEmptyList(t *testing.T) {
 	dir := t.TempDir()
 	bad1 := filepath.Join(dir, "a.txt")
@@ -81,13 +82,13 @@ func TestGapScriptScansAllFilesAndEmptyList(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(nil, &out, &errOut); code != 0 {
-		t.Fatalf("empty list exit = %d, want 0", code)
+	if code := run(nil, &out, &errOut); code != 2 {
+		t.Fatalf("empty list exit = %d, want 2", code)
 	}
-	if want := "ascii clean: 0 files\n"; out.String() != want {
-		t.Fatalf("empty list stdout = %q, want %q", out.String(), want)
+	if out.Len() != 0 {
+		t.Fatalf("empty list stdout = %q, want empty", out.String())
 	}
-	if errOut.Len() != 0 {
-		t.Fatalf("empty list stderr = %q", errOut.String())
+	if !strings.Contains(errOut.String(), "no files given") {
+		t.Fatalf("empty list stderr = %q, want no-files message", errOut.String())
 	}
 }
