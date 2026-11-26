@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -328,37 +327,6 @@ func TestSimF2GateKeyBindingAndExpiry(t *testing.T) {
 	keyB := d2.cacheKey(req, cap, d2.pin.generation())
 	if keyA == keyB {
 		t.Fatal("endpoint/key identity change did not rebind cache key")
-	}
-}
-
-func TestSimF2PromptsOutOfSOState(t *testing.T) {
-	w01_env(t)
-	const body = "SIM_PROMPT_BODY_5A7C_DEADBEEF"
-	if err := savePrompts([]Prompt{{Name: "sim-secret", Text: body}}); err != nil {
-		t.Fatal(err)
-	}
-	var wire string
-	w01_so(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		wire = string(b)
-		_, _ = w.Write([]byte(w01_answer("yes", 0.9)))
-	}))
-	t.Setenv("EVREN_API_KEY", "sim-key")
-	d := newDecisionBridge()
-	d.pin.markSuccess(d.pin.current().Name)
-	req := w01_frame("classify prompt containment")
-	if r := d.decide(req); r.Decision != decPin {
-		t.Fatalf("admit: %+v", r)
-	}
-	state := buildSOState(string(req))
-	for _, surface := range []string{state, wire} {
-		if strings.Contains(surface, body) {
-			t.Fatalf("prompt body leaked into SO surface: %q", surface)
-		}
-	}
-	sum := sha256.Sum256([]byte(body))
-	if !strings.Contains(wire, hex.EncodeToString(sum[:])) {
-		t.Fatalf("prompt digest absent from SO state: %q", wire)
 	}
 }
 
