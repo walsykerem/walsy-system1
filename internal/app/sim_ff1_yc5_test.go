@@ -756,17 +756,6 @@ func TestSimYC5WholeAnswerNoReArgmax(t *testing.T) {
 		})
 	}
 
-	t.Run("noul-observed", func(t *testing.T) {
-		w33_Home(t)
-		srv, _ := w33_SO(t, func([]byte) string {
-			return `{"answers":{"gate":{"type":"choice","choice":"yes","confidence":0.95,"noul":true}}}`
-		})
-		w33_Attach(t, srv)
-		routerReset()
-		d := askSOQ("decide: classify this", q)
-		t.Logf("noul=true outcome: choice=%q conf=%v margin_known=%v", d.Choice, d.Conf, d.MarginKnown)
-	})
-
 	t.Run("route-keeps-declared-label", func(t *testing.T) {
 		home := w33_Home(t)
 		srv, _ := w33_SO(t, func([]byte) string {
