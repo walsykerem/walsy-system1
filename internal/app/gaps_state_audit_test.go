@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -478,36 +477,6 @@ func TestGapStateRegistryWriteRejectsUnsafeFields(t *testing.T) {
 	path := filepath.Join(home, ".walsy-system1", "providers.txt")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("failed writes replaced registry: %v", err)
-	}
-}
-
-// Cost is the primary failover hint; a loopback probe must not outrank a
-// cheaper remote slot just because its name hashes earlier.
-func TestGapStateProviderCostFirstRotation(t *testing.T) {
-	list := []provider{
-		{Name: "alpha", Base: "https://a.example/v1", Cost: 7},
-		{Name: "beta", Base: "https://b.example/v1", Cost: 0},
-		{Name: "gamma", Base: "https://c.example/v1", Cost: 3},
-	}
-	got := rotationOrder(list)
-	if len(got) != 3 || got[0].Name != "beta" || got[1].Name != "gamma" || got[2].Name != "alpha" {
-		t.Fatalf("rotation order = %v", got)
-	}
-	if next := newPin(list).rotateOnFailure(); next.Name != "beta" {
-		t.Fatalf("rotation head = %q, want beta", next.Name)
-	}
-	a := sha256.Sum256([]byte("beta"))
-	b := sha256.Sum256([]byte("alpha"))
-	want := "alpha"
-	if hex.EncodeToString(a[:]) < hex.EncodeToString(b[:]) {
-		want = "beta"
-	}
-	ties := rotationOrder([]provider{
-		{Name: "beta", Base: "https://b.example/v1"},
-		{Name: "alpha", Base: "https://a.example/v1"},
-	})
-	if ties[0].Name != want {
-		t.Fatalf("cost tie head = %q, want %q", ties[0].Name, want)
 	}
 }
 

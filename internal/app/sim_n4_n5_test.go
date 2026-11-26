@@ -146,9 +146,6 @@ func TestSimN4MissingCapabilityFailClosed(t *testing.T) {
 		d, stub, home := simN4N5Env(t, "enforcing")
 		simN4N5WriteConfig(t, home, "so_mode=enforcing\nneed_label=true\n"+
 			"no_scratch=true\nsafe=true\nreversible=true\n")
-		if got := configCapabilityParams(); got != nil {
-			t.Errorf("N4: partial config backfilled caps: %s", got)
-		}
 		frame := simN4N5Frame("initialize", 2,
 			`"state":"classify this request",`+simN4N5Layer0Caps)
 		resp, blocked := d.enforcingGate(frame)

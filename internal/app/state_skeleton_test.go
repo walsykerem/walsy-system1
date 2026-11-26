@@ -127,6 +127,9 @@ func TestMarshalSOStateDistillsOverCapVerbatim(t *testing.T) {
 	if !marked {
 		t.Fatalf("mechanical omission marker missing: %s", b)
 	}
+	if obj["truncated"] != true {
+		t.Fatalf("truncation flag missing on a distilled state: %s", b)
+	}
 
 	small := StateSkeleton{State: "decide: small", Method: "tools/call"}
 	want, _ := json.Marshal(small)

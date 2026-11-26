@@ -475,8 +475,8 @@ func TestSimFA8StickyPinStrictHit(t *testing.T) {
 		if stub.count() != 1 {
 			t.Fatalf("sticky hit made an extra POST")
 		}
-		if d.pin.rotateOnFailure(); d.pin.generation() <= g0 {
-			t.Fatal("rotateOnFailure did not bump generation")
+		if d.pin.markSuccess("engine-B"); d.pin.generation() <= g0 {
+			t.Fatal("pin change did not bump generation")
 		}
 		w28_admitted(t, d.decideFrame(frame))
 		if got := stub.count(); got != 2 {

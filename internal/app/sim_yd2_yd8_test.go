@@ -89,7 +89,7 @@ func w35_cellExists(d *decisionBridge, key [32]byte) bool {
 }
 
 // TestSimYD2MidflightSwapNeverCachesStaleAnswer: the generation guard in
-// decide() must drop the computed answer when rotateOnFailure() happens
+// decide() must drop the computed answer when the engine identity changes
 // between generation read and cache write. The old generation key stays empty;
 // the new generation re-asks and caches normally.
 func TestSimYD2MidflightSwapNeverCachesStaleAnswer(t *testing.T) {
@@ -98,7 +98,7 @@ func TestSimYD2MidflightSwapNeverCachesStaleAnswer(t *testing.T) {
 	var swapped atomic.Bool
 	srv, st := w35_stubServer(t, func(post int) string {
 		if post == 1 && swapped.CompareAndSwap(false, true) {
-			d.pin.rotateOnFailure() // engine identity changes mid-flight
+			d.pin.markSuccess("engine-B") // engine identity changes mid-flight
 		}
 		return w35_replyChoice("yes", 0.95)(post)
 	})
@@ -163,7 +163,7 @@ func TestSimYD2HandlerGenerationRebind(t *testing.T) {
 		t.Fatalf("frame 2 = %+v posts=%d, want cache-hit/1", r, st.count())
 	}
 
-	d.pin.rotateOnFailure()
+	d.pin.markSuccess("engine-B")
 	if r := d.decideFrame(frame); r.Reason != "so-admit" || st.count() != 2 {
 		t.Fatalf("after engine swap = %+v posts=%d, want re-ask", r, st.count())
 	}
