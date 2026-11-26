@@ -857,7 +857,7 @@ var steerFailOpen = map[string]bool{
 	// SO outage is advice, never an enforcing verdict: the relay continues.
 	"so-degraded": true, "invalid-response": true,
 	"transient": true, "permanent": true, "unknown": true,
-	"no-key": true, "no-state": true, "layer0-opt-in": true,
+	"no-state": true, "layer0-opt-in": true,
 	"layer0-scope": true, "layer0-gate": true, "layer0-static": true,
 	"layer0-shape": true, "registry-local": true,
 	"so-admit": true, "so-no": true, "so-other": true, "cache-hit": true,
