@@ -88,6 +88,3 @@ func TestOldContentOnDisk(t *testing.T) {
 		t.Fatalf("emptying write on real file = %+v want diff-wipe", v)
 	}
 }
-
-// A call with no file body (shell redirect, unknown schema) is scanned at the
-// argument level, so the secret arm is not limited to the five content keys.

@@ -91,8 +91,12 @@ func TestYC7Requires(t *testing.T) {
 	}
 	// A normal decision item never gains a Requires gate: SO calls go through.
 	q := decisionItem{Gate: true, Q: decisionQ{Instructions: "pick", Labels: map[string]string{"yes": "go"}}}.question()
-	if bytes.Contains([]byte(q.Type), []byte("requires")) {
-		t.Fatal("decision item question gated SO on Requires")
+	qb, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(qb, []byte("requires")) || bytes.Contains(qb, []byte("untrusted_text")) || bytes.Contains(qb, []byte("tool_output")) {
+		t.Fatalf("decision item question gated SO on Requires: %s", qb)
 	}
 }
 
