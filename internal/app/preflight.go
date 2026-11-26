@@ -9,9 +9,8 @@ import (
 // never feeds admission. Kept deliberately small: no probabilities, no raw
 // prompt text, no secret.
 type preflightVerdict struct {
-	Reason     string
-	ConfBucket string
-	Ambiguous  bool
+	Reason    string
+	Ambiguous bool
 }
 
 // preflight is a pure local rule tree over an already-built state envelope.
