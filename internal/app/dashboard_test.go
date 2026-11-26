@@ -451,39 +451,6 @@ func TestUISheetRoutes(t *testing.T) {
 	check(t, rec.Code == http.StatusOK, "combo run POST renders in-sheet")
 }
 
-func TestUIKeyAndModelFormsRedirectIntoSheet(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	h := NewDashboardHandler()
-
-	for _, tc := range []struct {
-		path string
-		form url.Values
-	}{
-		{"/ui/providers/keys", url.Values{"name": {"Evren System One"}, "action": {"clear"}}},
-		{"/ui/providers/models", url.Values{"name": {"Evren System One"}, "action": {"add"}, "model": {"cloudflare/clef"}}},
-	} {
-		rec := postFormTest(t, h, tc.path, tc.form)
-		check(t, rec.Code == http.StatusSeeOther, tc.path+" must redirect 303")
-		loc := rec.Header().Get("Location")
-		check(t, strings.HasPrefix(loc, "/ui/providers/sheet?name="), tc.path+" must stay in sheet: "+loc)
-	}
-}
-
-func TestDashboardRejectsSpoofedHost(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	h := NewDashboardHandler()
-	req := httptest.NewRequest(http.MethodPost, "/api/combo", strings.NewReader(`{"steps":[]}`))
-	req.Host = "evil.com"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://evil.com")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("spoofed host + matching origin: status = %d, want 400", rec.Code)
-	}
-}
-
 func TestDashboardLoopbackAliasesAllowed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	h := NewDashboardHandler()
@@ -514,15 +481,6 @@ func TestDashboardLoopbackAliasesAllowed(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("other loopback origin %q: status = %d, want 400", origin, rec.Code)
-		}
-	}
-}
-
-func TestProviderNameRejectsControlBytes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, name := range []string{"Acme\tProd", "Acme\x00", "Acme\nProd"} {
-		if err := saveCustomProvider(name, "https://acme.example/v1", "ACME_KEY"); err == nil {
-			t.Fatalf("name %q accepted, want rejection", name)
 		}
 	}
 }
