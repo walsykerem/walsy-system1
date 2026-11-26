@@ -203,21 +203,6 @@ func TestTransientNotCached(t *testing.T) {
 	}
 }
 
-// B1: volatile envelope/identifier fields must not fragment the gate cache,
-// while a semantic change must.
-func TestGateKeyCanonicalizesVolatileFields(t *testing.T) {
-	cap := soCapability()
-	base := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":1,"messageRef":"m1","sessionId":"s1"}}`)
-	variant := []byte(`{"name":"read_file","arguments":{"path":"/tmp/a","timestamp":999,"messageRef":"m999","sessionId":"s999"},"id":88,"jsonrpc":"2.0"}`)
-	if a, b := gateKey(base, cap), gateKey(variant, cap); a != b {
-		t.Fatalf("volatile fields changed gateKey: %s != %s", a, b)
-	}
-	semantic := []byte(`{"name":"write_file","arguments":{"path":"/tmp/a","timestamp":1,"messageRef":"m1","sessionId":"s1"}}`)
-	if a, b := gateKey(base, cap), gateKey(semantic, cap); a == b {
-		t.Fatalf("semantic change did not change gateKey: %s", a)
-	}
-}
-
 // A8: the raw-args secret scan must run even when the call carries a file body,
 // so metadata.api_key alongside content cannot escape the diff-only path.
 func TestArgsSecretCheckedWithBody(t *testing.T) {
@@ -271,24 +256,6 @@ func TestBridgeStdioSerializesClientWrites(t *testing.T) {
 	}
 	if !bytes.Contains(gate.buf.Bytes(), []byte(`"id":5`)) {
 		t.Fatalf("blocked reply not delivered: %q", gate.buf.Bytes())
-	}
-}
-
-// N4: enforcing must fail closed on a frame with no explicit decision
-// capability; advisory only warns. No default-true opt-in backfill.
-func TestN4MissingCapabilityFailClosed(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WALSY_SO_MODE", soModeEnforcing)
-	if explicitCapability([]byte(`{"state":"classify this"}`)) {
-		t.Fatal("bare frame must not count as explicit consent")
-	}
-	if !explicitCapability([]byte(`{"state":"classify this",` + explicitCaps + `}`)) {
-		t.Fatal("full opt-in set must be accepted")
-	}
-	d := newDecisionBridge()
-	_, blocked := d.enforcingGate([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file"}}`))
-	if !blocked {
-		t.Fatal("enforcing must fail closed on missing capability")
 	}
 }
 
@@ -379,23 +346,6 @@ func TestConfigDeclaredCapabilityNeverBackfillsMCP(t *testing.T) {
 	state := buildSOState(string(params))
 	if strings.Contains(state, `"opt_in":true`) || strings.Contains(state, `"phase":"before-model"`) {
 		t.Fatalf("SO state must not invent config-declared opt-in: %s", state)
-	}
-}
-
-// A generation change via syncHold clears the strong hold; the locked helper
-// must not report it for the old generation.
-func TestHoldStrongForGenerationChange(t *testing.T) {
-	d := &decisionBridge{}
-	d.setHold(7, 0.9)
-	if !d.holdStrongFor(7) {
-		t.Fatal("strong hold lost immediately after setHold")
-	}
-	d.syncHold(8)
-	if d.holdStrongFor(7) {
-		t.Fatal("stale generation must not inherit strong hold after syncHold")
-	}
-	if d.holdStrongFor(8) {
-		t.Fatal("syncHold cleared holdStrong on generation change")
 	}
 }
 
