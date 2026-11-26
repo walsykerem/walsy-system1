@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,41 @@ func TestLogsSheetDropsFrameworkChatterAndKeepsAuditTime(t *testing.T) {
 	}
 	if n := strings.Count(body, `class="log-usage"`); n != 1 {
 		t.Fatalf("rendered rows = %d, want 1 (combo probe is hidden)", n)
+	}
+}
+
+// The ring and the audit file are merged per request, so a newer persisted MCP
+// row must not be rendered after an older in-memory call row.
+func TestLogsSheetMergesMCPRowsInTimeOrder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, routerDir)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	resetLogs()
+	defer resetLogs()
+	logCall("systemone", "ok", time.Millisecond, 1, 1, nil)
+	_, entries := logsView()
+	if len(entries) != 1 {
+		t.Fatalf("ring entries = %d, want 1", len(entries))
+	}
+	callTS := entries[0].TS
+	later := callTS + 5000
+	row := `{"ts":"` + strconv.FormatInt(later, 10) + `","event":"decision","method":"system1_decide","decision":"admit"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, routerAuditName), []byte(row), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	uiLogsSheet(rec, nil)
+	body := rec.Body.String()
+	newer := strings.Index(body, `data-ts="`+strconv.FormatInt(later, 10)+`"`)
+	older := strings.Index(body, `data-ts="`+strconv.FormatInt(callTS, 10)+`"`)
+	if newer < 0 || older < 0 {
+		t.Fatalf("rows missing from sheet (newer=%d older=%d): %s", newer, older, body)
+	}
+	if newer > older {
+		t.Fatalf("newer MCP row rendered after older call row (newer=%d older=%d)", newer, older)
 	}
 }

@@ -103,8 +103,23 @@ type prefixWriter struct {
 }
 
 func (p *prefixWriter) Write(b []byte) (int, error) {
-	_, _ = p.w.Write(p.prefix)
-	return p.w.Write(b)
+	if len(b) == 0 {
+		return 0, nil
+	}
+	// Prefix every line, not just the first: a multi-line chunk would otherwise
+	// leave unprefixed lines an upstream could pass off as metric records.
+	out := make([]byte, 0, len(b)+len(p.prefix))
+	out = append(out, p.prefix...)
+	for i, c := range b {
+		out = append(out, c)
+		if c == '\n' && i < len(b)-1 {
+			out = append(out, p.prefix...)
+		}
+	}
+	if _, err := p.w.Write(out); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 // runUnix listens on a loopback unix socket and, when -upstream is given, dials
