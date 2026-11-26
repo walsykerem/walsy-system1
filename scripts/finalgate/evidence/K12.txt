@@ -2,19 +2,19 @@
 == 2/10 go vet ==
 == 3/10 go build ==
 == 4/10 go test -race ==
-ok  	walsy-system1	93.212s
-ok  	walsy-system1/scripts	38.312s
-ok  	walsy-system1/scripts/asciiscan	1.900s
-ok  	walsy-system1/scripts/finalgate	3.933s
-ok  	walsy-system1/scripts/recondigest	2.341s
-ok  	walsy-system1/scripts/relay56	3.528s
-ok  	walsy-system1/scripts/releasegate	2.731s
-root test functions: 515
+ok  	walsy-system1	58.908s
+ok  	walsy-system1/scripts	17.907s
+ok  	walsy-system1/scripts/asciiscan	2.978s
+ok  	walsy-system1/scripts/finalgate	1.294s
+ok  	walsy-system1/scripts/recondigest	2.813s
+ok  	walsy-system1/scripts/relay56	7.248s
+ok  	walsy-system1/scripts/releasegate	1.633s
+root test functions: 571
 == 5/10 lrecon digest ==
 lrecon digest: c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8
 lrecon kind: macho
 == 6/10 non-ascii scan ==
-ascii clean: 145 files
+ascii clean: 151 files
 == 7/10 subpackage vet ==
 == 8/10 decision_items signature ==
 decision_items.json: OK
