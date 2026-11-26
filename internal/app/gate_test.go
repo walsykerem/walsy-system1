@@ -63,6 +63,27 @@ func TestAskSOFailurePassthrough(t *testing.T) {
 	srv3.Close()
 }
 
+// A case-variant answer must be stored under the criteria' canonical label:
+// admits() and Action[] are exact-match lookups.
+func TestAskSOQStoresCanonicalCriteriaLabel(t *testing.T) {
+	routerReset()
+	t.Cleanup(routerReset)
+	orig := soEndpoint
+	defer func() { soEndpoint = orig }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"answers":{"gate":{"type":"choice","choice":"DONE","confidence":0.9}}}`))
+	}))
+	defer srv.Close()
+	soEndpoint = srv.URL
+
+	q := soQuestion{Type: "choice", Instructions: "x", Criteria: map[string]string{
+		"Done": "finished", "No": "not finished",
+	}}
+	if d := askSOQ("x", q); d.Choice != "Done" {
+		t.Fatalf("choice = %q, want canonical criteria label Done", d.Choice)
+	}
+}
+
 // TestAskSOStoredProviderKey proves the SO key comes from any registry provider
 // whose base matches the SO endpoint, not only from one hard-coded env name.
 func TestAskSOStoredProviderKey(t *testing.T) {
