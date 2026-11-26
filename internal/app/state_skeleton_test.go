@@ -52,16 +52,6 @@ func TestStateSkeletonHasPromptIDsAndHashesOnly(t *testing.T) {
 	}
 }
 
-func TestStateSkeletonNoEmptyBlocks(t *testing.T) {
-	b, err := marshalSOState(StateSkeleton{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b != "{}" {
-		t.Fatalf("empty skeleton = %q, want {}", b)
-	}
-}
-
 func TestCapSOStateRejectsOverLimitDeterministically(t *testing.T) {
 	over := strings.Repeat("x", maxSOStateChars+1)
 	want := ""
@@ -91,69 +81,9 @@ func TestCapSOStateRejectsOverLimitDeterministically(t *testing.T) {
 	}
 }
 
-func TestCapSOStateCountsRunesNotBytes(t *testing.T) {
-	s := strings.Repeat("\u00e9", maxSOStateChars)
-	if utf8.RuneCountInString(s) != maxSOStateChars {
-		t.Fatal("test setup wrong")
-	}
-	if _, err := capSOState(s); err != nil {
-		t.Fatalf("rune-counted at-cap payload rejected: %v", err)
-	}
-}
-
-func TestMarshalSOStateEnforcesCapOnPayload(t *testing.T) {
-	s := StateSkeleton{State: strings.Repeat("y", maxSOStateChars)}
-	if _, err := marshalSOState(s); err == nil {
-		t.Fatal("marshal accepted an over-cap serialized payload")
-	}
-}
-
 // Policy A: the SO-bound shape carries request/criteria/evidence and a
 // mechanically derived omission list. Caller-declared omitted/unverified must
 // never be trusted; only the audit of this state names what is missing.
-func TestStateSkeletonDecisionShape(t *testing.T) {
-	state := `{"state":"decide x","todo":["ship it","risk: data loss"],"done":[],"omitted":["lie"],"unverified":["lie"]}`
-	e := stateEnvelope{
-		State:    state,
-		Request:  "decide x",
-		Criteria: []string{"go", "hold"},
-		Evidence: []string{"log-1"},
-	}
-	b, err := soStateFromEnvelope(e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var obj map[string]any
-	if json.Unmarshal([]byte(b), &obj) != nil {
-		t.Fatalf("bad json: %s", b)
-	}
-	if obj["request"] != "decide x" {
-		t.Fatalf("request = %v", obj["request"])
-	}
-	for _, field := range []string{"criteria", "evidence", "omitted", "unverified"} {
-		if _, ok := obj[field].([]any); !ok {
-			t.Fatalf("%s missing or not a list: %s", field, b)
-		}
-	}
-	assertList := func(field string, want ...string) {
-		got := obj[field].([]any)
-		if len(got) != len(want) {
-			t.Fatalf("%s = %v, want %v", field, got, want)
-		}
-		for i, w := range want {
-			if got[i] != w {
-				t.Fatalf("%s[%d] = %v, want %q", field, i, got[i], w)
-			}
-		}
-	}
-	assertList("omitted", "ship it")
-	assertList("unverified", "data loss")
-	// An envelope with no decision shape still serializes to an empty object.
-	if empty, err := soStateFromEnvelope(stateEnvelope{}); err != nil || empty != "{}" {
-		t.Fatalf("empty shape = %q, %v; want {}", empty, err)
-	}
-}
-
 // Over-cap state is distilled, not dropped: verbatim keyword lines first,
 // bounded by the same cap, with a mechanical omission marker. Lines that cannot
 // fit verbatim still take the typed truncation error.

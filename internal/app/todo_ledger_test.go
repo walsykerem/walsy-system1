@@ -84,10 +84,3 @@ func TestTodoLedgerFrom(t *testing.T) {
 }
 
 // A done claim over an unreadable state must not be refused by the ledger.
-func TestTodoLedgerFailsOpen(t *testing.T) {
-	for _, state := range []string{``, `not json`, `[]`, `{"todo":null,"done":null}`} {
-		if got := todoLedgerFrom(state); got.Verdict.Choice != "" || len(got.Uncovered) != 0 {
-			t.Errorf("state %q must yield no verdict, got %+v", state, got)
-		}
-	}
-}

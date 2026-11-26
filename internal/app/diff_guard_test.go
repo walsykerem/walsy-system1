@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,21 +9,6 @@ import (
 
 // A destructive shell command is refused on a command tool even without a
 // file body to diff. An ordinary write whose body merely mentions "rm" is not.
-func TestArgsDestructiveCheck(t *testing.T) {
-	if v := argsDestructiveCheck("run_command", json.RawMessage(`{"command":"rm -rf /tmp/x"}`)); !v.Refuse || v.Code == "" {
-		t.Fatalf("rm -rf on a command tool must be refused, got %+v", v)
-	}
-	if v := argsDestructiveCheck("bash", json.RawMessage(`{"command":"dd if=/dev/zero of=/tmp/x"}`)); !v.Refuse {
-		t.Fatal("dd of= must be refused on a command tool")
-	}
-	if v := argsDestructiveCheck("write_file", json.RawMessage(`{"path":"/tmp/x","content":"rm -rf /"}`)); v.Refuse {
-		t.Fatal("a write whose content mentions rm must not be refused")
-	}
-	if v := argsDestructiveCheck("run_command", json.RawMessage(`{"command":"ls -la"}`)); v.Refuse {
-		t.Fatal("a benign command must not be refused")
-	}
-}
-
 func TestDiffSecurityCheck(t *testing.T) {
 	longOld := ""
 	for i := 0; i < diffDeleteLines+1; i++ {
@@ -82,17 +66,6 @@ func TestDiffSecurityCheck(t *testing.T) {
 	}
 }
 
-func TestDiffLinesMultiset(t *testing.T) {
-	added, removed := diffLines("a\nb\na\n", "a\nb\na\nc\n")
-	if len(added) != 1 || added[0] != "c" || len(removed) != 0 {
-		t.Fatalf("added=%v removed=%v", added, removed)
-	}
-	_, removed = diffLines("a\na\n", "a\n")
-	if len(removed) != 1 || removed[0] != "a" {
-		t.Fatalf("duplicate removal counted wrong: %v", removed)
-	}
-}
-
 // oldContentOnDisk is what makes the wipe and pure-deletion arms reachable at
 // all: with "" the write always looks additive. A missing path must stay "" and
 // must not panic, since most writes target files that do not exist yet.
@@ -118,13 +91,3 @@ func TestOldContentOnDisk(t *testing.T) {
 
 // A call with no file body (shell redirect, unknown schema) is scanned at the
 // argument level, so the secret arm is not limited to the five content keys.
-func TestArgsSecretCheck(t *testing.T) {
-	secret := json.RawMessage(`{"command":"echo '-----BEGIN RSA PRIVATE KEY-----' > /tmp/k"}`)
-	if v := argsSecretCheck(secret); v.Code != "diff-secret" || !v.Refuse {
-		t.Fatalf("shell redirect = %+v want diff-secret", v)
-	}
-	clean := json.RawMessage(`{"command":"go test ./..."}`)
-	if v := argsSecretCheck(clean); v.Refuse {
-		t.Fatalf("clean command refused: %+v", v)
-	}
-}

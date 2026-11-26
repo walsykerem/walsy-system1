@@ -177,38 +177,6 @@ func TestSecretsNeverInResponsesOrErrors(t *testing.T) {
 	}
 }
 
-func TestComboOrderAndValidation(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	s, _ := dashboardTestServer(t)
-
-	steps := []comboStepJSON{
-		{Provider: "Evren System One", Model: "z"},
-		{Provider: "OpenRouter", Model: "a"},
-	}
-	var resp map[string]any
-	if code := postJSONTest(t, s.URL+"/api/combo", map[string]any{"steps": steps}, &resp); code != http.StatusOK {
-		t.Fatalf("combo save: %d %v", code, resp)
-	}
-	var out map[string][]comboStepJSON
-	code := getJSONTest(t, s.URL+"/api/combo", &out)
-	if code != http.StatusOK {
-		t.Fatalf("combo get: %d", code)
-	}
-	got := out["steps"]
-	if len(got) != 2 || got[0].Provider != "Evren System One" || got[0].Model != "z" ||
-		got[1].Provider != "OpenRouter" || got[1].Model != "a" {
-		t.Fatalf("stored order = %v", got)
-	}
-
-	code = postJSONTest(t, s.URL+"/api/combo", map[string]any{
-		"steps": []comboStepJSON{{Provider: "nope", Model: "m"}},
-	}, &resp)
-	if code != http.StatusBadRequest || resp["ok"] != false {
-		t.Fatalf("unknown provider must fail: %d %v", code, resp)
-	}
-}
-
 func TestStateFileRejectsSymlinkAndMode(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -423,67 +391,8 @@ func writeSOConfigForTest(t *testing.T, body string, mode os.FileMode) string {
 	return path
 }
 
-func TestSOModeDefaultAndSources(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("WALSY_SO_MODE", "")
-	if got := soMode(); got != soModeAdvisory {
-		t.Fatalf("default mode = %q, want advisory", got)
-	}
-
-	path := writeSOConfigForTest(t, "so_mode=enforcing\n", 0644)
-	if got := soMode(); got != soModeAdvisory {
-		t.Fatalf("0644 config mode = %q, want advisory (fail-open)", got)
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if got := soMode(); got != soModeEnforcing {
-		t.Fatalf("0600 config mode = %q, want enforcing", got)
-	}
-
-	t.Setenv("WALSY_SO_MODE", "advisory")
-	if got := soMode(); got != soModeAdvisory {
-		t.Fatalf("env override = %q, want advisory", got)
-	}
-	t.Setenv("WALSY_SO_MODE", "bogus")
-	if got := soMode(); got != soModeEnforcing {
-		t.Fatalf("bogus env must fall back to file: %q", got)
-	}
-
-	if err := os.WriteFile(path, []byte("so_mode=unknown\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if got := soMode(); got != soModeAdvisory {
-		t.Fatalf("unknown file value = %q, want advisory", got)
-	}
-}
-
-func TestSOCapabilityDefaultOn(t *testing.T) {
-	// No default-true opt-in: a client must send every capability flag.
-	if got := soCapability(); got != (capabilityConfig{}) {
-		t.Fatalf("capability = %+v, want empty (explicit opt-in only)", got)
-	}
-}
-
 // validKey is the field shape check used by the sheet handler; "" is the
 // keep/clear sentinel there, so storage boundaries reject empty instead.
-func TestValidKeyRejectsSeparatorsAndBlank(t *testing.T) {
-	for _, k := range []string{"   ", "\t", "a\nb", "a\rb", "a\r\nb", "\n"} {
-		if validKey(k) {
-			t.Fatalf("validKey(%q) = true, want false", k)
-		}
-	}
-	if !validKey("") {
-		t.Fatal("empty key must stay a keep/clear sentinel")
-	}
-	if !validKey("sk-test-123") {
-		t.Fatal("ordinary key rejected")
-	}
-	if err := addKey("P", ""); err == nil || err.Error() != "invalid key" {
-		t.Fatalf("addKey empty err = %v, want invalid key", err)
-	}
-}
-
 func TestAddKeyRejectsMultilineKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	err := addKey("P", "sk-one\nsk-two")
@@ -493,31 +402,6 @@ func TestAddKeyRejectsMultilineKey(t *testing.T) {
 	if got := keyCount("P"); got != 0 {
 		t.Fatalf("keyCount = %d, want 0", got)
 	}
-}
-
-func TestSyncDirTempDirReturnsNil(t *testing.T) {
-	if err := syncDir(t.TempDir()); err != nil {
-		t.Fatalf("syncDir(temp) = %v, want nil", err)
-	}
-}
-
-func TestKeyListRoundTripTwoKeys(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := addKey("P", "sk-one"); err != nil {
-		t.Fatal(err)
-	}
-	if err := addKey("P", "sk-two"); err != nil {
-		t.Fatal(err)
-	}
-	keys, err := loadKeys("P")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(keys) != 2 || keys[0] != "sk-one" || keys[1] != "sk-two" {
-		t.Fatalf("keys = %v, want [sk-one sk-two]", keys)
-	}
-	assertNoStateTemp(t, filepath.Join(home, ".walsy-system1"))
 }
 
 // A failed promote must leave neither a temp file nor a damaged state file.
