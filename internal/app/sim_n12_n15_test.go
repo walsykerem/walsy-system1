@@ -98,7 +98,7 @@ func TestSimN12CostMeter(t *testing.T) {
 }
 
 // N15a: the SO deadline must be ~150ms, so a slow endpoint is cut off before it
-// can answer. Production soTimeout is still 10s; this test fails on that gap.
+// can answer. Production soTimeout is 150ms; this guards it stays <=400ms.
 func TestSimN15Deadline(t *testing.T) {
 	simN12N15Env(t)
 	simN12N15SO(t, func(w http.ResponseWriter, r *http.Request) {

@@ -135,7 +135,7 @@ func TestW11_N16DegradedUncached(t *testing.T) {
 }
 
 // N16: a repeatedly used key must stay cached across its expiry boundary.
-// Strict red test: there is no prewarm implementation in the production tree.
+// The prewarm path in cache.go keeps it cached: the post-expiry call must not re-POST.
 func TestW11_N16HotKeyPrewarm(t *testing.T) {
 	w11_base(t)
 	srv, st := w11_stub(t, w11_reply("yes", 0.95))
