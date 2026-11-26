@@ -247,6 +247,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(resp)
 				return
@@ -261,6 +262,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 				setMCPProtocolVersion(w, r)
 				mirrorSEP2243(w, r)
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(rpcError(f.ID, -32001, "blocked: promotion preconditions missing"))
 				return
@@ -273,6 +275,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		setMCPProtocolVersion(w, r)
 		mirrorSEP2243(w, r)
 		for _, h := range []string{mcpProtocolVersionHeader, mcpMethodHeader, mcpNameHeader} {
