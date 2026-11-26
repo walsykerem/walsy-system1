@@ -1,4 +1,4 @@
-# ROUND 9 AUDIT — branch `1.0.0-fix-9` (base `b579109c2a88b29405f80b80e1ebb254b825656b`)
+# ROUND 9 AUDIT — branch `0.1.0-fix-9` (base `b579109c2a88b29405f80b80e1ebb254b825656b`)
 
 ## Counts and outcome
 
@@ -44,7 +44,7 @@ Fixes in `sim_e1_e2_test.go`, `sim_q3_q4_test.go`, `sim_q5_q6_test.go`, `checker
 
 ## Docs (6)
 
-`SURFACES.md` gained shipped LOGS/PROMPTS surfaces (`/api/logs/clear`, `/api/prompts/add`, tail-limited read, toast forwarding) and dropped the stale `.Demo` bullet (deleted in round 5, see `ROUND5-AUDIT.md:43`). `CHANGELOG.md` gained a 1.0.0-fix-9 entry. `RAPOR.md` cites the verified AES S-box offset `0x899440`. Finalgate claims K12/K13/K15/K16 refreshed with current evidence (see `scripts/finalgate/main.go:45-48`).
+`SURFACES.md` gained shipped LOGS/PROMPTS surfaces (`/api/logs/clear`, `/api/prompts/add`, tail-limited read, toast forwarding) and dropped the stale `.Demo` bullet (deleted in round 5, see `ROUND5-AUDIT.md:43`). `CHANGELOG.md` gained a 0.1.0-fix-9 entry. `RAPOR.md` cites the verified AES S-box offset `0x899440`. Finalgate claims K12/K13/K15/K16 refreshed with current evidence (see `scripts/finalgate/main.go:45-48`).
 
 ## Provider probe fix (the round-9 headline defect)
 
@@ -78,7 +78,7 @@ Live sweep exposed two wire defects, both SO-approved and applied:
 - `scripts/verify.sh` — EXIT 0, 10/10 PASS, verbatim in `scripts/finalgate/evidence/K12.txt`
 - `scripts/relay56/TRANSCRIPT.txt` — 28 PASS, 0 FAIL, RELAY-OK
 - `scripts/finalgate/evidence/K15.txt` — 3 local, 55 admitted, 52 refused, 55 low-conf steered, 52 low-confidence non-proceed, 3 with no non-proceed label
-- shipped binary `c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8`, 11142 pclntab funcs, AES S-box `0x899440`
+- shipped binary `0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a`, 11142 pclntab funcs, AES S-box `0x899440`
 - `scripts/finalgate/evidence/K16.txt` — honest degraded live sweep: `0 admitted, 0 refused, 0 low-conf, 55 degraded, 3 local`, PASS in 10.02s. Direct probe answered HTTP 200 with a valid typed choice in 13.07s, above the shipped 5s enforcing deadline at `gate.go:34`. Degradation is endpoint latency; no timeout constant was raised to manufacture green evidence. Stub sweeps carry the routing proof.
 
 ## Honest limitations

@@ -127,7 +127,7 @@ func toolsReply(id json.RawMessage, method string, params json.RawMessage, d *de
 		base["result"] = map[string]any{
 			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "walsy-system1", "version": "1.0.0"},
+			"serverInfo":      map[string]any{"name": "walsy-system1", "version": "0.1.0"},
 		}
 	case "tools/list":
 		base["result"] = map[string]any{"tools": []any{toolStatusDef, toolAuditDef, toolDecideDef}}

@@ -3,7 +3,7 @@ name: SHA-pinned actions
 on:
   push:
     branches:
-      - 1.0.0-fix-9
+      - 0.1.0-fix-9
   pull_request:
 
 permissions:

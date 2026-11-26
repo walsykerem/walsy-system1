@@ -1,4 +1,4 @@
-# ROUND 4 AUDIT — branch 1.0.0-fix-4 (base 680cb11)
+# ROUND 4 AUDIT — branch 0.1.0-fix-4 (base 680cb11)
 
 Three read-only scanner agents (decision core / transport+security / UI+build) read the
 tree at 680cb11 and returned one table each. Counts: **6 MUST, 16 SHOULD, 4 LOW**.

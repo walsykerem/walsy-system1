@@ -2,7 +2,7 @@ name: release-tag-changelog-binding
 
 on:
   push:
-    branches: [1.0.0-fix-9]
+    branches: [0.1.0-fix-9]
   pull_request:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
           fi
           echo "OK: release.tag $tag present in CHANGELOG.md"
 
-          # CHANGELOG.md still lists 1.0.0-fix-7, so substring presence alone
+          # CHANGELOG.md still lists 0.1.0-fix-7, so substring presence alone
           # cannot detect a tag stale vs HEAD; bind it to the branch under test.
           target="${GITHUB_BASE_REF:-${GITHUB_REF_NAME:-}}"
           if [ -n "$target" ] && [ "$tag" != "$target" ]; then

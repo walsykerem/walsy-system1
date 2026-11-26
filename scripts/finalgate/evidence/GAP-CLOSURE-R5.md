@@ -1,4 +1,4 @@
-# GAP CLOSURE — branch 1.0.0-fix-5 (base 9bc4103)
+# GAP CLOSURE — branch 0.1.0-fix-5 (base 9bc4103)
 
 The five gaps documented at the end of round 4 (G1–G5) were re-decided by a
 System One severity table (m13749) that asked, per gap, MUST vs SHOULD vs

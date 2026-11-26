@@ -3,7 +3,7 @@ name: CI evidence freshness
 on:
   push:
     branches:
-      - 1.0.0-fix-9
+      - 0.1.0-fix-9
   pull_request:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha='c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8'
+          sha='0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a'
           src='scripts/finalgate/main.go'
           tr='scripts/relay56/TRANSCRIPT.txt'
           k12='scripts/finalgate/evidence/K12.txt'

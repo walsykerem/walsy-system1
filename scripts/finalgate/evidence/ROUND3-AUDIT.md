@@ -1,6 +1,6 @@
 # Round 3 — merged ponytail audit (3 agents, read-only)
 
-Repo: /Users/keremurhan/walsy-system1, branch 1.0.0-fix-3, base 83285bf (clean).
+Repo: /Users/keremurhan/walsy-system1, branch 0.1.0-fix-3, base 83285bf (clean).
 Constraints: Go 1.26 stdlib, CGO_ENABLED=0 static binary, no new deps, loopback,
 English UI, tests never weakened, key values never printed, no commit until gated.
 

@@ -33,6 +33,6 @@ Enforcing is explicit opt-in only.
 
 ## Release status
 
-`release.tag` is `1.0.0-fix-7` only. M1 approval is pending: no approval record
+`release.tag` is `0.1.0-fix-7` only. M1 approval is pending: no approval record
 exists and the release gate still requires `RELEASE_APPROVAL`. No approval is
 claimed by this report.

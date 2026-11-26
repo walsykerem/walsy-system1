@@ -24,8 +24,8 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [ "$DISPATCH_REF" = "refs/heads/1.0.0-fix-9" ] || {
-            echo "dispatch refused: ref is not refs/heads/1.0.0-fix-9"
+          [ "$DISPATCH_REF" = "refs/heads/0.1.0-fix-9" ] || {
+            echo "dispatch refused: ref is not refs/heads/0.1.0-fix-9"
             exit 1
           }
           echo "dispatch ref allowed"

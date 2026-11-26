@@ -17,7 +17,7 @@ on:
 
 jobs:
   manual-provenance-check:
-    if: github.ref == 'refs/heads/1.0.0-fix-9'
+    if: github.ref == 'refs/heads/0.1.0-fix-9'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (no persisted credentials)

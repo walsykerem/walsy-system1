@@ -2,7 +2,7 @@ name: atomic-artifact-bundle
 
 on:
   push:
-    branches: [1.0.0-fix-9]
+    branches: [0.1.0-fix-9]
 
 permissions:
   contents: read

@@ -9,7 +9,7 @@ func TestClassifyFailure(t *testing.T) {
 	cases := []struct{ text, bucket string }{
 		{"go test ./...\npanic: test timed out after 10m0s", failTimeout},
 		{"dial tcp: lookup proxy.local: no such host", failEnv},
-		{"go: downloading example.com/x v1.0.0", failEnv},
+		{"go: downloading example.com/x v0.1.0", failEnv},
 		{"warning: flaky test retried and passed", failFlake},
 		{"--- FAIL: TestRoute (0.02s)\n    route_test.go:12: got 1 want 2", failTest},
 		{"FAIL\twalsy-system1\t0.4s", failTest},

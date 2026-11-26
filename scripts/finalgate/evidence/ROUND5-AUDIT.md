@@ -1,4 +1,4 @@
-# ROUND 5 AUDIT — branch 1.0.0-fix-6 (base 2e3c464)
+# ROUND 5 AUDIT — branch 0.1.0-fix-6 (base 2e3c464)
 
 Three read-only audit children covered the whole tree (A = routing/guards/transport,
 B = dashboard/UI/state, C = scripts/verify/finalgate). Counts: **3 MUST,

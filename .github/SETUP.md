@@ -5,7 +5,7 @@ This PR adds workflow YAML only. Every item below is a **repository/organization
 ## Required in GitHub settings
 
 - **Secret scanning + push protection**: enable for the repo, with a custom pattern matching the Evren API key format, so a token cannot be committed or pushed. CI holds no API key and makes no live System One call.
-- **Branch protection on `1.0.0-fix-9`**: require passing status checks, require review, disallow force pushes and deletion.
+- **Branch protection on `0.1.0-fix-9`**: require passing status checks, require review, disallow force pushes and deletion.
 - **Environment approval**: gate the SO-protected / provenance manual workflow behind an environment with required reviewers. Only an authorized human approves; the workflow holds no signing key and publishes nothing.
 - **CODEOWNERS for `.github/workflows`**: add an owner so workflow edits require security review (add the CODEOWNERS file outside this PR).
 - **Loopback-only self-hosted runner egress** (if a self-hosted runner is used): allow loopback egress only; no dashboard or SO endpoint reachable from CI. No workflow starts a service.

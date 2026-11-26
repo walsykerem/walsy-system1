@@ -2,16 +2,16 @@
 == 2/10 go vet ==
 == 3/10 go build ==
 == 4/10 go test -race ==
-ok  	walsy-system1	58.908s
-ok  	walsy-system1/scripts	17.907s
-ok  	walsy-system1/scripts/asciiscan	2.978s
-ok  	walsy-system1/scripts/finalgate	1.294s
-ok  	walsy-system1/scripts/recondigest	2.813s
-ok  	walsy-system1/scripts/relay56	7.248s
-ok  	walsy-system1/scripts/releasegate	1.633s
+ok  	walsy-system1	56.579s
+ok  	walsy-system1/scripts	18.132s
+ok  	walsy-system1/scripts/asciiscan	3.726s
+ok  	walsy-system1/scripts/finalgate	1.398s
+ok  	walsy-system1/scripts/recondigest	4.299s
+ok  	walsy-system1/scripts/relay56	7.707s
+ok  	walsy-system1/scripts/releasegate	2.447s
 root test functions: 571
 == 5/10 lrecon digest ==
-lrecon digest: c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8
+lrecon digest: 0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a
 lrecon kind: macho
 == 6/10 non-ascii scan ==
 ascii clean: 151 files

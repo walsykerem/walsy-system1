@@ -24,7 +24,7 @@ import (
 
 const (
 	w24ShippedBinary = "./walsy-system1"
-	w24ShippedSHA256 = "c1226e8ea9f78f56de0947db89b886c4971828e2875ab2729b07fbe7404b5ba8"
+	w24ShippedSHA256 = "0c722f7c3c94952b7896430af9e7cd4d2b851c973bd50ab8ed29ae3cdc76df5a"
 	w24TestFile      = "sim_e1_e2_test.go"
 	w24VerifyScript  = "scripts/verify.sh"
 	w24Changelog     = "CHANGELOG.md"
@@ -613,8 +613,8 @@ func TestSimE2W24ReleaseAnnouncementMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, "1.0.0-fix-7") {
-		t.Fatalf("CHANGELOG does not contain the claimed 1.0.0-fix-7 release")
+	if !strings.Contains(text, "0.1.0-fix-7") {
+		t.Fatalf("CHANGELOG does not contain the claimed 0.1.0-fix-7 release")
 	}
 	lower := strings.ToLower(text)
 	if !strings.Contains(lower, "m1") || !strings.Contains(lower, "approv") {

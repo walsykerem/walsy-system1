@@ -37,7 +37,7 @@ func TestGapScriptDecodeResponseUnknownFields(t *testing.T) {
 // findRoot picks the nearest release.tag and fails closed when none exists.
 func TestGapScriptFindRootNearestTag(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "release.tag"), []byte("1.0.0\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "release.tag"), []byte("0.1.0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(root, "a", "b")
@@ -159,17 +159,17 @@ func TestGapScriptRunRejections(t *testing.T) {
 		wantErr                               string
 	}{
 		{"tag absent from changelog", "# 2.0.0", "a", "k", good, 200, 0.8, "absent from CHANGELOG"},
-		{"no approver", "1.0.0", "", "k", good, 200, 0.8, "no RELEASE_APPROVAL"},
-		{"no key", "1.0.0", "a", "", good, 200, 0.8, "no System One key"},
-		{"http error", "1.0.0", "a", "k", "", 503, 0.8, "System One status 503"},
-		{"no final answer", "1.0.0", "a", "k", `{"answers":{}}`, 200, 0.8, "no final answer"},
-		{"bad label", "1.0.0", "a", "k", `{"answers":{"final":{"choice":"hold","confidence":0.99}}}`, 200, 0.8, "not complete"},
-		{"low confidence", "1.0.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.5}}}`, 200, 0.8, "not complete"},
-		{"boundary passes", "1.0.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.8}}}`, 200, 0.8, ""},
+		{"no approver", "0.1.0", "", "k", good, 200, 0.8, "no RELEASE_APPROVAL"},
+		{"no key", "0.1.0", "a", "", good, 200, 0.8, "no System One key"},
+		{"http error", "0.1.0", "a", "k", "", 503, 0.8, "System One status 503"},
+		{"no final answer", "0.1.0", "a", "k", `{"answers":{}}`, 200, 0.8, "no final answer"},
+		{"bad label", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"hold","confidence":0.99}}}`, 200, 0.8, "not complete"},
+		{"low confidence", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.5}}}`, 200, 0.8, "not complete"},
+		{"boundary passes", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.8}}}`, 200, 0.8, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gapReleaseSetup(t, "1.0.0", tc.changelog)
+			gapReleaseSetup(t, "0.1.0", tc.changelog)
 			t.Setenv("RELEASE_APPROVAL", tc.approval)
 			t.Setenv("EVREN_API_KEY", tc.key)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
