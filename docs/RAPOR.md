@@ -5,7 +5,7 @@ No live SO call was made while producing this report.
 
 ## Binary identity
 
-- Artifact: `walsy-system1` (darwin/arm64, `CGO_ENABLED=0`). The sha256 and size are recorded in the sibling `walsy-system1.digest.json`; the full digest is kept there and not reproduced in this map.
+- Artifact: `walsy-system1` (darwin/arm64, `CGO_ENABLED=0`). The sha256 and size are recorded in the repo-root `walsy-system1.digest.json`; the full digest is kept there and not reproduced in this map.
 - Build metadata names the supervising process with `vcs.modified=true`.
 
 | ID | Area | Static finding |

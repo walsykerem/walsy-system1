@@ -28,7 +28,7 @@ const (
 	w21_Heading = "static map; advisory, fail-open by default"
 	// Root report next to the local binary; CI overrides WALSY_RAPOR with the
 	// testdata/ci-linux fixture.
-	w21_ReportDflt = "RAPOR.md"
+	w21_ReportDflt = "docs/RAPOR.md"
 	// Out-of-scope destructive shell call: enforcingGate refuses it, advisory forwards.
 	w21_Frame    = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run","arguments":{"command":"rm -rf /tmp/simq"}}}`
 	w21_Upstream = `{"jsonrpc":"2.0","id":7,"result":{"simq":"upstream-echo"}}`
@@ -265,7 +265,12 @@ func Test_w21_Q2_NoVerbatimDigest(t *testing.T) {
 		t.Error("Q2: report no longer names the sibling digest file")
 	}
 
+	// The digest sits next to the report when it is a fixture copy, and at the
+	// repo root for the tracked docs/RAPOR.md.
 	sib := filepath.Join(filepath.Dir(path), "walsy-system1.digest.json")
+	if _, err := os.Stat(sib); err != nil {
+		sib = simMachODigest()
+	}
 	sraw, dj := simReadDigest(t, sib)
 	if len(sraw) <= 200 || !strings.Contains(string(sraw), `"file_sha256"`) || !strings.Contains(string(sraw), `"contract_version"`) {
 		t.Fatalf("Q2: sibling digest is not a full JSON digest (%d bytes)", len(sraw))

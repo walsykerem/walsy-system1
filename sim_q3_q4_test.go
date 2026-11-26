@@ -34,7 +34,7 @@ func simReadReport(t *testing.T) string {
 	t.Helper()
 	p := os.Getenv("WALSY_RAPOR")
 	if p == "" {
-		p = "RAPOR.md"
+		p = "docs/RAPOR.md"
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {

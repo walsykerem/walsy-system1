@@ -131,3 +131,23 @@ locks and only the sheet body scrolls. No key values are rendered.
 
 The `DEMO/OK`, `DEMO/DOWN`, `DEMO/SLOW` chips are view-model only — they are not
 written into the provider registry.
+
+## Docs
+
+- `docs/RAPOR.md` — static map of the shipped surfaces
+- `docs/VERIFY.md` — verification commands
+- `docs/SURFACES.md` — surface inventory
+- `docs/AGENT_CONTRACT.md` — relay behaviour contract
+- `docs/TODO.md` — open work
+- `docs/ONERILER.md` — proposals
+- `docs/plan.md` — build plan
+- `CHANGELOG.md` — release history
+
+## Docs
+
+- `docs/VERIFY.md` — how to verify a change; the gates a claim must pass.
+- `docs/RAPOR.md` — architecture map and offsets the simulator checks.
+- `docs/SURFACES.md` — shipped HTTP/logs/prompts surfaces.
+- `docs/AGENT_CONTRACT.md` — rules the relay and its agents follow.
+- `docs/TODO.md`, `docs/plan.md`, `docs/ONERILER.md` — open work and proposals.
+- `CHANGELOG.md` — release history.
