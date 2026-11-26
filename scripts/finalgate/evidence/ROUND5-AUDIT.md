@@ -3,7 +3,7 @@
 Three read-only audit children covered the whole tree (A = routing/guards/transport,
 B = dashboard/UI/state, C = scripts/verify/finalgate). Counts: **3 MUST,
 12 SHOULD, 14 LOW**. Outcome: **all 29 fixed** — including every LOW, per the
-explicit instruction "atlanmış falan hiç bişey olmasın ... tam pass olsun".
+explicit instruction "atlanmış falan hiç bişey olmasın ... tam pass olsun". [EN: no skipping anything at all ... full pass.]
 One audit candidate (`soMode` silent downgrade) was checked and found NOT-PRESENT.
 
 Per m13673 every finding was re-decided MUST / SHOULD / LOW by a System One

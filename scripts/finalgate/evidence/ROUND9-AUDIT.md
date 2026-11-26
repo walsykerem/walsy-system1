@@ -70,7 +70,7 @@ Tests added (no assertion weakened): `TestComboNon2xxWithKeyDoesNotWin`, `TestCo
 Live sweep exposed two wire defects, both SO-approved and applied:
 
 - response top-level `id` added to strict allowlist — SO `go 0.956846747321964`
-- live endpoint rejected top-level `session_id`/`prompt_cache_key` with HTTP 422 `"session_id: fazladan alan gönderildi"`; stable hashes moved into `state` via `soWireState` in `gate.go:705-719` — SO `go 0.8991160943393134`. FA8 test (`sim_fa7_fa8_test.go`) rewritten to assert the hashes are present in `state`, bodies stay stable across volatile session fields, and no rejected top-level keys are sent. `sim_q3_q4_test.go` / `sim_q5_q6_test.go` updated to assert the new state prefix. No assertion weakened.
+- live endpoint rejected top-level `session_id`/`prompt_cache_key` with HTTP 422 `"session_id: fazladan alan gönderildi"` (extra field sent); stable hashes moved into `state` via `soWireState` in `gate.go:705-719` — SO `go 0.8991160943393134`. FA8 test (`sim_fa7_fa8_test.go`) rewritten to assert the hashes are present in `state`, bodies stay stable across volatile session fields, and no rejected top-level keys are sent. `sim_q3_q4_test.go` / `sim_q5_q6_test.go` updated to assert the new state prefix. No assertion weakened.
 
 ## Verification evidence
 

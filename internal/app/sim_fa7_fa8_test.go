@@ -1,11 +1,17 @@
 package app
 
 // Hermetic runtime proof for MANIFEST FA7 and FA8.
-// MANIFEST verbatim:
+// MANIFEST verbatim (Turkish original; English translation follows):
 //   FA7: "Singleflight `map[key]*call{done chan}` - ayni key icin tek SO POST,
 //         bekleyenler ayni cevabi alir."
 //   FA8: "Sticky pin + hysteresis >=0.8 + stabil `session_id`/`prompt_cache_key`;
 //         strict hit = 0 SO call; upstream prefix/KV cache sicak."
+// EN: FA7 - singleflight `map[key]*call{done chan}`: one SO POST per key;
+//     concurrent waiters receive the same reply.
+// EN: FA8 - sticky pinning with hysteresis >=0.8 and stable
+//     `session_id`/`prompt_cache_key`.
+// EN: FA8 - a strict cache hit makes zero SO calls; the upstream prefix/KV
+//     cache stays warm.
 // No real SO call, key read, process restart or production edit. Real bridge,
 // real route, real transport and a loopback httptest SO stub are exercised.
 

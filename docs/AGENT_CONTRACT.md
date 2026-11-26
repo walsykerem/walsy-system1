@@ -1,6 +1,6 @@
 # Parallel agent contract — 7-gap fix
 
-User m03234 (Turkish): "7sinide pass diye walsyrea+test scripti+agent-lsp onayı gelene kadar fixle paralel agentlarla sistemi oturt". The 7 gaps to make pass:
+User m03234 (Turkish): "7sinide pass diye walsyrea+test scripti+agent-lsp onayı gelene kadar fixle paralel agentlarla sistemi oturt". [EN: Fix all seven until walsyrea + test scripts + agent-lsp sign-off say pass, and set the system up with parallel agents.] The 7 gaps to make pass:
 1. Client wiring: wrapper `command` needed or no traffic reaches us.
 2. Forward-first architecture: SO decision blocks nothing; `decDeny`/`decAsk` reserved (`route.go:15-16`).
 3. unix/http have no upstream dial; they are scaffolds.

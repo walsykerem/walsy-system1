@@ -1,418 +1,418 @@
-# System One router — Go daemon (`routerd`) planı
+# System One router - Go daemon (`routerd`) plan
 
-## YAPILACAKLAR — tek kontrol listesi (System One onaylı; G = m00559 hayatta kalma; H = m01041 router kullanımı)
+## TO-DOs - single checklist (System One approved; G = m00559 survival; H = m01041 router usage)
 
-> Bu liste planın tamamının özetidir. Uygulamada **hiçbir madde atlanmaz**; her madde aşağıda bir bölümde ayrıntılı. `SKIP` maddeleri bilinçli olarak yapılmaz — geri gelmez.
+> This list is a summary of the whole plan. In implementation **no item is skipped**; each item is detailed in a section below. `SKIP` items are deliberately not done - they do not come back.
 
-**A. Çekirdek / mimari (§0, §1d)**
-1. Tek statik Go binary: `CGO_ENABLED=0`, stdlib only, harici dep yok. Config dosyası yok → `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`. Dağıtım `go install`/brew/tek indirme; client'a özel kod yok, sadece adres değişir.
-2. Tek JSON-RPC 2.0 relay çekirdeği (`mcp_relay.go`); **v1: sadece `transport_stdio.go`**. 3. günde `transport_unix.go` + `transport_http.go` (Streamable HTTP, `MCP-Protocol-Version` tek yerde); SSE YOK.
-3. Protokol sadakati: `id`, `_meta.progressToken`, `protocolVersion` birebir kopyalanır; sürüm client'tan alınır (hardcode yok); `sampling`/`roots`/`elicitation` yorumlanmadan geçirilir; **bilinmeyen capability → yorumlanmadan bayt-for-bayt geçir; sadece security/scope kararları deterministik reddedilir (sessiz yutma YOK anlamı: security kararı sessiz geçmez)**. Gerekçe: SEP-2577 roots/sampling/logging deprecated (go-sdk README onaylı); 3am on-call: bilinmeyen capability'ye "desteklemiyorum" demek client'ı bozar.
-4. `capabilities.experimental['com.kerem/systemone-route'] = {enabled:false, mode:"relay"}` initialize'da ilan edilir (`schema.ts:310-314,386-390`, `additionalProperties:true`; üst seviyede `x-` YOK). SDK default-off → opt-in eden client route, etmeyen şeffaf relay. Çıktı = **kapsam oranı + ret sayısı**, garanti DEĞİL.
-5. Route sırası: Katman 0 deterministik (normalize hash + statik kısa devre, µs) → Katman 1 System One (sadece AGENTS.md label-shaped kararlar, `conf>=0.8`) → Katman 2 şeffaf geçiş (varsayılan).
-6. Fail-safe: `conf<0.8` / timeout / HTTP≠200 → şeffaf geçiş. Fail-closed (503) **varsayılan değil**. Önce 3 gün shadow mod (kararı çağır+logla, geçiş bozulmaz).
-7. `before_model` MCP spec'te YOK → "her sistemde model-öncesi garanti" imkansız. Garanti iddiası yerine kapsam oranı raporlanır; ürün konumu "görünür kapsam ajanı".
+**A. Core / architecture (§0, §1d)**
+1. Single static Go binary: `CGO_ENABLED=0`, stdlib only, no external deps. No config file -> `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`. Distribution via `go install`/brew/single download; no client-specific code, only the address changes.
+2. Single JSON-RPC 2.0 relay core (`mcp_relay.go`); **v1: only `transport_stdio.go`**. On day 3: `transport_unix.go` + `transport_http.go` (Streamable HTTP, `MCP-Protocol-Version` in one place); no SSE.
+3. Protocol fidelity: `id`, `_meta.progressToken`, `protocolVersion` copied verbatim; version taken from the client (no hardcoding); `sampling`/`roots`/`elicitation` passed through uninterpreted; **unknown capability -> pass byte-for-byte uninterpreted; only security/scope decisions are deterministically rejected (no silent swallowing means: a security decision never passes silently)**. Rationale: SEP-2577 roots/sampling/logging deprecated (confirmed by go-sdk README); 3am on-call: telling an unknown capability "desteklemiyorum" [EN: "I do not support it"] breaks the client.
+4. `capabilities.experimental['com.kerem/systemone-route'] = {enabled:false, mode:"relay"}` is advertised at initialize (`schema.ts:310-314,386-390`, `additionalProperties:true`; no top-level `x-`). SDK default-off -> clients that opt in get routing, those that do not get transparent relay. Output = **coverage ratio + rejection count**, NOT a guarantee.
+5. Route order: Layer 0 deterministic (normalized hash + static short-circuit, ~us) -> Layer 1 System One (only AGENTS.md label-shaped decisions, `conf>=0.8`) -> Layer 2 transparent passthrough (default).
+6. Fail-safe: `conf<0.8` / timeout / HTTP!=200 -> transparent passthrough. Fail-closed (503) is **not the default**. First 3 days in shadow mode (call + log the decision, passthrough not broken).
+7. `before_model` is absent from the MCP spec -> "her sistemde model-öncesi garanti" [EN: "pre-model guarantee on every system"] is impossible. Instead of claiming a guarantee, report the coverage ratio; product positioning: "görünür kapsam ajanı" [EN: "visible coverage agent"].
 
-**B. Provider registry / sıralama / port (§1e)**
-8. Registry: compile-time `.rodata` 9'luk slice (OpenRouter, Ollama Cloud, OpenCode Free, v1m System One, Evren System One, Nace Drex, Ollama Local, Cloudflare, OpenCode Zen) + tek satırlık `providers.txt` (#10 slot: `ad, base URL, key env adı`). **Key dosyaya yazılmaz**, env'den gelir. Sıra = dosya satır sırası; dosya yoksa baked 9 sırası.
-9. `providers.txt` trust boundary: `0600` + sabit path + **symlink reddi** (zorunlu trust boundary). Key env adı dosyada görünmez. Endpoint doğrulaması: **sadece loopback Host kontrolü** (loopback dışı Host → passthrough; DNS rebind koruması için gerekirse). Secret asla log'a.
-10. Sıralama: **sticky pin** — son başarılı provider ID'sı process RAM'inde tek string (disk I/O YAGNI). Restart'ta pin yok → config sırası; ilk başarı RAM pin'i yazar. İstekte pin; ilk hatada pin düşüp `hash(sorted(reachable IDs))` sırasına geç. Saat/latency/health-probe **yok**; skor **yok**; her çağrıda System One **yok** (SO 0.937).
-11. System One modelleri (v1m/Evren) için özel endpoint = `SYSTEMONE_ROUTE_URL` env. Set ise oraya yönlenir, aksi halde normal provider. Ayrı mutable katman / negotiation yok.
-12. Port fallback: stdio/unix socket'te TCP portu hiç yok (çakışma imkansız). HTTP modu `127.0.0.1:0` → OS boş ephemeral port seçer; `listen_addr` zaten zorunlu stderr metric satırına yazılır. `MCP_PROXY_PORT` env ile sabit port override isteğe bağlı. **Port++ retry, SO_REUSEPORT, ayrı discovery dosyası YOK** (SO port oyu zayıf/çelişkili → kanıt + YAGNI kararı).
+**B. Provider registry / ordering / port (§1e)**
+8. Registry: compile-time `.rodata` slice of 9 (OpenRouter, Ollama Cloud, OpenCode Free, v1m System One, Evren System One, Nace Drex, Ollama Local, Cloudflare, OpenCode Zen) + one-line `providers.txt` (#10 slot: `name, base URL, key env name`). **Keys are never written to the file**, they come from env. Order = file line order; if no file, baked 9 order.
+9. `providers.txt` trust boundary: `0600` + fixed path + **symlink rejection** (mandatory trust boundary). Key env name is not visible in the file. Endpoint validation: **loopback Host check only** (non-loopback Host -> passthrough; if needed for DNS rebind protection). Secrets are never logged.
+10. Ordering: **sticky pin** - last successful provider ID as a single string in process RAM (disk I/O is YAGNI). No pin after restart -> config order; first success writes the RAM pin. Request uses the pin; on first error drop the pin and switch to `hash(sorted(reachable IDs))` order. No clock/latency/health-probe; no scoring; no System One on every call (SO 0.937).
+11. Custom endpoint for System One models (v1m/Evren) = `SYSTEMONE_ROUTE_URL` env. If set, route there; otherwise normal provider. No separate mutable layer / negotiation.
+12. Port fallback: stdio/unix socket has no TCP port at all (collision impossible). HTTP mode `127.0.0.1:0` -> OS picks a free ephemeral port; `listen_addr` is already written to the mandatory stderr metric line. Fixed-port override via `MCP_PROXY_PORT` env is optional. **No port++ retry, no SO_REUSEPORT, no separate discovery file** (weak/contradictory SO vote on ports -> evidence + YAGNI decision).
 
-**C. Cache / karar maliyeti — ANA AMAÇ (§2, §9)**
-13. **Karar cache'i VAR — ana amaç (pivot m00752/SO onay 0.980, §9):** 16 ADHD dalı + GPTCache/LiteLLM/ollaya kaynakları. **Cevabı değil SO'nun tipi kararını sakla** (label + conf bucket + rubric version) — düşük entropi, paraphrase'ler tek bucket'da birleşir. **Key = canonicalize(state) + rubricVersion + model + conf>=0.8 kuralı + registry version.** `state` key'e **girer**, ama canonicalize edilir (`encoding/json` sorted-key kopya + volatile alan ayıklama: timestamp/message-ref/tool-output/client adı/session ID). **Salt rubric/shablon yetmez** — SO etiketi state'e bağlı, rubric-only replay yanlış karar döndürür (deepen 1+3, sabotajcı `state tokenizer-spill` / `summary laundering`); eski 0-hit kök nedeni state'in *ham* key'de olmasıydı, canonicalize bunu çözer. Rubric/deploy değişince eski cell'ler deterministik **miss** olur (invalidation kodu yok). **Negatif cache:** `no`/`other`/`conf<0.8` de yazılır → tekrar eden belirsiz girdi 1500ms SO çağrısını atlar. **Sadece tipli label sakla, prose'u her hit'te yeniden üret** → bayat özet servis edilemez. **Giriş eşiği:** `conf>=0.8` VE probability margin ≥ eşik (clef overconfident 0.97–1.0 → tek yanlış label tüm client'lara yayılmasın). Hit = saf lokal okuma; SO çağrısı yok. **Miss'te in-flight coalescing (m00894/SO 0.888):** SO çağrı noktasına ~15 satır stdlib `Group{mu, m map[string]*call}` — aynı canonical key ile gelen 10 eşzamanlı istek 1×1500ms uçuşu paylaşır; `val`/`err` sadece `wg.Wait()` sonrası okunur, cleanup `if m[key]==c delete(...)` identity-check, lider panic→recover→passthrough, bir istemcinin `ctx.Done()`'u lideri zehirlemez, 1500ms aşan stale lider `Forget(key)`. `golang.org/x/sync` dahil YENİ MODÜL YOK (CGO=0 stdlib).
-14. **Karar kanıtı:** oracle yok → "hit arttı" iddiası counterfactual replay (cache açık/kapalı aynı korpus) + per-faz sayaç (pre/lookup/admit/llm_save) ile ölçülür; cevap doğruluğu iddia edilmez. Her hit trace: `{key, decision_source, registry_version, conf_bucket, digest}` — **ham conf YOK, sadece kaba bucket** (0.8/0.9/1.0; madde 19/27 allowlist ile tutarlı, offline kalibrasyon bucket ile yapılır). secret/PII asla.
-15. **Canary + self-heal:** bilinen etiketli sabit sorular her N çağrıda bir replay edilir; yanlış cached canary → cell flush + iç sayaç (pager yok). 1/N hit shadow'da yeniden SO'ya sorulup mismatch → cell flush (drift, zamana değil kanıta dayalı).
-16. **3 gün shadow:** yalnızca key + hit/miss + margin yan yana loglanır, cevap değişmez. Hit adayı ölçülmeden cache servis açılmaz. (Ayrı disk store / mmap / Redis YOK — process-lifetime LRU `container/list`+map; restart→cold start kabul.)
+**C. Cache / decision cost - MAIN GOAL (§2, §9)**
+13. **Decision cache EXISTS - main goal (pivot m00752/SO approval 0.980, §9):** 16 ADHD branches + GPTCache/LiteLLM/ollama sources. **Store SO's typed decision, not the answer** (label + conf bucket + rubric version) - low entropy, paraphrases collapse into one bucket. **Key = canonicalize(state) + rubricVersion + model + conf>=0.8 rule + registry version.** `state` **is included** in the key, but canonicalized (`encoding/json` sorted-key copy + stripping volatile fields: timestamp/message-ref/tool-output/client name/session ID). **Rubric/template alone is not enough** - the SO label depends on state, rubric-only replay returns wrong decisions (deepen 1+3, saboteur `state tokenizer-spill` / `summary laundering`); the root cause of the old 0-hit result was *raw* state in the key, canonicalization fixes it. When rubric/deploy changes, old cells become deterministic **miss** (no invalidation code). **Negative cache:** `no`/`other`/`conf<0.8` are also written -> repeated ambiguous input skips the 1500ms SO call. **Store only the typed label, regenerate prose on every hit** -> stale summaries can never be served. **Admission threshold:** `conf>=0.8` AND probability margin >= threshold (clef is overconfident 0.97-1.0 -> a single wrong label must not spread to all clients). Hit = pure local read; no SO call. **In-flight coalescing on miss (m00894/SO 0.888):** ~15 lines of stdlib `Group{mu, m map[string]*call}` at the SO call site - 10 concurrent requests with the same canonical key share one 1500ms flight; `val`/`err` read only after `wg.Wait()`, cleanup uses `if m[key]==c delete(...)` identity check, leader panic->recover->passthrough, one caller's `ctx.Done()` cannot poison the leader, stale leader past 1500ms gets `Forget(key)`. **NO NEW MODULE**, including `golang.org/x/sync` (CGO=0 stdlib).
+14. **Decision evidence:** no oracle -> the claim "hit arttı" [EN: "hits increased"] is measured with counterfactual replay (same corpus with cache on/off) + per-phase counters (pre/lookup/admit/llm_save); answer accuracy is not claimed. Every hit trace: `{key, decision_source, registry_version, conf_bucket, digest}` - **no raw conf, only a coarse bucket** (0.8/0.9/1.0; consistent with item 19/27 allowlist, offline calibration is done with buckets). Never secrets/PII.
+15. **Canary + self-heal:** fixed questions with known labels are replayed every N calls; a wrongly cached canary -> cell flush + internal counter (no pager). 1/N hits are re-asked to SO in shadow mode and on mismatch -> cell flush (drift is evidence-based, not time-based).
+16. **3-day shadow:** only key + hit/miss + margin are logged side by side, answers unchanged. Cache service is not enabled until hit candidates are measured. (No separate disk store / mmap / Redis - process-lifetime LRU `container/list`+map; restart->cold start is accepted.)
 
-**D. Güvenlik / gözlemlenebilirlik / sağlık (§3, §4)**
-17. System One çağrısı: `POST https://evren-llmapi.ssyz.org.tr/v1/systemone`, `model:"clef"`, header `x-api-key` env'den. `questions` obje (array değil), sadece `choice`/`score`. `score` 0..1 float + `legend` + index-keyed `probabilities`. Timeout 1500ms, **retry yok**, `conf<0.8` → None/fail-safe. `state` her şeyi içerir ama secret/PII/uzun context **asla**; untrusted içerik ayrı alan. `localhost:20128/...` varyantı kullanılmaz.
-18. Araç seçimi + parametre doğrulama: allowlist/scope **önce**, deterministik; JSON Schema ~20 satır (type/required/enum/properties/items); tek aday direkt, çok aday + çözülmedi → System One `choice`. **System One asla izin/scope kararı vermez.** `state`'e tool çıktısı / ham kullanıcı metni girmez. `conf>=0.8 && argmax`, retry 1 (6sn), sonra deny/ask.
-19. Gözlemlenebilirlik (`metric.go`): stderr'a **1 JSON satırı**, allowlist `tool/route/miss_reason/decision/model + ts/dur_ms + key_hash(12 hex) + listen_addr + seq/pid + reason_code/covered/abstained/passthrough + conf_bucket(0.8/0.9/1.0)`. **Ham** `conf`/`tokens`/`cost` **allowlist dışı** — doğrulanamadı, kendi sürecinin iddiası, shadow'da oracle yok; sadece kaba `conf_bucket` loglanır (madde 14/29 offline kalibrasyonu). **Yasak:** args, prompt, context, header, env, ham key, secret, ham conf. `jq -s` raporu; `gate_called` oranı ve kapsam oranı + ret sayısı raporlanır.
-20. Sağlık/fallback (`guard.go`): `classify(status,exc)` transient `408/429/500/502/503/504`+timeout, permanent `400/401/403/404/422` — passthrough reason-code için KALIR. Tek bool `so_degraded`: bir kez timeout/HTTP≠200 → passthrough, tekrar deneme yok. Breaker / state makinesi / `health.json` SİL (dosya I/O YAGNI). Backup aynı :20128 ise failover anlamsız (correlated failure).
+**D. Security / observability / health (§3, §4)**
+17. System One call: `POST https://evren-llmapi.ssyz.org.tr/v1/systemone`, `model:"clef"`, header `x-api-key` from env. `questions` is an object (not an array), only `choice`/`score`. `score` is a 0..1 float + `legend` + index-keyed `probabilities`. Timeout 1500ms, **no retry**, `conf<0.8` -> None/fail-safe. `state` contains everything but never secrets/PII/long context; untrusted content goes in a separate field. The `localhost:20128/...` variant is not used.
+18. Tool selection + parameter validation: allowlist/scope **first**, deterministic; JSON Schema ~20 lines (type/required/enum/properties/items); single candidate directly, multiple candidates + unresolved -> System One `choice`. **System One never makes permission/scope decisions.** No tool output / raw user text enters `state`. `conf>=0.8 && argmax`, one retry (6s), then deny/ask.
+19. Observability (`metric.go`): **1 JSON line** to stderr, allowlist `tool/route/miss_reason/decision/model + ts/dur_ms + key_hash(12 hex) + listen_addr + seq/pid + reason_code/covered/abstained/passthrough + conf_bucket(0.8/0.9/1.0)`. **Raw** `conf`/`tokens`/`cost` are **outside the allowlist** - unverifiable, self-reported by our own process, no oracle in shadow; only coarse `conf_bucket` is logged (item 14/29 offline calibration). **Forbidden:** args, prompt, context, header, env, raw key, secret, raw conf. `jq -s` report; report the `gate_called` rate and coverage ratio + rejection count.
+20. Health/fallback (`guard.go`): `classify(status,exc)` transient `408/429/500/502/503/504`+timeout, permanent `400/401/403/404/422` - KEPT for passthrough reason codes. Single bool `so_degraded`: once timeout/HTTP!=200 -> passthrough, no retry. Delete breaker / state machine / `health.json` (file I/O is YAGNI). If the backup is the same :20128, failover is meaningless (correlated failure).
 
-**E. Test / uygulama sırası (§6)**
-21. Sıra: shadow mod (3 gün) → **v1 stdio** → MCP relay testi → provider testi → `CGO_ENABLED=0 go build ./... && go test ./...`. 3. günde: benzersizlik ölçümü + unix + Streamable HTTP (SSE YOK).
-22. `mcp_relay_test.go`: extension'sız client `initialize` + tool call tamamlar; extension'lı client `com.kerem/systemone-route` marker'ını görür; `id`/`progressToken`/`protocolVersion` korunur.
-23. `provider_test.go` (7 madde): (a) `providers.txt` yoksa 9 baked sıra, (b) tek satır → #10, (c) restart sonrası pin yok → config sırası, (d) key env adı dosyada görünmez, (e) symlink reddi, (f) ilk hatada deterministik rotation, (g) HTTP `listen_addr` loopback + port>0 + stderr'da secret yok.
-24. Her yeni non-trivial logic için assert-based self-check; `route_test.go` dahil tüm testler `go test ./...` içinde geçmeli.
+**E. Test / implementation order (§6)**
+21. Order: shadow mode (3 days) -> **v1 stdio** -> MCP relay test -> provider test -> `CGO_ENABLED=0 go build ./... && go test ./...`. On day 3: uniqueness measurement + unix + Streamable HTTP (no SSE).
+22. `mcp_relay_test.go`: a client without extension completes `initialize` + tool call; a client with extension sees the `com.kerem/systemone-route` marker; `id`/`progressToken`/`protocolVersion` preserved.
+23. `provider_test.go` (7 items): (a) if `providers.txt` is absent, 9 baked order, (b) single line -> #10, (c) no pin after restart -> config order, (d) key env name not visible in the file, (e) symlink rejection, (f) deterministic rotation on first error, (g) HTTP `listen_addr` loopback + port>0 + no secret in stderr.
+24. Assert-based self-check for every new non-trivial logic; all tests, including `route_test.go`, must pass in `go test ./...`.
 
-**F. SKIP — bilinçli olarak YAPILMAZ (geri gelmez)**
-25. HITL yeni kodu (walsy-reflex v0.4.0 zaten %80; sadece 4 hard kategori `policy.yaml`'a eklenir), oturum belleği, rate limit/kota, multi-provider ortak `generate()` arayüzü, ön-filtre ayrı `.mjs` dosyası.
-26. 9router patch / `semanticCacheEntries` katmanı, self-spawn (SO 0.880), ağ kapısı/DNS+307 (SO 0.008), LD_PRELOAD/eBPF, embedding/vektör DB, yeni MCP sunucusu, provider/cache katmanı fork'u, tüm `.py`/Rust yolları, lrecon (PARK, §7). Hayatta kalma (m00559): self-restart, global lock, kist/epoch kalıcılığı, torpor sonrası cache-karar otomasyonu, quorum/dış sinyal, yeni daemon, senkron disk makbuzu. Hepsi madde 6'nın tek invariant'ına düşer — ayrı kod YOK.
+**F. SKIP - deliberately NOT DONE (does not come back)**
+25. New HITL code (walsy-reflex v0.4.0 is already 80%; only 4 hard categories added to `policy.yaml`), session memory, rate limit/quota, shared multi-provider `generate()` interface, separate pre-filter `.mjs` file.
+26. 9router patch / `semanticCacheEntries` layer, self-spawn (SO 0.880), network gate/DNS+307 (SO 0.008), LD_PRELOAD/eBPF, embedding/vector DB, new MCP server, fork of provider/cache layer, all `.py`/Rust paths, lrecon (PARK, §7). Survival (m00559): self-restart, global lock, cyst/epoch persistence, post-torpor cache-decision automation, quorum/external signal, new daemon, synchronous disk receipt. All reduce to item 6's single invariant - no separate code.
 
-**G. Kanıt (§8)**
-27. **Tek şema — ayrı makbuz DOSYASI YOK:** v1 canlı = stderr tek reason-code satırı. 3 gün shadow = stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}`. `seq` boşluğu = drop/restart ayırımı için `pid` (ayrı dosya yok). Negatif kontrol: 3 gün shadow'da kasıtlı bozuk istek → ret gelmeli; ret yoksa tur geçersiz. Satır yoksa = gated edilmemiş. **Ham** `conf`/`tokens`/`cost` doğrulanamadı (kendi sürecinin iddiası, shadow'da oracle yok) — allowlist dışı; sadece kaba `conf_bucket` loglanır.
+**G. Evidence (§8)**
+27. **Single schema - no separate receipt FILE:** v1 live = one reason-code line on stderr. 3-day shadow = stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}`. `seq` gap = `pid` for distinguishing drop/restart (no separate file). Negative control: during the 3-day shadow, a deliberately malformed request must be rejected; if not rejected, the round is invalid. No line = not gated. **Raw** `conf`/`tokens`/`cost` unverifiable (self-reported by our own process, no oracle in shadow) - outside the allowlist; only coarse `conf_bucket` is logged.
 
-**H. Router kapsamı / güvenlik / kalibrasyon (§10, m01041 SO 0.937)**
-28. **SO `state` = trust boundary:** sadece kullanıcı isteği girer; MRTR `input_required` nested `systemPrompt`/`message` asla girmez (prompt injection). `secret-clean` birleştirmeden ÖNCE. Capability gating yoksa -32602. Bilinmeyen `resultType` + generic Exception → passthrough; 503 ASLA.
-29. **Kalibrasyon (offline, canlı SO YOK):** saf-Go isotonic PAV + ECE hedefi 0.12→0.03; sabit 0.8 yerine `quantile(1-strong_model_pct)`; parse hatası → strong pin (yokluk ≠ düşük); R_zero baseline yenilemezse 0.8'e dön; `conf-rule` cache key'e bağlı. Rego/CEL YOK → düz `gate(layer0) bool`.
-30. **Dürüst kapsam oranı:** `(model-öncesi ∧ karar yetkili ∧ relay başarılı ∧ opt-in ∧ kalibre geçen) / tüm istekler` — birleşim DEĞİL kesişim. Client×otorite matrisi tutulur; yerel gerçek kapsam sadece OpenCode V2, diğerleri opt-in benimsemeyle büyür.
+**H. Router coverage / security / calibration (§10, m01041 SO 0.937)**
+28. **SO `state` = trust boundary:** only the user request enters; MRTR `input_required` nested `systemPrompt`/`message` never enters (prompt injection). `secret-clean` BEFORE merging. If no capability gating, -32602. Unknown `resultType` + generic Exception -> passthrough; NEVER 503.
+29. **Calibration (offline, no live SO):** pure-Go isotonic PAV + ECE target 0.12->0.03; `quantile(1-strong_model_pct)` instead of fixed 0.8; parse error -> strong pin (absence != low); if the R_zero baseline cannot be renewed, revert to 0.8; `conf-rule` tied to the cache key. No Rego/CEL -> plain `gate(layer0) bool`.
+30. **Honest coverage ratio:** `(pre-model AND decision-authoritative AND relay-successful AND opt-in AND calibration-passed) / all requests` - intersection, NOT union. A client x authority matrix is kept; real local coverage is only OpenCode V2; others grow with opt-in adoption.
 
-> Durum: hayatta kalma simülasyonu (m00559, 8 ADHD ajanı) tamam → §8 + G maddeleri eklendi (SO `complete` p=0.627). 17 router dalı + 5 ADHD frame + 2 deepen + router audit tamam. System One mimari oylaması tur 2: **go_routerd_plus_ts_shim 0.939** (prob 0.954, ≥0.8 = geçerli verdict). Tur 1 zayıf seçimi (saf standalone proxy 0.731) override edildi.
-> MCP-global araştırması (m00251): 5 frame + 4 deepen + web kanıt. System One: **koru_ve_mcp_extension_ekle 0.951** (prob 0.963); kullanıcı iddiası **kısmen doğru** (score 1.05, p=0.882). Aşağı §1b.
-> **GLOBAL PIVOT (m00377, SO 0.961/0.984):** 9router/opencode'a özel port YOK. Tek statik Go binary = protokol-seviyesi global MCP relay; 9router/opencode sadece örnek dağıtım. **Aşağı §0 ve §1d güncel — önceki §0 metni tarihseldir.**
-> Repo: `/Users/keremurhan/walsy-system1` — greenfield, 0 dosya. Secret'lar asla plan'a/log'a yazılmaz.
-> Kapsam (m00181): **System One router only.** lrecon = analoji, PARK (aşağı §7).
+> Status: survival simulation (m00559, 8 ADHD agents) complete -> §8 + G items added (SO `complete` p=0.627). 17 router branches + 5 ADHD frames + 2 deepen + router audit complete. System One architecture vote round 2: **go_routerd_plus_ts_shim 0.939** (prob 0.954, >=0.8 = valid verdict). Round 1 weak choice (pure standalone proxy 0.731) was overridden.
+> MCP-global research (m00251): 5 frames + 4 deepen + web evidence. System One: **koru_ve_mcp_extension_ekle 0.951** (prob 0.963); user claim **partly correct** (score 1.05, p=0.882). See §1b below.
+> **GLOBAL PIVOT (m00377, SO 0.961/0.984):** no 9router/opencode-specific port. Single static Go binary = protocol-level global MCP relay; 9router/opencode is only an example deployment. **§0 and §1d below are current - the previous §0 text is historical.**
+> Repo: `/Users/keremurhan/walsy-system1` - greenfield, 0 files. Secrets are never written to the plan/log.
+> Scope (m00181): **System One router only.** lrecon = analogy, PARK (see §7 below).
 
-## 0. Nihai mimari — GLOBAL MCP relay (System One onaylı, m00377)
+## 0. Final architecture - GLOBAL MCP relay (System One approved, m00377)
 
-Tarihsel not: burada eskiden "OpenCode → TS shim → Go routerd → 9router" yazıyordu. Kullanıcı (m00377) 9router/opencode'a özel port istemiyor; System One pivot **global_relay_arastir 0.969** onayladı, mimari oylaması **global_relay_core 0.961**, revize **0.984**.
+Historical note: this used to say "OpenCode -> TS shim -> Go routerd -> 9router". The user (m00377) does not want a 9router/opencode-specific port; System One approved pivot **global_relay_arastir 0.969**, architecture vote **global_relay_core 0.961**, revised **0.984**.
 
 ```
-herhangi MCP client  ─┐
-                      ├─→ [tek statik Go binary: JSON-RPC 2.0 relay çekirdeği] ─→ MCP server
-herhangi MCP server  ─┘         ↑ KARAR (opsiyonel, opt-in)
+any MCP client       ─┐
+                      ├─→ [single static Go binary: JSON-RPC 2.0 relay core] ─→ MCP server
+any MCP server       ─┘         ↑ DECISION (optional, opt-in)
 ```
 
-- **Tek statik Go binary** — `CGO_ENABLED=0`, libc yok, harici dep yok. `go install` / Homebrew / tek dosya indir = aynı davranış. Config dosyası YOK: `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`.
-- **TEK röle çekirdeği, taşıma aşamalı:** **v1 sadece (1) stdio child (`type:local`)**. 3. günde (2) Streamable HTTP (`type:remote`; SSE YOK) + (3) unix socket/FIFO dosya modu. Client tarafında özel kod YOK — sadece config'de adres (komut/URL/dosya yolu) değişir. 9router/opencode **örnek dağıtımdır**, kod yolu değil.
-- **Protokol sadakati:** `id`, `_meta.progressToken`, `protocolVersion` birebir korunur; HTTP'de `MCP-Protocol-Version` header zorunlu; `sampling`/`roots`/`elicitation` server→client geri-istekleri şeffaf geçer; **bilinmeyen capability → yorumlanmadan bayt-for-bayt geçir; sadece security/scope kararları deterministik reddedilir (sessiz yutma YOK anlamı: security kararı sessiz geçmez)**. Gerekçe: SEP-2577 roots/sampling/logging deprecated (go-sdk README onaylı); 3am on-call: bilinmeyen capability'ye "desteklemiyorum" demek client'ı bozar.
-- **Kapsam mekanizması:** initialize'da `capabilities.experimental['com.kerem/systemone-route'] = {enabled:false, mode:"relay"}` ilan edilir (schema.ts:310-314,386-390, `additionalProperties:true`; üst seviyede `x-` YOK). SDK'lar default-off: opt-in eden client'larda route aktif, etmeyenlerde **şeffaf relay**. Çıktı = **garanti DEĞİL, kapsam oranı + ret sayısı**.
-- **MCP spec'te `before_model` YOK** — model çağrısı MCP dışında. "Her sistemde model-öncesi garanti" imkansız (System One p=0.718). Karar yalnızca MCP trafiği içinde, gerçek LLM garantisi `:20128` zorunlu geçişte (opsiyonel gözlem: `proxy.log` + `route_counts`).
-- **Route sırası:** Katman 0 deterministik (normalize hash + statik kısa devre, ~µs) → Katman 1 System One (sadece AGENTS.md label-shaped kararlar, conf≥0.8) → Katman 2 şeffaf geçiş (varsayılan).
-- **Fail-safe:** `conf<0.8` / timeout / HTTP≠200 → şeffaf geçiş. Fail-closed (503) varsayılan değil — relay ölürse client MCP'siz kalır; önce shadow mod (kararı çağır+logla, geçiş bozulmaz).
-- **Self-spawn YOK** (m00376 SO 0.880), **ağ kapısı YOK** (0.008), **LD_PRELOAD/eBPF YOK** (imzalı binary'de kırılır / root+Linux'e kilitli = "her sistem" değil).
-- Gereksiz System One çağrısı = vergi (~0.5–1.7s + 350 tok). Her isteğe sorulmaz.
+- **Single static Go binary** - `CGO_ENABLED=0`, no libc, no external deps. `go install` / Homebrew / single-file download = same behavior. No config file: `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`.
+- **SINGLE relay core, staged transports:** **v1 only (1) stdio child (`type:local`)**. On day 3: (2) Streamable HTTP (`type:remote`; no SSE) + (3) unix socket/FIFO file mode. No client-side special code - only the address in config changes (command/URL/file path). 9router/opencode is **an example deployment**, not a code path.
+- **Protocol fidelity:** `id`, `_meta.progressToken`, `protocolVersion` preserved verbatim; on HTTP the `MCP-Protocol-Version` header is mandatory; `sampling`/`roots`/`elicitation` server->client reverse requests pass through transparently; **unknown capability -> pass byte-for-byte uninterpreted; only security/scope decisions are deterministically rejected (no silent swallowing means: a security decision never passes silently)**. Rationale: SEP-2577 roots/sampling/logging deprecated (confirmed by go-sdk README); 3am on-call: telling an unknown capability "desteklemiyorum" [EN: "I do not support it"] breaks the client.
+- **Coverage mechanism:** `capabilities.experimental['com.kerem/systemone-route'] = {enabled:false, mode:"relay"}` is advertised at initialize (`schema.ts:310-314,386-390`, `additionalProperties:true`; no top-level `x-`). SDKs are default-off: routing is active on clients that opt in, **transparent relay** on those that do not. Output = **not a guarantee, but coverage ratio + rejection count**.
+- **No `before_model` in the MCP spec** - the model call is outside MCP. "Her sistemde model-öncesi garanti" [EN: "pre-model guarantee on every system"] is impossible (System One p=0.718). Decisions only within MCP traffic; the real LLM guarantee is at the mandatory `:20128` pass-through (optional observation: `proxy.log` + `route_counts`).
+- **Route order:** Layer 0 deterministic (normalized hash + static short-circuit, ~us) -> Layer 1 System One (only AGENTS.md label-shaped decisions, conf>=0.8) -> Layer 2 transparent passthrough (default).
+- **Fail-safe:** `conf<0.8` / timeout / HTTP!=200 -> transparent passthrough. Fail-closed (503) is not the default - if the relay dies, the client is left without MCP; shadow mode first (call + log the decision, passthrough not broken).
+- **No self-spawn** (m00376 SO 0.880), **no network gate** (0.008), **no LD_PRELOAD/eBPF** (breaks on signed binaries / locked to root+Linux = not "her sistem" [EN: "every system"]).
+- An unnecessary System One call is a tax (~0.5-1.7s + 350 tok). Not asked on every request.
 
-## 1. ADHD Phase 2 — 5 frame × 6 fikir + 2 deepen
+## 1. ADHD Phase 2 - 5 frames x 6 ideas + 2 deepen
 
-Kırılgan varsayım: "Go = MCP server", "modelden önce = client hook", "plugin TS olmak zorunda", "ayrı process", "request-response". Hiçbiri zorunlu değil; karar katmanı HTTP'de, tetikleyici plugin'de.
+Fragile assumptions: "Go = MCP server", "modelden önce = client hook" [EN: "before the model = client hook"], "plugin TS olmak zorunda" [EN: "the plugin must be TS"], "ayrı process" [EN: "separate process"], "request-response". None is required; the decision layer is in HTTP, the trigger in the plugin.
 
-**Küme A — araya girme noktasını taşı**
-- HTTP middleware hard gate (model atlayamaz) `[N8 V9 F10]` ★
-- Go binary = 9router'ın ta kendisi `[N9 V6 F10]` — *tuzak: patch kırılgan*
-- provider istek kuyruğu = "önce" `[N9 V6 F9]`
-- fail-closed 503 `[N8 V7 F9]` — *tuzak: SPOF*
-- tek uzun stream, pipeline karar `[N7 V5 F7]`
-- TS plugin hiç yazılmaz `[N6 V3 F8]` — *tuzak: invocation zorunlu*
+**Cluster A - move the interception point**
+- HTTP middleware hard gate (model cannot skip) `[N8 V9 F10]` *
+- Go binary = 9router itself `[N9 V6 F10]` - *trap: patch is fragile*
+- provider request queue = "önce" [EN: "before"] `[N9 V6 F9]`
+- fail-closed 503 `[N8 V7 F9]` - *trap: SPOF*
+- single long stream, pipeline decision `[N7 V5 F7]`
+- no TS plugin at all `[N6 V3 F8]` - *trap: invocation required*
 
-**Küme B — karar maliyetini yok et**
-- singleflight: aynı state 99 kopya → 1 çağrı, fan-out `[N8 V9 F9]` ★
-- deterministik kısa devre (/models, statik, retry) `[N7 V9 F10]` ★
-- karar tablosu tek cache-line (8-byte key, atomik compare) `[N8 V8 F8]`
-- branch predictor: son N karardan örüntü, tekrarda gate yok `[N8 V7 F9]`
-- tek thread + ring buffer (spawn/GC yok) `[N7 V7 F7]`
-- sabit 350-token prefix → clef cache ~100% `[N9 V6 F8]` — *tuzak: prefix garanti değil*
-- speculative execution `[N9 V5 F7]` — *tuzak: model zaten başladı*
-- CPU pin / fork-server `[N6–7 V5–6 F6–7]`
-- byte glitch (1 karakter kırp, Jaccard 0.999) `[N8 V4 F6]` — *tuzak: yanlış rota*
+**Cluster B - eliminate decision cost**
+- singleflight: same state 99 copies -> 1 call, fan-out `[N8 V9 F9]` *
+- deterministic short-circuit (/models, static, retry) `[N7 V9 F10]` *
+- decision table in a single cache-line (8-byte key, atomic compare) `[N8 V8 F8]`
+- branch predictor: pattern from last N decisions, no gate on repeats `[N8 V7 F9]`
+- single thread + ring buffer (no spawn/GC) `[N7 V7 F7]`
+- fixed 350-token prefix -> clef cache ~100% `[N9 V6 F8]` - *trap: prefix is not guaranteed*
+- speculative execution `[N9 V5 F7]` - *trap: model already started*
+- CPU pin / fork-server `[N6-7 V5-6 F6-7]`
+- byte glitch (trim 1 character, Jaccard 0.999) `[N8 V4 F6]` - *trap: wrong route*
 
-**Küme C — garantiyi gözleme çevir (3am)**
-- shadow router (log-only, yönlendirmez) `[N8 V9 F5]`
-- config binary'ye göm (disk dosyası yok) `[N7 V9 F7]`
-- self-shutdown → trafik doğrudan main `[N8 V8 F6]`
-- tamamen stateless (health.json/breaker yok) `[N7 V8 F6]`
-- sessizlik kontratı `[N9 V8 F4]`
+**Cluster C - turn guarantee into observability (3am)**
+- shadow router (log-only, does not route) `[N8 V9 F5]`
+- embed config in the binary (no disk file) `[N7 V9 F7]`
+- self-shutdown -> traffic goes straight to main `[N8 V8 F6]`
+- fully stateless (no health.json/breaker) `[N7 V8 F6]`
+- silence contract `[N9 V8 F4]`
 - bypass header `[N7 V8 F8]`
 
-**Küme D — zehirlenmeye karşı**
-- state untrusted alan, talimatlar ayrı alan (injection kırılır) `[N7 V9 F9]`
-- `Secret` tipi + redacted `String()`; key stdin/exec, env/argüman yok `[N6 V9 F8]`
-- şema binary'de, config override edemez; her yanıta sürüm damgası `[N7 V8 F8]`
-- ters akış / namespace slip / clef kendisi karar üretsin — **hepsi tuzak** (garanti yanılsaması)
+**Cluster D - against poisoning**
+- state in untrusted field, instructions in separate field (injection broken) `[N7 V9 F9]`
+- `Secret` type + redacted `String()`; key via stdin/exec, no env/arguments `[N6 V9 F8]`
+- schema in binary, config cannot override; version stamp on every response `[N7 V8 F8]`
+- reverse flow / namespace slip / let clef produce the decision itself - **all traps** (guarantee illusion)
 
-**Yakınsama:** Ayanlanmış ama sıradan: tek cache-line tablo, shadow router. **Non-obvious-but-viable ★: Go karar + 10 satır TS tetikleyici + Küme B/C sentezi** — garanti mimari katmanda, maliyet tekrarlarda sıfır, SPOF shadow modla yönetiliyor.
+**Convergence:** Obvious but ordinary: single cache-line table, shadow router. **Non-obvious-but-viable \*: Go decision + 10-line TS trigger + Cluster B/C synthesis** - guarantee at the architecture layer, cost zero on repeats, SPOF managed with shadow mode.
 
-**Derinleştirme 1 — HTTP-middleware hard gate (fail-closed):**
-9router :20128 tüm trafiği görüyor; karar MCP/plugin katmanından HTTP katmanına taşınır. İstek → System One `/v1/systemone` (clef) → "devam" ise upstream, "red"/yanıt yoksa 503. Çift oyu önlemek için mevcut plugin oyu kaldırılır, tek karar kaynağı daemon. Ama her isteğe ~350 tok + gecikme bindiği için çoğu istek çağrısız geçmeli. Daemon tek hata noktası → önce shadow mod. *Load-bearing risk:* SPOF (System One 0.816). *İlk adım :* shadow modda middleware ekle, kararı logla, 503 döndürme (güven 0.985). *Alt fikirler:* sağlık kontrolü + önbelleğe alınmış son kararla geçiş; cache-first TTL map; bypass header; plugin sadece metrik okusun; shadow log şeması (etiket/güven/gecikme/hash).
+**Deepen 1 - HTTP middleware hard gate (fail-closed):**
+9router :20128 sees all traffic; the decision moves from the MCP/plugin layer to the HTTP layer. Request -> System One `/v1/systemone` (clef) -> if "devam" [EN: "continue"], upstream; if "red" [EN: "reject"] / no response, 503. To avoid double voting, the existing plugin vote is removed; the daemon is the single decision source. But since every request would add ~350 tok + latency, most requests must pass without a call. The daemon is a single point of failure -> shadow mode first. *Load-bearing risk:* SPOF (System One 0.816). *First step:* add middleware in shadow mode, log the decision, do not return 503 (confidence 0.985). *Sub-ideas:* health check + passthrough with the cached last decision; cache-first TTL map; bypass header; plugin only reads metrics; shadow log schema (label/confidence/latency/hash).
 
-**Derinleştirme 2 — cache-only hard gate (deterministik kısa devre + sabit prefix + singleflight):**
-İstek yakalanır → normalize hash → L1 atomik karar (~µs) → bilinen statik/tekrar isteği cache'den, hiç model çağrılmaz → gerçek label-shaped yeni istek → singleflight ile tek goroutine System One'a, 99 kopya fan-out → conf<0.8/timeout → main. *Load-bearing risk:* **state cache key'inde olmak zorunda → benzersiz isteklerde hit ~0.** "Near-zero System One çağrısı" sadece retry/restart/fan-out tekrarlarında tutar; state düşürülürse sessiz yanlış rota. İkinci kırılma: in-path olmadan garanti yok, fail-open olunca da garanti yok. *İlk adım :* 9router access log'undan son 1000 isteğin `sha256(state)` benzersizlik oranını say; >%95 ise L1 yazma, doğrudan singleflight'e geç (20 satırlık script, daemon kurmadan karar verir). *Alt fikirler:* L1 sadece retry'lerde; derleme-zamanı karar tablosu (Go switch/enum); sidecar UDS + plugin socket dener; singleflight'i `(state, questions)` çiftine göre 100ms coalescing ile anahtarla, L1 kaldır; 1 hafta sadece telemetri ("hit olsaydı" sahte hesabı), kısa devre yok.
+**Deepen 2 - cache-only hard gate (deterministic short-circuit + fixed prefix + singleflight):**
+Request intercepted -> normalized hash -> L1 atomic decision (~us) -> known static/repeated request from cache, no model call -> genuine new label-shaped request -> single goroutine to System One via singleflight, 99 copies fan out -> conf<0.8/timeout -> main. *Load-bearing risk:* **state must be in the cache key -> hit ~0 on unique requests.** "Near-zero System One çağrısı" [EN: "near-zero System One calls"] only holds for retry/restart/fan-out repeats; dropping state silently routes wrong. Second break: no guarantee without being in-path, and no guarantee when fail-open. *First step:* count the `sha256(state)` uniqueness ratio of the last 1000 requests from the 9router access log; if >95%, skip writing L1 and go straight to singleflight (20-line script, decides without setting up a daemon). *Sub-ideas:* L1 only for retries; compile-time decision table (Go switch/enum); sidecar UDS + plugin socket experiment; key singleflight on the `(state, questions)` pair with 100ms coalescing, remove L1; one week of telemetry only ("hit olsaydı" [EN: "if there had been a hit"] fake accounting), no short-circuit.
 
-**Provokasyon:** "Garantili model-öncesi" ile "her istekte System One" aynı şey mi? Hayır — garanti = *her isteğin daemon'dan geçmesi*, System One çağrısı = *sadece gerekliyede*. Bu ayrımı netleştirmeden hiçbir cache/dispeç kodu yazılmaz.
+**Provocation:** Are "Garantili model-öncesi" [EN: "guaranteed pre-model"] and "her istekte System One" [EN: "System One on every request"] the same thing? No - guarantee = *every request passes through the daemon*, System One call = *only when needed*. No cache/dispatch code is written until this distinction is clear.
 
-## 1b. MCP-global proxy araştırması (m00251, System One onaylı)
+## 1b. MCP-global proxy research (m00251, System One approved)
 
-**Kullanıcı iddiası:** "MCP proxy olarak yazılırsa daha global ve herkese uygun olur, 9router/OpenCode'a özel yazılmaz." → System One: **kısmen doğru** (score 1.05/2, p=0.882). Doğru olan: MCP'nin transport-agnostik JSON-RPC 2.0 katmanı gerçekten client-agnostik. Yanlış olan: bu katman *model-öncesi garanti* veremez.
+**User claim:** "MCP proxy olarak yazılırsa daha global ve herkese uygun olur, 9router/OpenCode'a özel yazılmaz." [EN: "If written as an MCP proxy it would be more global and suitable for everyone, not specific to 9router/OpenCode."] -> System One: **partly correct** (score 1.05/2, p=0.882). What is correct: MCP's transport-agnostic JSON-RPC 2.0 layer really is client-agnostic. What is wrong: this layer cannot provide a *pre-model guarantee*.
 
-**Neden veremez (spec kanıtı):** MCP 2025-11-25'te `before_model` fazı YOK. Model çağrısı MCP'nin dışında, client'ın kafasında. Server sadece araç sunar; çağırıp çağırmamayı model seçer. `sampling`/`roots`/`elicitation` server→client geri isteklerdir — proxy geçirir ama zorunlu kılamaz. Bilinmeyen capability bayt-for-bayt geçirilir; sadece security/scope kararları deterministik reddedilir (sessiz yutma YOK anlamı: security kararı sessiz geçmez).
+**Why it cannot (spec evidence):** MCP 2025-11-25 has no `before_model` phase. The model call is outside MCP, in the client's head. The server only offers tools; the model chooses whether to call them. `sampling`/`roots`/`elicitation` are server->client reverse requests - the proxy passes them but cannot mandate them. Unknown capabilities are passed byte-for-byte; only security/scope decisions are deterministically rejected (no silent swallowing means: a security decision never passes silently).
 
-**Karar (SO 0.951):** Mevcut §0 mimarisi KORUNUR (Go routerd karar + TS shim tetikleyici). Üstüne client-agnostik bir MCP JSON-RPC relay eklenir — **tam global proxy değil**, veri düzlemi global / tetikleyici düzlemi client-specific.
+**Decision (SO 0.951):** Current §0 architecture is KEPT (Go routerd decision + TS shim trigger). A client-agnostic MCP JSON-RPC relay is added on top - **not a fully global proxy**, data plane global / trigger plane client-specific.
 
 ```
-DATA plane  → Go MCP relay (v1 stdio; 3. gün Streamable HTTP, spec-sadık) — client-agnostik
-TRIGGER plane→ mevcut 10 satır TS shim (OpenCode) — client-specific, garanti BURADA
-ÖLÇÜM       → "kapsam oranı": kaç client extension'ı açtı, loglanır
+DATA plane    → Go MCP relay (v1 stdio; day 3 Streamable HTTP, spec-faithful) — client-agnostic
+TRIGGER plane → existing 10-line TS shim (OpenCode) — client-specific, guarantee HERE
+MEASUREMENT   → "coverage ratio": how many clients opened the extension, logged
 ```
 
-**Spec-yasal extension (webfetch doğrulandı):**
-- MCP extensions resmi mekanizma: SEP-2133 (Final) + `https://modelcontextprotocol.io/extensions/overview`.
-- ID formatı `{vendor-prefix}/{extension-name}`, ters domain zorunlu öneri → `com.kerem/systemone-route` (ad alanı sahipliği varsayımı; kurumsal değilse değiştir).
-- Yerleşim: `capabilities.experimental` altına — `schema.ts:310-314,386-390` → `experimental?: {[key:string]:object}`, `additionalProperties:true`. **Üst-seviyede `x-` alanı YOK**; strict validator reddedebilir.
-- SDK'lar extension'ları **default OFF + explicit opt-in** uygular; extension desteği %100 protokol konformitesi için GEREKLİ DEĞİL → desteklemeyen client initialize'ı reddetmez, görmezden gelir. "Herkes bağlanabilir" doğru; "herkes route edilir" yanlış.
-- `before_model` yine yok → extension yalnızca discovery/kapsam taşır, **enforcement sıfır**. Garanti TS shim'de kalır. Yeni capability negotiation field isteyen her şey SEP gerektirir (`/community/sep-guidelines`).
-- Relay kuralları: `initialize` protocolVersion'ı client'tan al (hardcode yok, HTTP'de sonraki isteklerde `MCP-Protocol-Version` header zorunlu); JSON-RPC `id` + `_meta.progressToken` birebir kopyala; `sampling`/`roots`/`elicitation` yorumlamadan geçir; **bilinmeyen capability → yorumlanmadan bayt-for-bayt geçir; sadece security/scope kararları deterministik reddedilir (sessiz yutma YOK anlamı: security kararı sessiz geçmez)**. Gerekçe: SEP-2577 roots/sampling/logging deprecated (go-sdk README onaylı); 3am on-call: bilinmeyen capability'ye "desteklemiyorum" demek client'ı bozar.
-- Kaynaklar: `/extensions/overview`, `/seps/2133-extensions`, `/specification/2025-11-25/basic/lifecycle`, `/community/sep-guidelines`, `schema.ts` (2025-11-25).
+**Spec-legal extension (verified via webfetch):**
+- MCP extensions are the official mechanism: SEP-2133 (Final) + `https://modelcontextprotocol.io/extensions/overview`.
+- ID format `{vendor-prefix}/{extension-name}`, reverse-domain required by recommendation -> `com.kerem/systemone-route` (assumes namespace ownership; change if not corporate).
+- Placement: under `capabilities.experimental` - `schema.ts:310-314,386-390` -> `experimental?: {[key:string]:object}`, `additionalProperties:true`. **No top-level `x-` field**; a strict validator may reject it.
+- SDKs implement extensions as **default OFF + explicit opt-in**; extension support is NOT REQUIRED for 100% protocol conformance -> clients without support do not reject initialize, they ignore it. "Herkes bağlanabilir" [EN: "everyone can connect"] is true; "herkes route edilir" [EN: "everyone is routed"] is false.
+- `before_model` is still absent -> the extension only carries discovery/coverage, **zero enforcement**. The guarantee stays in the TS shim. Anything requiring a new capability negotiation field needs a SEP (`/community/sep-guidelines`).
+- Relay rules: take `initialize` protocolVersion from the client (no hardcoding; on HTTP the `MCP-Protocol-Version` header is mandatory on subsequent requests); copy JSON-RPC `id` + `_meta.progressToken` verbatim; pass `sampling`/`roots`/`elicitation` through uninterpreted; **unknown capability -> pass byte-for-byte uninterpreted; only security/scope decisions are deterministically rejected (no silent swallowing means: a security decision never passes silently)**. Rationale: SEP-2577 roots/sampling/logging deprecated (confirmed by go-sdk README); 3am on-call: telling an unknown capability "desteklemiyorum" [EN: "I do not support it"] breaks the client.
+- Sources: `/extensions/overview`, `/seps/2133-extensions`, `/specification/2025-11-25/basic/lifecycle`, `/community/sep-guidelines`, `schema.ts` (2025-11-25).
 
-**Tuzaklar (reddedildi):** tam global proxy (SO 0.013 — teknik olarak imkansız); ağ kapısı/DNS+307 (SO 0.008 — DoH/DoT kaçağı, SPOF, MITM CA, SSE koparır); `x-systemone-route` üst-seviye alan (spec'te yok); "spec-yasal = garanti çözüldü" yanılsaması.
+**Traps (rejected):** fully global proxy (SO 0.013 - technically impossible); network gate/DNS+307 (SO 0.008 - DoH/DoT leak, SPOF, MITM CA, breaks SSE); `x-systemone-route` top-level field (not in the spec); "spec-yasal = garanti çözüldü" [EN: "spec-legal = guarantee solved"] illusion.
 
-**Relay self-check:** extension'sız bir client'ın `initialize` + tool call'u sorunsuz tamamladığını kanıtlayan tek kabul testi; extension'lı client'da `com.kerem/systemone-route` marker'ının `_meta`/`capabilities.experimental` içinde görüldüğünü assert et. Bu test olmadan "herkese uygun" iddiası retoriktir.
+**Relay self-check:** the single acceptance test proving that a client without an extension completes `initialize` + tool call without issues; assert that on a client with the extension the `com.kerem/systemone-route` marker appears in `_meta`/`capabilities.experimental`. Without this test, the "herkese uygun" [EN: "suitable for everyone"] claim is rhetoric.
 
-## 1c. Self-spawn proxy araştırması (m00326, System One onaylı)
+## 1c. Self-spawn proxy research (m00326, System One approved)
 
-**Kullanıcı sorusu:** "MCP çalışırken kendi proxy'sini açsa, paketlenen lrecon gibi Go binary'sini çalıştırsa, her isteği otomatik algılasa — mümkün mü?" (lrecon yalnızca analoji, PARK, kapsam dışı.)
+**User question:** "MCP çalışırken kendi proxy'sini açsa, paketlenen lrecon gibi Go binary'sini çalıştırsa, her isteği otomatik algılasa — mümkün mü?" [EN: "If MCP opened its own proxy while running, launched its packaged Go binary like lrecon, and automatically detected every request - would that be possible?"] (lrecon is only an analogy, PARK, out of scope.)
 
-**ADHD:** 5 frame × 6 fikir (10-year-old, game design, ant colony, $0/1h, attacker) + 3 deepen.
+**ADHD:** 5 frames x 6 ideas (10-year-old, game design, ant colony, $0/1h, attacker) + 3 deepen.
 
-**Mekanik cevap: MÜMKÜN, AMA YANLIŞ KAPSAM.** `go:embed` ile binary'yi ilk MCP çağrısında 0700 `mkdtemp` dizine yazıp `exec` etmek teknik olarak çalışır. Ebeveyn PID canlılığı + soy zinciri + inode/SHA-256 sabitleme + HMAC kanal + tek kullanımlık nonce eklenebilir. **Fakat** bu proxy yalnızca MCP stdio'sundan geçen trafiği görür; model HTTP çağrıları `:20128` üzerinden MCP **dışında** gider → "her isteği otomatik algılama" **GARANTİSİ YOK**, güvenlik tiyatrosu.
+**Mechanical answer: POSSIBLE, BUT WRONG SCOPE.** Writing the binary with `go:embed` to a 0700 `mkdtemp` directory on the first MCP call and `exec`ing it works technically. Parent PID liveness + lineage chain + inode/SHA-256 pinning + HMAC channel + single-use nonce can be added. **But** this proxy only sees traffic passing through MCP stdio; model HTTP calls go over `:20128`, **outside** MCP -> "her isteği otomatik algılama" [EN: "automatic detection of every request"] has **NO GUARANTEE**, security theater.
 
-**System One kararı:** `koru_self_spawn_yok` **0.880** (prob 0.920) — self-spawn **EKLEME**, mevcut §0 mimarisi korunur. İddia `kısmen` doğru (argmax p=0.767, conf 0.651 zayıf → YAGNI + spec kanıtıyla sabitlendi).
+**System One decision:** `koru_self_spawn_yok` **0.880** (prob 0.920) - do **NOT ADD** self-spawn, current §0 architecture is kept. The claim is `kısmen` correct (argmax p=0.767, weak conf 0.651 -> settled with YAGNI + spec evidence).
 
-| Seçenek | SO olasılığı | Sonuç |
+| Option | SO probability | Result |
 |---|---|---|
-| `koru_self_spawn_yok` | 0.920 | **KABUL** — mevcut daemon + relay yeterli |
-| `sadece_tee_gozlem` | 0.064 | reddedildi — MCP trafiğini ölçer, LLM trafiğini ölçmez, ek kod |
-| `ekle_self_spawn` | 0.017 | reddedildi — aynı kapsamı daha pahalı + SPOF + saldırı yüzeyi |
+| `koru_self_spawn_yok` | 0.920 | **ACCEPT** - current daemon + relay is enough |
+| `sadece_tee_gozlem` | 0.064 | rejected - measures MCP traffic, not LLM traffic, extra code |
+| `ekle_self_spawn` | 0.017 | rejected - same coverage at higher cost + SPOF + attack surface |
 
-**Gerçek "her LLM isteği" kaynağı:** `:20128` 9router zorunlu geçişi (headroom `proxy.log` + `route_counts`), zaten daima çalışan launchd daemon'unda. Yeni process açmaya gerek yok.
+**Real source of "her LLM isteği" [EN: "every LLM request"]:** the mandatory `:20128` 9router pass-through (headroom `proxy.log` + `route_counts`), already in the always-running launchd daemon. No need to open a new process.
 
-**Tuzaklar (reddedildi):**
-- Self-spawn'ı "her isteği yakalar" sanmak = kapsam yanılsaması.
-- Soy-ağacı kriptografisi = yükü taşımayan yeni saldırı yüzeyi.
-- inode/hash sabitlemesini `exec` **sonrasına** koymak = geç koruma; extract dizini öngörülebilir = PATH/host hijack.
-- Kapsam oranını garanti gibi sunmak = sessiz istekleri gizler; ret sayısı açıkça raporlanmalı.
+**Traps (rejected):**
+- Thinking self-spawn "her isteği yakalar" [EN: "catches every request"] = coverage illusion.
+- Lineage-tree cryptography = new attack surface that carries no load.
+- Putting inode/hash pinning **after** `exec` = too-late protection; predictable extract directory = PATH/host hijack.
+- Presenting the coverage ratio as a guarantee = hides silent requests; rejection count must be reported explicitly.
 
-**Eklenen görev yok:** `mcp_relay.go` / TS shim zaten §1b'de. Self-spawn için yeni dosya, yeni process, yeni bağımlılık **yok**. İstersen tek gözlem: stdio JSON-RPC satır sayacını `proxy.log route_counts` ile karşılaştırıp kapsam boşluğunu sayısal raporla (ölçüm, kod değil).
+**No task added:** `mcp_relay.go` / TS shim are already in §1b. **No** new file, process, or dependency for self-spawn. If desired, one observation only: compare the stdio JSON-RPC line counter with `proxy.log route_counts` and report the coverage gap numerically (measurement, not code).
 
-## 1d. Global MCP proxy kararı (m00377, System One onaylı)
+## 1d. Global MCP proxy decision (m00377, System One approved)
 
-**Kullanıcı:** "9router+opencode portu yapmacaksın — bu global bir MCP proxy olacak, her sistemde çalışan, bağımlılığı pek fazla olmayan." → Önceki 9router/opencode'a özel daemon+shim anlatımı **geçersiz**, §0 güncellendi.
+**User:** "9router+opencode portu yapmacaksın — bu global bir MCP proxy olacak, her sistemde çalışan, bağımlılığı pek fazla olmayan." [EN: "You will not make a 9router+opencode port - this will be a global MCP proxy, running on every system, with few dependencies."] -> The previous 9router/opencode-specific daemon+shim description is **invalid**, §0 updated.
 
-**System One turları:**
-| Tur | Karar | Sonuç |
+**System One rounds:**
+| Round | Decision | Result |
 |---|---|---|
-| Pivot (m00382) | `global_relay_arastir` **0.969** (p 0.980) | Kabul — özel port yok, global relay ara |
-| Pivot (m00382) | "her sistemde model-öncesi garanti" `imkansız` p=0.718 (conf 0.516 zayıf) | Yön net: garanti yerine kapsam oranı |
-| Mimari (m00413) | `global_relay_core` **0.961** (p 0.974) | Tek binary + 3 taşıma + opt-in |
-| Revize (m00413) | `evet_revize` **0.984** (p 0.992) | plan.md §0/§1d güncellendi |
+| Pivot (m00382) | `global_relay_arastir` **0.969** (p 0.980) | Accept - no custom port, research global relay |
+| Pivot (m00382) | "her sistemde model-öncesi garanti" [EN: "pre-model guarantee on every system"] `imkansız` p=0.718 (weak conf 0.516) | Direction clear: coverage ratio instead of guarantee |
+| Architecture (m00413) | `global_relay_core` **0.961** (p 0.974) | Single binary + 3 transports + opt-in |
+| Revised (m00413) | `evet_revize` **0.984** (p 0.992) | plan.md §0/§1d updated |
 
-**ADHD:** 5 frame × 6 (remove-assumption, $0/1h, logistics, 3am, biology) + 3 deepen (taşıma/paketleme/kapsam).
+**ADHD:** 5 frames x 6 (remove-assumption, $0/1h, logistics, 3am, biology) + 3 deepen (transport/packaging/coverage).
 
-**Kümeler (N.35+V.40+F.25, tuzaklar hariç):**
-- **Taşıma katmanını yok et:** FIFO/unix socket dosya modu `[N7 V8 F9]`, soket aktivasyonu (launchd/systemd fd handoff) `[N8 V7 F8]`. Tuzak: LD_PRELOAD/DYLD `[N9 V5 F8]` imzalı binary'de kırılır; eBPF `[N9 V3 F7]` root+Linux'e kilitli → "her sistem" yalan.
-- **Tek binary, sıfır config:** `argv[0]` ile çok kimlik `[N8 V9 F9]`, `CGO_ENABLED=0` statik binary `[N6 V9 F9]`. Tuzak: c-shared dylib LD_PRELOAD bağımlığı geri getirir.
-- **Protokol meşruiyeti / kapsam:** `capabilities.experimental` opt-in + şeffaf relay fallback `[N7 V9 F10]` ★, roots ile cwd→proje kökü `[N8 V7 F8]`, kapsam oranı + ret sayısı `[N6 V9 F9]`.
-- **Kendini onarım (3am):** MCP `ping` kalp atışı + capability re-negotiation `[N8 V8 F8]`, `progressToken` ile durum taşıma (DB yok) `[N7 V8 F7]`, `resources/list` URI'sine health kodlama `[N6 V8 F6]`. Tuzak: `sampling/createMessage` ile host LLM'ini router sanmak — geri-istek refusability taşır, garanti değil.
-- **Biyoloji (wild):** anerji (sessiz kalıp uyanma), quorum eşiği, moleküler mimikri, red-queen, seyrek kodlama, plasmid yetenek devri — hepsi **manipülasyon** kokuyor, reddedildi.
+**Clusters (N.35+V.40+F.25, excluding traps):**
+- **Eliminate the transport layer:** FIFO/unix socket file mode `[N7 V8 F9]`, socket activation (launchd/systemd fd handoff) `[N8 V7 F8]`. Trap: LD_PRELOAD/DYLD `[N9 V5 F8]` breaks on signed binaries; eBPF `[N9 V3 F7]` locked to root+Linux -> "her sistem" [EN: "every system"] is a lie.
+- **Single binary, zero config:** multiple identities via `argv[0]` `[N8 V9 F9]`, `CGO_ENABLED=0` static binary `[N6 V9 F9]`. Trap: c-shared dylib brings back the LD_PRELOAD dependency.
+- **Protocol legitimacy / coverage:** `capabilities.experimental` opt-in + transparent relay fallback `[N7 V9 F10]` *, roots for cwd->project root `[N8 V7 F8]`, coverage ratio + rejection count `[N6 V9 F9]`.
+- **Self-repair (3am):** MCP `ping` heartbeat + capability re-negotiation `[N8 V8 F8]`, carry state via `progressToken` (no DB) `[N7 V8 F7]`, encode health in `resources/list` URI `[N6 V8 F6]`. Trap: mistaking the host LLM for a router via `sampling/createMessage` - reverse requests carry refusability, not a guarantee.
+- **Biology (wild):** anergy (staying silent then waking), quorum threshold, molecular mimicry, red-queen, sparse coding, plasmid capability transfer - all smell of **manipulation**, rejected.
 
-**Converge (★ = non-obvious ama viable):**
-1. ★ **Global relay core** — tek JSON-RPC çekirdek + 3 taşıma adaptörü, client-agnostik, bağımlılık sıfır. SO 0.961.
-2. ★ **`capabilities.experimental` opt-in** — "her sistemde çalışır" iddiasını *"her sistemde en azından şeffaf geçer, destekleyenlerde yönlendirme yapar"* seviyesine indirir. Garanti değil kapsam oranı.
-3. **Statik tek binary + env config** — dosya/config katmanı yok; `go install`/brew/tek indirme. Risk: env değişince daemon yeniden başlamaz (restart bağımlılığı), HTTP remote için allowlist gerekir.
+**Converge (\* = non-obvious but viable):**
+1. \* **Global relay core** - single JSON-RPC core + 3 transport adapters, client-agnostic, zero dependencies. SO 0.961.
+2. \* **`capabilities.experimental` opt-in** - reduces the "her sistemde çalışır" [EN: "works on every system"] claim to the level of *"her sistemde en azından şeffaf geçer, destekleyenlerde yönlendirme yapar" [EN: "at least passes through transparently on every system, and routes where supported"]*. Coverage ratio, not a guarantee.
+3. **Single static binary + env config** - no file/config layer; `go install`/brew/single download. Risk: the daemon does not restart when env changes (restart dependency), allowlist needed for HTTP remote.
 
-**Tuzaklar (ayrı, red gerekçesiyle):**
-- Self-spawn geri girişi — m00376 SO 0.880 ile reddedildi (kapsam yanılsaması).
-- "Model-öncesi garanti" — MCP spec'te `before_model` yok, imkansız.
-- Ağ kapısı / DNS/307 — SO 0.008; DoH kaçağı, SPOF, MITM CA.
-- Kapsam oranını garanti gibi sunmak — sessiz istekleri gizler; ret sayısı açık raporlanmalı.
-- eBPF/LD_PRELOAD — "her sistem" iddiasını kırar.
+**Traps (separate, with rejection rationale):**
+- Self-spawn backdoor - rejected with m00376 SO 0.880 (coverage illusion).
+- "Model-öncesi garanti" [EN: "pre-model guarantee"] - no `before_model` in the MCP spec, impossible.
+- Network gate / DNS/307 - SO 0.008; DoH leak, SPOF, MITM CA.
+- Presenting the coverage ratio as a guarantee - hides silent requests; rejection count must be reported explicitly.
+- eBPF/LD_PRELOAD - breaks the "her sistem" [EN: "every system"] claim.
 
-**Focus — 3 deepen özeti:**
-- **Taşıma:** `ReadFrame/WriteFrame` tek sözleşme; **v1 sadece stdio**; 3. günde unix socket aynı implementasyonu paylaşır + Streamable HTTP (MCP-Protocol-Version tek yerde; SSE YOK). Risk: kararın uygulandığı doğrulanamaz (model MCP dışında) + SDK default-off sessiz devre dışı.
-- **Paketleme:** `CGO_ENABLED=0` + `os.Getenv` tek init; `mcp_relay_test.go` env set/unset assert. Risk: self-spawn tuzağı, env restart bağımlılığı, HTTP remote allowlist.
-- **Kapsam:** initialize'da `{enabled:false, mode:"relay"}` örnek payload; client opt-in olmadan alan görmezden gelinir. Risk: ilk gün kapsam oranı ~0 olabilir, ölçüm yoksa ret sayısı görünmez.
+**Focus - summary of 3 deepen:**
+- **Transport:** `ReadFrame/WriteFrame` single contract; **v1 stdio only**; on day 3 unix socket shares the same implementation + Streamable HTTP (MCP-Protocol-Version in one place; no SSE). Risk: cannot verify the decision was applied (model outside MCP) + SDK default-off silently disables it.
+- **Packaging:** `CGO_ENABLED=0` + `os.Getenv` single init; `mcp_relay_test.go` asserts env set/unset. Risk: self-spawn trap, env restart dependency, HTTP remote allowlist.
+- **Coverage:** `{enabled:false, mode:"relay"}` sample payload at initialize; without client opt-in the field is ignored. Risk: coverage ratio may be ~0 on day one, rejection count invisible without measurement.
 
-**Provokasyon:** Eğer garanti imkansızsa, ürünün adı "router" değil "gözlemlenebilir kapsam ajanı" mı olmalı? Kullanıcı hangi vaadi satın alıyor: yönlendirme mi, görünürlük mü?
+**Provocation:** If a guarantee is impossible, should the product be named "router" or "gözlemlenebilir kapsam ajanı" [EN: "observable coverage agent"]? Which promise is the user buying: routing or visibility?
 
-## 1e. Provider registry / sıralama / port fallback (m00445, 16 ajan)
+## 1e. Provider registry / ranking / port fallback (m00445, 16 agents)
 
-**Kullanıcı (m00445, Türkçe özü):** MCP proxy localhost'ta çalışsın, 9router gibi küçük bir System One çağırma yeri olsun; provider ekleyip **sıralamak**; System One modelleri (v1m/Evren) için özel localhost endpoint; dolu port → otomatik boş port fallback. Hazır 9 provider: OpenRouter(Connected), Ollama Cloud(none), OpenCode Free(Ready), v1m System One(none), Evren(System One)(Connected), Nace Drex, Ollama Local, Cloudflare, OpenCode Zen + bireysel ekleme slotu.
+**User (m00445, Turkish summary):** MCP proxy runs on localhost, a small System One call site like 9router; add and **rank** providers; dedicated localhost endpoint for System One models (v1m/Evren); occupied port -> automatic free-port fallback. 9 ready providers: OpenRouter(Connected), Ollama Cloud(none), OpenCode Free(Ready), v1m System One(none), Evren(System One)(Connected), Nace Drex, Ollama Local, Cloudflare, OpenCode Zen + individual add slot.
 
-**ADHD:** 13 diverge × 6 fikir + 3 deepen = 16 ajan (research-only). Skor kümesi: taşıma/registration güvenliği N.33+V.38+F.30, skor/SO mekanizmaları N.10+V.4+F.3.
+**ADHD:** 13 diverge x 6 ideas + 3 deepen = 16 agents (research-only). Score set: portability/registration safety N.33+V.38+F.30, scoring/SO mechanisms N.10+V.4+F.3.
 
-**System One turları (şeffaf kayıt):**
-| Soru | Tur 1 | Tur 2 (sıkı state + güvenlik kontrolleri) | Karar |
+**System One rounds (transparent record):**
+| Question | Round 1 | Round 2 (tighter state + security checks) | Decision |
 |---|---|---|---|
-| Paket kabulü | `kismi_kabul` 0.274 (zayıf) | `tumu_kabul` 0.659, p=0.773 (**zayıf**, <0.8) | Ranking+registry kabul; port ayrı |
-| Sıralama | `sticky_pin_rotation` 0.937, p=0.958 | tekrar sorulmadı | **NET — kabul** |
-| Port | `bind0_discovery` 0.740 (zayıf) | `mevcut_tasima` 0.299, p=0.533 (**zayıf + çelişkili**) | **Yeni port kodu YOK** |
+| Package acceptance | `kismi_kabul` 0.274 (weak) | `tumu_kabul` 0.659, p=0.773 (**weak**, <0.8) | Ranking+registry accepted; port separate |
+| Ranking | `sticky_pin_rotation` 0.937, p=0.958 | not asked again | **CLEAR - accepted** |
+| Port | `bind0_discovery` 0.740 (weak) | `mevcut_tasima` 0.299, p=0.533 (**weak + contradictory**) | **NO new port code** |
 
-> Zayıf verdict kuralı: irreversible değil → bir kez sıkı state ile retry yapıldı; hâlâ <0.8 ve çelişkili olduğu için port konusunda **kanıt + YAGNI** ile karar verildi, model oyu görüntülenmedi. Ranking (0.937) tek güçlü verdict.
+> Weak-verdict rule: not irreversible -> retried once with tighter state; still <0.8 and contradictory, so the port was decided with **evidence + YAGNI**, model vote not shown. Ranking (0.937) is the only strong verdict.
 
-**Kabul edilen mekanizmalar:**
-1. **Sıralama = sticky pin + deterministik rotation — skor YOK, System One YOK.** Tek kanıt biti: son başarılı provider ID'sı process RAM'inde tek string (disk I/O YAGNI). İstekte pin kullanılır; ilk hatada pin düşürülüp `hash(sorted(reachable IDs))` sırasına göre bir sonraki provider'a geçilir. Saat/latency/health-probe yok. Restart'ta pin yok → config sırası; ilk başarı RAM pin'i yazar. Pheromone / tick-size / margin-collateral / statik-priority / "her çağrıda SO" = YAGNI — zayıf 0.51 skorunu başka biçimde yeniden üretirler (SO 0.937 bunu doğruladı).
-2. **Registry = compile-time `.rodata` 9'luk slice + tek satırlık `providers.txt` (#10 slot).** Satır 3 alan: `ad, base URL, key env adı` — **key dosyaya yazılmaz**, env'den gelir (credential tek kaynak). Sıra = dosya satır sırası, dosya yoksa baked 9 sırası; reorder = satır taşıma, kod değişikliği yok. Yeni MCP mutation protokolü YOK.
-3. **System One için özel endpoint = `SYSTEMONE_ROUTE_URL` env.** Set ise v1m/Evren System One modelleri oraya yönlenir; aksi halde normal provider. Ayrı mutable katman/negotiation YOK (kısıt zaten capability negotiation'ı dışlıyor).
+**Accepted mechanisms:**
+1. **Ranking = sticky pin + deterministic rotation - no score, no System One.** Single evidence bit: last successful provider ID as one string in process RAM (disk I/O is YAGNI). The request uses the pin; on the first failure the pin is dropped and the next provider is chosen by `hash(sorted(reachable IDs))` order. No clock/latency/health-probe. After restart there is no pin -> config order; the first success writes the RAM pin. Pheromone / tick-size / margin-collateral / static-priority / "her çağrıda SO" [EN: SO on every call] = YAGNI - they merely reproduce the weak 0.51 score in another form (SO 0.937 confirmed this).
+2. **Registry = compile-time `.rodata` 9-element slice + one-line `providers.txt` (#10 slot).** Each line has 3 fields: `name, base URL, key env name` - **key is never written to the file**, it comes from env (single source of credential). Order = file line order, or the baked 9 order if the file is absent; reordering = moving a line, no code change. No new MCP mutation protocol.
+3. **Dedicated endpoint for System One = `SYSTEMONE_ROUTE_URL` env.** If set, v1m/Evren System One models are routed there; otherwise the normal provider. No separate mutable layer/negotiation (the constraint already excludes capability negotiation).
 
-**Güvenlik (trust boundary — atlanamaz):**
-- `providers.txt`: `0600` + sabit path + **symlink reddi**. Yerel attacker satır yazarsa trafiği kendi URL'ine yönlendirir / key env adı değiştirip credential exfil zemini hazırlar.
-- Pin: process RAM'inde tek string (disk I/O YAGNI; restart'ta config sırası, ilk başarı RAM pin'i yazar).
-- Endpoint doğrulaması: **sadece loopback Host kontrolü** (loopback dışı Host → passthrough; DNS rebind koruması için gerekirse). Secret asla log'a.
+**Security (trust boundary - cannot be skipped):**
+- `providers.txt`: `0600` + fixed path + **symlink rejection**. If a local attacker writes a line, they redirect traffic to their own URL / change the key env name to prepare credential exfiltration.
+- Pin: single string in process RAM (disk I/O is YAGNI; after restart config order, first success writes the RAM pin).
+- Endpoint validation: **loopback Host check only** (non-loopback Host -> passthrough; if needed for DNS rebind protection). Never log secrets.
 
-**Port fallback kararı (kanıt + YAGNI) — 3. güne ertelendi (v1 sadece stdio):** `Port++` retry döngüsü, `SO_REUSEPORT` ve ayrı discovery dosyası **yok**. Kullanıcı isteği "dolu port → otomatik boş port" şu şekilde karşılanıyor:
-- **stdio / unix socket:** TCP portu hiç yok — çakışma kavramsal olarak imkansız.
-- **HTTP modu (3. gün):** `transport_http.go` sabit port yerine `127.0.0.1:0` ile `net.Listen` çağırır; **OS o an boş ephemeral port'u seçer** — bu, "otomatik boş port"un ta kendisi, tarama/retry kodu yok. Seçilen adres, zaten zorunlu olan `metric.go` stderr JSON satırına `listen_addr` alanı olarak yazılır (yeni trust boundary değil — aynı allowlist kanal); client/supervisor bu satırdan bağlanır. `getsockname()` sonucu tek satır, secret-free. Sabit port tercih edilirse `MCP_PROXY_PORT` env ile override edilebilir (o zaman çakışma kullanıcı tercihidir, retry yok).
+**Port fallback decision (evidence + YAGNI) - deferred to day 3 (v1 is stdio only):** No `Port++` retry loop, no `SO_REUSEPORT`, no separate discovery file. The user request "dolu port → otomatik boş port" [EN: occupied port -> automatic free port] is met as follows:
+- **stdio / unix socket:** no TCP port at all - collision is conceptually impossible.
+- **HTTP mode (day 3):** `transport_http.go` calls `net.Listen` with `127.0.0.1:0` instead of a fixed port; **the OS picks a free ephemeral port at that moment** - this is "otomatik boş port" [EN: automatic free port] itself, with no scanning/retry code. The chosen address is written as the `listen_addr` field into the already-required `metric.go` stderr JSON line (not a new trust boundary - the same allowlist channel); the client/supervisor connects from that line. The `getsockname()` result is one line, secret-free. If a fixed port is preferred, it can be overridden with the `MCP_PROXY_PORT` env (then a collision is the user's choice, no retry).
 
-> Bu karar SO port oylarının **zayıf/çelişkili** olması nedeniyle kanıt + YAGNI ile verildi (tur 1 `bind0_discovery` 0.740, tur 2 `mevcut_tasima` 0.299/p=0.533). Ayrı discovery dosyası yerine mevcut stderr kanalı kullanıldı; dolayısıyla tur 2 argmax'ı (`mevcut_tasima`) ile yeni kod arasındaki çelişki minimize edildi.
+> This decision was made with evidence + YAGNI because the SO port votes were **weak/contradictory** (round 1 `bind0_discovery` 0.740, round 2 `mevcut_tasima` 0.299/p=0.533). The existing stderr channel was used instead of a separate discovery file, minimizing the contradiction between round 2's argmax (`mevcut_tasima`) and the new code.
 
-**Load-bearing risk:** Pin, hata vermeyen ama yavaş (degraded) provider'a takılabilir — rotate tetiklenmez; "başarı" tanımı (2xx yeterli mi, latency eşiği mi) netleştirilmeli. İlk gün kapsam oranı ~0 kalabilir (§1d).
+**Load-bearing risk:** the pin can get stuck on a provider that does not error but is slow (degraded) - rotation is not triggered; the definition of "başarı" [EN: success] (is 2xx enough, or a latency threshold?) must be clarified. Day-1 coverage ratio may stay ~0 (§1d).
 
-**Kabul testi (`provider_test.go`):** (a) `providers.txt` yoksa 9'luk baked sıra, (b) tek satır eklenince #10 olur, (c) restart sonrası pin yok → config sırası, (d) key env adı dosyada görünmez, (e) symlink reddedilir, (f) ilk hatada rotation deterministik ve aynı state'de aynı sıra, (g) HTTP `listen_addr` loopback + port>0 ve stderr metric satırında secret yok.
+**Acceptance test (`provider_test.go`):** (a) baked 9-order when `providers.txt` is absent, (b) adding one line makes #10, (c) no pin after restart -> config order, (d) key env name not visible in the file, (e) symlink rejected, (f) rotation on first failure is deterministic and the same order for the same state, (g) HTTP `listen_addr` loopback + port>0 and no secret in the stderr metric line.
 
-## 2. Cache gerçeği (doğrulandı — salt okuma)
+## 2. Cache reality (verified - read-only)
 
-- **9router `semanticCacheEntries`: ÖLÜ ŞEMA.** Tablo var (key/model/responseBody/hitCount/tokensSaved + 2 index), `count(*)=0`, `~/.9router/runtime/**/*.js` içinde **0 referans**. Katman 0 bunu kullanamaz; yama yazılmaz.
-- **Headroom `semantic_cache.py`: kod aktif, 0 hit.** PID 50029 = `python -m headroom.cli proxy --port 8180 --code-aware`; `proxy/server.py:1196-1203` cache instance var, defaults `cache_enabled=True`/TTL 3600/LRU 1000; `/health` healthy. Ama `/metrics` → `headroom_requests_cached_total 0`, PERF log → `cache_read=0 cache_write=0 cache_hit_pct=0`. Sebep: handler'larda `not stream` koşulu (`handlers/anthropic.py:1445`, `handlers/openai.py:3930`) + per-process HMAC partition. Process-içi `OrderedDict` → router'dan HTTP ile okunamaz.
-- **Log'daki `cache_hit`/`cache_miss` başka katman:** `headroom/transforms/content_router.py:1586-1598` (lokal transform cache, ~54µs, 79 hit/1 miss). `cross_turn_dedup` da orada. `semantic_cache.py` ile ilgisi yok. `headroom.content_router`'a dokunulmaz.
-- **Sonuç (madde 13 pivot, §9):** Router **kendi karar cache'ini kurar** — iki mevcut cache'e bağlanılmaz (ölü şema / 0 hit). Eski process-içi `cache_store` kendi kendini doğrulayan metrik üretiyordu; yeni tasarım bunu **counterfactual replay + per-faz sayaç** ile düzeltir (madde 14). Hit oranını asıl belirleyen şey: **key'den `state` çıkarmak** — 0-hit'in kök nedeni buydu (§2: `state` key'deyken benzersiz isteklerde hit ~0). Dal 5/7 normalizasyon/singleflight yamaları headroom `semantic_cache.py`'e yazılabilir — ayrı, opsiyonel iş; router karar katmanı etkilenmez.
-- **Cache hit nereye getirir:** SO'ya giden **karar çağrısını atlar** (1500ms + 1 uçuş tasarruf) ve sticky pin ile aynı provider'a giden trafiği hızlandırır. Kazanç = karar gecikmesi + SO yükü; **cevabın cache'lenmesi iddia edilmez** (sadece tipli label, prose her hit'te yeniden üretilir). "hit ~100%" iddiası hâlâ kullanılmaz — önce 3 gün shadow'da gerçek hit adayı ölçülür.
+- **9router `semanticCacheEntries`: DEAD SCHEMA.** Table exists (key/model/responseBody/hitCount/tokensSaved + 2 indexes), `count(*)=0`, **0 references** in `~/.9router/runtime/**/*.js`. Layer 0 cannot use it; no patch is written.
+- **Headroom `semantic_cache.py`: code active, 0 hits.** PID 50029 = `python -m headroom.cli proxy --port 8180 --code-aware`; `proxy/server.py:1196-1203` has a cache instance, defaults `cache_enabled=True`/TTL 3600/LRU 1000; `/health` healthy. But `/metrics` -> `headroom_requests_cached_total 0`, PERF log -> `cache_read=0 cache_write=0 cache_hit_pct=0`. Cause: `not stream` condition in handlers (`handlers/anthropic.py:1445`, `handlers/openai.py:3930`) + per-process HMAC partition. The in-process `OrderedDict` -> cannot be read from the router over HTTP.
+- **`cache_hit`/`cache_miss` in the logs are a different layer:** `headroom/transforms/content_router.py:1586-1598` (local transform cache, ~54us, 79 hits/1 miss). `cross_turn_dedup` is there too. Unrelated to `semantic_cache.py`. `headroom.content_router` is not touched.
+- **Conclusion (item 13 pivot, §9):** the router **builds its own decision cache** - it does not attach to either existing cache (dead schema / 0 hits). The old in-process `cache_store` produced self-validating metrics; the new design fixes this with **counterfactual replay + per-phase counters** (item 14). What actually determines the hit rate: **removing `state` from the key** - that was the root cause of 0 hits (§2: with `state` in the key, hits on unique requests are ~0). Branch 5/7 normalization/singleflight patches can be written to headroom `semantic_cache.py` - separate, optional work; the router decision layer is unaffected.
+- **What a cache hit brings:** it **skips the decision call** to SO (saving 1500ms + 1 round trip) and speeds up traffic going to the same provider via the sticky pin. Gain = decision latency + SO load; **caching of the answer is not claimed** (only the typed label; prose is regenerated on every hit). The "hit ~100%" claim is still not used - the real hit candidate is first measured in 3 days of shadow mode.
 
-## 3. Dal bulguları — build / skip (audit düzeltilmiş)
+## 3. Branch findings - build / skip (audit corrected)
 
-**Build (Go `routerd` içinde, tek binary):**
-- Araç seçimi + parametre doğrulama (dal 8) — allowlist/scope önce, deterministik; JSON Schema ~20 satır; çok aday + çözülmedi → System One `choice`. **System One asla izin/scope kararı vermez.** `state`'e tool çıktısı/ham kullanıcı metni girmez. `conf>=0.8 && argmax`, retry 1 (6sn), sonra deny/ask. Fallback `openrouter .../v1/systemone`, model `typesafe/jev-1.14`. Bilinmeyen capability → yorumlanmadan bayt-for-bayt geçir; sadece security/scope kararları deterministik reddedilir (sessiz yutma YOK anlamı: security kararı sessiz geçmez). Gerekçe: SEP-2577 roots/sampling/logging deprecated (go-sdk README onaylı); 3am on-call: "desteklemiyorum" demek client'ı bozar.
-- Cache politikası: **YOK** — karar cache'i eklenmez (bkz. kontrol listesi madde 13); 3. günde gerçek uniqueness ölçümü yapılmadan eklenmez.
-- Gözlemlenebilirlik (dal 15): stderr'a 1 JSON satırı, allowlist `tool/route/miss_reason/decision/model + ts/dur_ms + key_hash(12 hex) + listen_addr + seq/pid + reason_code/covered/abstained/passthrough`. **Ham** `conf`/`tokens`/`cost` doğrulanamadı (kendi sürecinin iddiası, shadow'da oracle yok) — allowlist dışı; sadece kaba `conf_bucket` loglanır. **Yasak:** args, prompt, context, header, env, ham key. `jq -s` raporu. `miss_reason`, `gate_called` oranı raporlanır.
-- Sağlık/fallback (dal 11): `classify(status,exc)` transient `408/429/500/502/503/504`+timeout, permanent `400/401/403/404/422` — passthrough reason-code için KALIR. Tek bool `so_degraded`: bir kez timeout/HTTP≠200 → passthrough, tekrar deneme yok. Breaker / state makinesi / `health.json` SİL (dosya I/O YAGNI). Backup aynı :20128 ise failover anlamsız (correlated failure).
+**Build (inside Go `routerd`, single binary):**
+- Tool selection + parameter validation (branch 8) - allowlist/scope first, deterministic; JSON Schema ~20 lines; many candidates + unresolved -> System One `choice`. **System One never decides permission/scope.** Tool output/raw user text does not enter `state`. `conf>=0.8 && argmax`, 1 retry (6s), then deny/ask. Fallback `openrouter .../v1/systemone`, model `typesafe/jev-1.14`. Unknown capability -> pass through byte-for-byte without interpretation; only security/scope decisions are deterministically rejected (meaning no silent swallowing: a security decision never passes silently). Rationale: SEP-2577 roots/sampling/logging deprecated (confirmed by go-sdk README); 3am on-call: "desteklemiyorum" [EN: I do not support it] breaks the client.
+- Cache policy: **NONE** - no decision cache added (see checklist item 13); it is not added before real uniqueness is measured on day 3.
+- Observability (branch 15): 1 JSON line to stderr, allowlist `tool/route/miss_reason/decision/model + ts/dur_ms + key_hash(12 hex) + listen_addr + seq/pid + reason_code/covered/abstained/passthrough`. **Raw** `conf`/`tokens`/`cost` unverified (a claim of its own process, no oracle in shadow) - outside the allowlist; only the coarse `conf_bucket` is logged. **Forbidden:** args, prompt, context, header, env, raw key. `jq -s` report. `miss_reason` and `gate_called` ratio are reported.
+- Health/fallback (branch 11): `classify(status,exc)` transient `408/429/500/502/503/504`+timeout, permanent `400/401/403/404/422` - KEPT for the passthrough reason-code. Single bool `so_degraded`: one timeout/HTTP!=200 -> passthrough, no retry. Remove breaker / state machine / `health.json` (file I/O is YAGNI). If the backup is on the same :20128, failover is meaningless (correlated failure).
 
-**Skip (ilk sürümde YOK):**
-- HITL yeni kodu (dal 9) — `walsy-reflex v0.4.0` zaten %80 yapıyor; sadece 4 hard kategori `policy.yaml`'a eklenir. Geri dönülemez işlerde HARD GATE geçerli.
-- Oturum belleği (dal 12), rate limit/kota (dal 10), multi-provider ortak `generate()` arayüzü (dal 2) — mevcut altyapı varsa onlar üzerinden; yeni dosya yok. "Jev" kanıtı yok, varsayma.
-- Ön-filtre (dal 6)System One kapısı — sadece 1000–4000 char, hata yok, metadata-only; `conf<0.8`→trim. Gerekirse Go içinde ~20 satır, ayrı `.mjs` yok.
-- 9router `semanticCacheEntries` üzerine katman 0 (dal 5 — ölü şema), 9router patch müdahalesi.
+**Skip (NOT in the first version):**
+- New HITL code (branch 9) - `walsy-reflex v0.4.0` already does 80%; only 4 hard categories are added to `policy.yaml`. HARD GATE applies to irreversible tasks.
+- Session memory (branch 12), rate limit/quota (branch 10), common multi-provider `generate()` interface (branch 2) - if existing infrastructure exists, go through it; no new files. No evidence for "Jev"; do not assume it.
+- Prefilter (branch 6) System One gate - only 1000-4000 chars, no errors, metadata-only; `conf<0.8` -> trim. If needed, ~20 lines in Go, no separate `.mjs`.
+- Layer 0 on top of 9router `semanticCacheEntries` (branch 5 - dead schema), patching 9router.
 
-**Endpoint (netleşti):** `POST https://evren-llmapi.ssyz.org.tr/v1/systemone`, header `x-api-key` env'den, `model:"clef"`. `localhost:20128/api/v1/systemone` + `model:"systemone"` varyantı (dal 13) kullanılmaz — 9router yamaları update'te siliniyor.
+**Endpoint (settled):** `POST https://evren-llmapi.ssyz.org.tr/v1/systemone`, header `x-api-key` from env, `model:"clef"`. The `localhost:20128/api/v1/systemone` + `model:"systemone"` variant (branch 13) is not used - 9router patches are removed on update.
 
-## 4. System One ortak şartnamesi
+## 4. System One common specification
 
 ```
 { "model": "clef", "state": "...", "questions": { "<q>": { "type": "choice|score", ... } } }
 ```
 
-- `questions` obje (array değil). Sadece `choice` ve `score`.
-- `score` → 0..1 float + `legend` + index-keyed `probabilities`; label `legend`/argmax'dan.
-- `confidence < 0.8` = geçersiz verdict: reversible → 1 kez sıkı state ile retry, irreversible → dur + insan onayı.
-- Timeout / HTTP≠200 / parse hatası → fail-safe default (her dalda tanımlı).
-- `state` her şeyi içerir (modelin hafızası yok), ama secret/PII/uzun context **asla**; untrusted içerik ayrı alanda.
+- `questions` is an object (not an array). Only `choice` and `score`.
+- `score` -> 0..1 float + `legend` + index-keyed `probabilities`; label from `legend`/argmax.
+- `confidence < 0.8` = invalid verdict: reversible -> retry once with a tighter state, irreversible -> stop + human approval.
+- Timeout / HTTP!=200 / parse error -> fail-safe default (defined in each branch).
+- `state` contains everything (the model has no memory), but never secrets/PII/long context; untrusted content is in a separate field.
 
-## 5. Dosya haritası (Go — final)
+## 5. File map (Go - final)
 
 ```
 walsy-system1/
   go.mod                      # module global-mcp-relay, stdlib only, CGO_ENABLED=0
-  main.go                     # tek binary: transport seç (stdio|http|unix), env config
-  mcp_relay.go                # JSON-RPC 2.0 çekirdek: id/protocolVersion/progressToken kopya (§0/§1d)
-  transport_stdio.go          # type:local child — ÖNCE yazılır
-  transport_unix.go           # unix socket/FIFO — 3. gün
-  transport_http.go           # Streamable HTTP, MCP-Protocol-Version — 3. gün (SSE YOK)
-  route.go                    # Katman 0/1/2 + fail-safe (opt-in)
-  gate.go                     # System One choice/score, timeout 1500ms, retry yok
-  guard.go                    # classify + tek bool so_degraded (passthrough)
-  metric.go                   # stderr allowlist JSON + kapsam oranı + ret sayısı
+  main.go                     # single binary: select transport (stdio|http|unix), env config
+  mcp_relay.go                # JSON-RPC 2.0 core: copy id/protocolVersion/progressToken (§0/§1d)
+  transport_stdio.go          # type:local child - written FIRST
+  transport_unix.go           # unix socket/FIFO - day 3
+  transport_http.go           # Streamable HTTP, MCP-Protocol-Version - day 3 (no SSE)
+  route.go                    # Layer 0/1/2 + fail-safe (opt-in)
+  gate.go                     # System One choice/score, timeout 1500ms, no retry
+  guard.go                    # classify + single bool so_degraded (passthrough)
+  metric.go                   # stderr allowlist JSON + coverage ratio + rejection count
   provider.go                 # compile-time 9 slice + providers.txt(#10) + sticky pin/rotation (§1e)
   route_test.go               # assert-based self-check
-  mcp_relay_test.go           # transport-agnostik frame round-trip + extension marker (§1b)
-  provider_test.go            # 9 baked / +1 satır / restart sonrası pin yok→config sırası / symlink reddi / rotation (§1e)
+  mcp_relay_test.go           # transport-agnostic frame round-trip + extension marker (§1b)
+  provider_test.go            # 9 baked / +1 line / no pin after restart -> config order / symlink rejection / rotation (§1e)
 ```
 
-**Kaldırıldı (global pivot, m00377):** `plugin.ts`, `package.json`, `config.json`, `.env`, `com.kerem.routerd.plist` — 9router/opencode'a özel dağıtım katmanı yok. Config = `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`. Dağıtım = `go install` / brew / tek dosya indir; servis yönetimi client'ın kendi mekanizması (launchd/systemd isteğe bağlı). Ayrıca yok: `router.py`, `guard.py`, `memory.py`, `proxy.py/.mjs`, `prefilter.mjs`, `approval.mjs`, Rust `reflexd` entegrasyonu, `semanticCacheEntries` katmanı.
+**Removed (global pivot, m00377):** `plugin.ts`, `package.json`, `config.json`, `.env`, `com.kerem.routerd.plist` - no 9router/opencode-specific distribution layer. Config = `os.Getenv("SYSTEMONE_ROUTE_URL")`, `os.Getenv("NINE_ROUTER_LOG")`. Distribution = `go install` / brew / single-file download; service management is the client's own mechanism (launchd/systemd optional). Also gone: `router.py`, `guard.py`, `memory.py`, `proxy.py/.mjs`, `prefilter.mjs`, `approval.mjs`, Rust `reflexd` integration, `semanticCacheEntries` layer.
 
-## 6. Uygulama sırası (kod yazmadan önce ölç)
+## 6. Implementation order (measure before writing code)
 
-1. **Shadow mod (3 gün):** tek binary'yi bir MCP client'ın `type:local` komutu olarak bağla, 3 gün sadece karar logla + şeffaf geçiş. 503/fail-closed açma. stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}` — `seq` boşluğu = drop/restart ayırımı için `pid` (ayrı makbuz dosyası YOK). Dağılım + gecikme + `gate_called` oranını gör.
-2. **Benzersizlik ölçümü — 3. güne ertelendi:** son 1000 isteğin `sha256(state)` oranı. Bu ölçüm yapılmadan cache eklenmez (madde 13).
-3. **Taşıma sırası:** **v1 sadece `transport_stdio.go`** + round-trip testi. 3. günde `transport_unix.go` + `transport_http.go` (Streamable HTTP, MCP-Protocol-Version tek yerde); SSE YOK. `argv[0]` çok-kimlik sonraya (YAGNI). HTTP modunda sabit port YOK: `127.0.0.1:0` + OS ephemeral seçimi, `listen_addr` stderr metric satırına yazılır (§1e). Port++ retry / SO_REUSEPORT / ayrı discovery dosyası YOK (madde 12, 3. gün).
-4. **MCP relay testi:** extension'sız client `initialize`+tool call tamamlar; extension'lı client `com.kerem/systemone-route` marker'ını görür (§1b); `id`/`progressToken`/`protocolVersion` korunur.
-5. **Provider testi:** `provider_test.go` — 9 baked / tek satır #10 / restart sonrası pin yok→config sırası / symlink reddi / deterministik rotation (§1e).
-6. **Go test:** `CGO_ENABLED=0 go build ./... && go test ./...` (route/gate/guard/mcp_relay/provider self-check'leri; env set/unset assert). Guard state testi YOK (state makinesi silindi).
+1. **Shadow mode (3 days):** connect the single binary as an MCP client's `type:local` command, for 3 days only log decisions + transparent pass-through. Do not enable 503/fail-closed. stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}` - `seq` gap = `pid` to distinguish drop/restart (no separate receipt file). See distribution + latency + `gate_called` ratio.
+2. **Uniqueness measurement - deferred to day 3:** `sha256(state)` ratio of the last 1000 requests. No cache is added before this measurement (item 13).
+3. **Transport order:** **v1 only `transport_stdio.go`** + round-trip test. On day 3, `transport_unix.go` + `transport_http.go` (Streamable HTTP, MCP-Protocol-Version in one place); no SSE. `argv[0]` multi-identity later (YAGNI). In HTTP mode no fixed port: `127.0.0.1:0` + OS ephemeral selection, `listen_addr` written to the stderr metric line (§1e). No Port++ retry / SO_REUSEPORT / separate discovery file (item 12, day 3).
+4. **MCP relay test:** client without extension completes `initialize`+tool call; client with extension sees the `com.kerem/systemone-route` marker (§1b); `id`/`progressToken`/`protocolVersion` are preserved.
+5. **Provider test:** `provider_test.go` - 9 baked / one line -> #10 / no pin after restart -> config order / symlink rejection / deterministic rotation (§1e).
+6. **Go test:** `CGO_ENABLED=0 go build ./... && go test ./...` (route/gate/guard/mcp_relay/provider self-checks; env set/unset asserts). No guard state test (state machine removed).
 
-Kesilen: 9router/opencode'a özel TS shim + daemon plisti + config.json/.env, self-spawn, ağ kapısı, LD_PRELOAD/eBPF, yeni MCP sunucusu, provider/cache katmanı fork'u, HITL/memory/rate-limit yeni kodu, embedding/vektör DB, tüm `.py`/Rust yolları. Risk: model-öncesi garanti imkansız (spec'te `before_model` yok) — ürün "görünür kapsam ajanı" olarak konumlanmalı; SDK default-off → ilk gün kapsam oranı ~0 olabilir, ret sayısı raporlanmazsa yanıltıcı; env config restart bağımlılığı doğurur.
+Cut: 9router/opencode-specific TS shim + daemon plist + config.json/.env, self-spawn, network gate, LD_PRELOAD/eBPF, new MCP server, provider/cache layer fork, new HITL/memory/rate-limit code, embedding/vector DB, all `.py`/Rust paths. Risk: no pre-model guarantee (no `before_model` in the spec) - the product must be positioned as a "görünür kapsam ajanı" [EN: visible-scope agent]; SDK default-off -> day-1 coverage ratio may be ~0, misleading if the rejection count is not reported; env config creates a restart dependency.
 
-## 7. lrecon — PARK (m00181)
+## 7. lrecon - PARK (m00181)
 
-16 ADHD dalı + 3 zayıf System One turu (hepsi <0.8) sonucu: **yeni Go aracı yok, ayrı binary yok, şimdilik extend yok.** Mevcut `/Users/keremurhan/walsyrea/env/lrecon/` (635 `.go`, ~138k LOC, 235 `--op` + 80 `--ext-op`) olduğu gibi kullanılır. m00196 ile sadece *analoji* ("daima çalışan"), kapsam dışı. Notlar: docs pin bayat (`op-table.md:53` `238a7be6…` vs shipped `60581ed8…`), `native.go:1564` shell-quote eksik, `op_extract_firmware.go:50` `checkMember` doğrulanmadı — hepsi ayrı iş, bu planda yok.
+Result of 16 ADHD branches + 3 weak System One rounds (all <0.8): **no new Go tool, no separate binary, no extension for now.** Existing `/Users/keremurhan/walsyrea/env/lrecon/` (635 `.go`, ~138k LOC, 235 `--op` + 80 `--ext-op`) is used as-is. With m00196 only an *analogy* ("daima çalışan" [EN: always running]), out of scope. Notes: docs pin stale (`op-table.md:53` `238a7be6…` vs shipped `60581ed8…`), `native.go:1564` missing shell-quote, `op_extract_firmware.go:50` `checkMember` unverified - all separate work, not in this plan.
 
-## 8. Hayatta kalma matrisi — "kurulu ama bozuk" (m00559, SO `complete` p=0.627)
+## 8. Survival matrix - "kurulu ama bozuk" [EN: installed but broken] (m00559, SO `complete` p=0.627)
 
-Tek invariant (madde 6): SO katmanının durumu ne olursa olsun client↔server trafiği birebir geçer. **503/fail-closed YOK, ilk istek gecikmez.** Aşağıdaki satırlar madde 6'nın örnekleri — ayrı kod YOK.
+Single invariant (item 6): regardless of the SO layer's state, client<->server traffic passes through byte-for-byte. **No 503/fail-closed, first request is not delayed.** The rows below are examples of item 6 - no separate code.
 
-| Durum | Sonuç | Ek davranış |
+| State | Result | Additional behavior |
 |---|---|---|
-| cold start / hiç istek yok | SO çağrısı yok, proxy kurulmamış gibi | de-energized başlangıç |
-| warm-up clef 1500ms aşımı | passthrough | geç yanıt discard, retry yok |
-| SO timeout / provider 500 | passthrough | sabit `so_unreachable`; URL/header/key log'a YOK |
-| HTTP200 + yarım gövde (brown-out) | "karar yok" → passthrough | başarı sayılmaz |
-| conf 0.799 / 0.801 | sırasıyla passthrough / pin | eşik deterministik |
-| sticky pin ölümü | pin → passthrough | ayrı reason-code, self-restart yok |
-| key env boş | passthrough | `degraded` ≠ `opt-out`, ayrı log |
-| hot reset | passthrough | epoch artar, eski verdict sızmaz; istek başına röle, global lock yok |
-| meşgul istek | passthrough | tek istek tüm akışı kilitlemez |
-| 1499ms'te geç yanıt | discard | sert bütçe üstün gelir |
+| cold start / no requests yet | no SO call, as if proxy were not installed | de-energized start |
+| warm-up clef 1500ms timeout | passthrough | late response discarded, no retry |
+| SO timeout / provider 500 | passthrough | fixed `so_unreachable`; no URL/header/key in logs |
+| HTTP200 + partial body (brown-out) | "karar yok" [EN: no decision] -> passthrough | not counted as success |
+| conf 0.799 / 0.801 | passthrough / pin respectively | threshold deterministic |
+| sticky pin death | pin -> passthrough | separate reason-code, no self-restart |
+| key env empty | passthrough | `degraded` != `opt-out`, separate log |
+| hot reset | passthrough | epoch increments, old verdict does not leak; per-request relay, no global lock |
+| busy request | passthrough | a single request does not lock the whole flow |
+| late response at 1499ms | discard | hard budget wins |
 
-Kanıt katmanı madde 27'de: **tek şema** — v1 canlı = stderr tek reason-code satırı; 3 gün shadow = stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}` (ayrı makbuz DOSYASI YOK; `seq` boşluğu = drop/restart ayırımı için `pid`) + negatif kontrol. Madde 19'a ek: passthrough oranı + tipli reason-code birinci sınıf sinyal, baseline sapma alarmı. **Ham** `conf`/`tokens`/`cost` doğrulanamadı (kendi sürecinin iddiası, shadow'da oracle yok) — metrik allowlist dışı; sadece kaba `conf_bucket` loglanır. Madde 9'a ek: açılışta sadece loopback Host kontrolü (canonical fingerprint / per-process token SİL). Kapanış: bekleyen istek/state artığı bırakmaz, retry storm yok.
+Evidence layer in item 27: **single schema** - v1 live = single stderr reason-code line; 3-day shadow = stderr append-only JSON line `{seq,pid,ts,decision,reason_code,covered,abstained,passthrough,latency_ms}` (no separate receipt FILE; `seq` gap = `pid` to distinguish drop/restart) + negative control. Addition to item 19: passthrough ratio + typed reason-code are first-class signals, baseline-deviation alarm. **Raw** `conf`/`tokens`/`cost` unverified (a claim of its own process, no oracle in shadow) - outside the metric allowlist; only the coarse `conf_bucket` is logged. Addition to item 9: at startup only a loopback Host check (remove canonical fingerprint / per-process token). Shutdown: leaves no pending request/state residue, no retry storm.
 
-**3. güne ertelenir — şimdi kod YOK (YAGNI):** 0.81 zehirine karşı histerezis + dağılım, liveness nabzı (donmuş vs meşgul, tanı-only), makbuzun epoch'lar arası taşınması. Gerekirse o zaman eklenir.
+**Deferred to day 3 - no code now (YAGNI):** hysteresis + distribution against 0.81 poisoning, liveness heartbeat (frozen vs busy, diagnostics-only), carrying the receipt across epochs. Added then if needed.
 
-**Dürüst sınır:** "bağlanmama" olayı proxy için gözlemlenemeyebilir. Vaat = "bağlanıldığında şeffafım" + kapsam oranı + ret sayısı.
-## 9. Karar cache'i — ana amaç (m00752, SO pivot 0.980, §9)
+**Honest boundary:** the "bağlanmama" [EN: not connecting] event may be unobservable to the proxy. Promise = "bağlanıldığında şeffafım" [EN: I am transparent when connected] + coverage ratio + rejection count.
+## 9. Decision cache - main goal (m00752, SO pivot 0.980, §9)
 
-İki ayrı mekanizma; ikisi de fail-safe passthrough (503 YOK).
+Two separate mechanisms; both fail-safe passthrough (no 503).
 
-**A. Relay karar cache'i (madde 13):** SO'nun tipi kararını (label + conf bucket + rubric version) canonical state key ile sakla. Hit = saf lokal okuma → 1500ms SO çağrısı atlanır. Sadece tipli label saklanır, prose her hit'te yeniden üretilir (bayat özet imkansız). Key = `hash(canonicalize(state) + rubricVersion + model + conf kuralı + registryVersion)`. Salt rubric yetmez — SO etiketi state'e bağlı, rubric-only replay farklı state'e yanlış etiket verir; salt ham state de 0 hit verir (mevcut headroom hatası). Rubric/deploy değişince eski cell deterministik miss. Negatif verdict (`no`/`other`/`conf<0.8`) `abstain` kodu olarak yazılır, asla label olarak servis edilmez. Admission: `conf>=0.8` VE probability margin ≥ eşik (clef overconfident 0.97–1.0 → tek yanlış label tüm client'lara yayılmasın).
+**A. Relay decision cache (item 13):** store SO's typed decision (label + conf bucket + rubric version) under a canonical state key. Hit = pure local read -> the 1500ms SO call is skipped. Only the typed label is stored; prose is regenerated on every hit (stale summary impossible). Key = `hash(canonicalize(state) + rubricVersion + model + conf rule + registryVersion)`. Rubric alone is not enough - the SO label depends on state, and rubric-only replay gives the wrong label for a different state; raw state alone also gives 0 hits (the current headroom error). When rubric/deploy changes, old cells deterministically miss. A negative verdict (`no`/`other`/`conf<0.8`) is written as an `abstain` code and never served as a label. Admission: `conf>=0.8` AND probability margin >= threshold (clef is overconfident at 0.97-1.0 -> a single wrong label must not spread to all clients).
 
-**B. Provider prefix stabilizasyonu — LLM cache hit'inin asıl kaynağı:** Kabul edilen özet+skor, aynı isteğin SONUNA sabit pozisyonda **immutable blok** olarak eklenir (tidebreak 0019: compaction ayr istek değil, aynı isteğin sonu). `system`/`tools`/`messages` bayt-bayt aynı, tool array sabit sıralı (dinamik küçültme hit'i öldürür) → provider'ın kendi prefix cache'i devreye girer (Anthropic 5dk TTL, read 0.1× / write 1.25×; OpenAI min 1024 token). Katmanlar: L1 tam state hash (0 ağ) → L2 question+criteria şema hash (aynı rubric, farklı payload'da özet/skor reuse) → L3 embedding similarity **KAPALI**.
+**B. Provider prefix stabilization - the real source of LLM cache hits:** the accepted summary+score is appended at a fixed position at the END of the same request as an **immutable block** (tidebreak 0019: compaction is not a separate request, it is the end of the same request). `system`/`tools`/`messages` byte-for-byte identical, tool array in fixed order (dynamic shrinking kills hits) -> the provider's own prefix cache kicks in (Anthropic 5min TTL, read 0.1x / write 1.25x; OpenAI min 1024 tokens). Layers: L1 full state hash (0 network) -> L2 question+criteria schema hash (reuse summary/score for the same rubric with a different payload) -> L3 embedding similarity **OFF**.
 
-**Byte-stability mekanizması (m00894/SO 0.888):** determinism testinin nasıl geçileceği — `map[string]any` marshal YOK, sabit alan sıralı struct + tek kanonik encoder (`SetEscapeHTML(false)`, sort **AFTER** canonicalize, `FormatFloat('g',-1,64)` + `-0` fold + NaN/Inf passthrough). stdlib'de NFC/NFD yok → L1 raw + L2 `unicode.SimpleFold` alias. Tool array oturum başında snapshot + freeze (`defer_loading:true`/`tool_addition`, hepsi deferred → 400); Go SDK `sortedKeys` her add/remove'da yeniden hesaplandığı için append-only generation sıra. Breakpoint'ler tools→system→messages hiyerarşisinde 512/1024/2048/4096 token'a hizalı; sglang page-alignment (1 token sızıntı page kirletir) + system sonunda sabit guard token dizisi (vLLM lookahead hash). Prefix son baytlarının SHA-256 canary'si göndermeden önce drift'i yakalar.
+**Byte-stability mechanism (m00894/SO 0.888):** how to pass the determinism test - no `map[string]any` marshal, struct with fixed field order + a single canonical encoder (`SetEscapeHTML(false)`, sort **AFTER** canonicalize, `FormatFloat('g',-1,64)` + `-0` fold + NaN/Inf passthrough). No NFC/NFD in stdlib -> L1 raw + L2 `unicode.SimpleFold` aliases. Tool array snapshot + freeze at session start (`defer_loading:true`/`tool_addition`, all deferred -> 400); append-only generation order because the Go SDK recomputes `sortedKeys` on every add/remove. Breakpoints aligned to 512/1024/2048/4096 tokens in the tools->system->messages hierarchy; sglang page-alignment (1 token of leakage dirties a page) + a fixed guard-token sequence at the end of system (vLLM lookahead hash). A SHA-256 canary of the prefix's last bytes catches drift before sending.
 
-**Load-bearing risk — byte drift:** özetin her istekte değişmesi / tool sırasının kayması / bloğun sabit pozisyondan taşması → her çağrı 1.25× WRITE, 0.1× READ hiç oluşmaz; hit artacağına net maliyet kaybı. Yerel hash sabit kalsa bile provider/SDK kendi kanonizasyonunu uygulayıp baytları yeniden serileştirebilir (UNVERIFIED) — canary bunu ancak gönderilen baytta yakalar. Uygulamadan ÖNCE determinism testi: aynı state+questions+criteria+tool-set için serileştirilen bayt dizisi iki kez SHA-256 → eşit olmalı; saparsa breakpoint'in nerede kırıldığını raporlar.
+**Load-bearing risk - byte drift:** the summary changing on every request / tool order slipping / the block moving from its fixed position -> every call is 1.25x WRITE, 0.1x READ never happens; instead of a hit increase there is a net cost loss. Even if the local hash stays constant, the provider/SDK may apply its own canonicalization and re-serialize bytes (UNVERIFIED) - the canary catches this only in the bytes actually sent. Determinism test BEFORE implementation: SHA-256 the serialized byte sequence twice for the same state+questions+criteria+tool-set -> they must be equal; if they diverge, report which breakpoint broke.
 
-**Kanıt (madde 14–16) — İKİ ayrı sayaç (m00894/SO 0.888):** router karar cache hit (`reuse_precision` / `wrong_reuse`) ile provider KV hit (`match_prefix` prefix_len/prompt_len, `BlockStored(block_hashes,parent_block_hash)`) **asla tek sayıya birleştirilmez** — birleştirmek iddiayı yanlışlanamaz kılar. Yüksek provider + düşük karar = ayırt edici özellik eksik; tersi = prefill pahalı. Bélády tavanı replay block-hash dizisinden çevrimdışı hesaplanır; oracle miss etiketi `missed_reuse` (kaçırılabilir) vs `model_changed`/`tools_changed`/geo/TTL (zorunlu) ayrılır. Eşik sweep 0.70–0.75 → hit↑/accuracy↓ eğrisi; 384 kalibrasyon / 1152 test + revision hash (eşik teste sızmaz). Sayım kuralları: `respjson.Field.Valid` ile alan yokluğu 0'dan ayrılır, SSE delta usage **KÜMÜLATİF** (toplanmaz), `stream`/`stream_options` cache-affecting DEĞİL (stream hit bölme gereksiz), kesilen SSE usage = `unknown`. Falsifikasyon: hit↑ ama `wrong_reuse`↑ veya accuracy↓ ise iddia reddedilir. 3 gün shadow: key + hit/miss + margin yan yana, trafik etkilenmez. **Ham** `conf`/`tokens`/`cost` allowlist dışı; sadece kaba `conf_bucket` loglanır.
+**Evidence (items 14-16) - TWO separate counters (m00894/SO 0.888):** router decision-cache hits (`reuse_precision` / `wrong_reuse`) and provider KV hits (`match_prefix` prefix_len/prompt_len, `BlockStored(block_hashes,parent_block_hash)`) are **never merged into one number** - merging would make the claim unfalsifiable. High provider + low decision = distinguishing feature missing; the reverse = prefill expensive. The Belady ceiling is computed offline from the replay block-hash sequence; the oracle separates the miss label `missed_reuse` (avoidable) from `model_changed`/`tools_changed`/geo/TTL (unavoidable). Threshold sweep 0.70-0.75 -> hit up/accuracy down curve; 384 calibration / 1152 test + revision hash (threshold does not leak into the test). Counting rules: `respjson.Field.Valid` distinguishes field absence from 0, SSE delta usage is **CUMULATIVE** (not summed), `stream`/`stream_options` are NOT cache-affecting (no need to split stream hits), truncated SSE usage = `unknown`. Falsification: if hits increase but `wrong_reuse` increases or accuracy drops, the claim is rejected. 3-day shadow: key + hit/miss + margin side by side, traffic unaffected. **Raw** `conf`/`tokens`/`cost` outside the allowlist; only the coarse `conf_bucket` is logged.
 
-**SKIP (m00894/SO 0.151):** per-org namespace partition + idle warming/prefetch + kardeş cache süreci (self-spawn yasağı) — şimdi yok, gerekirse 3. gün.
+**SKIP (m00894/SO 0.151):** per-org namespace partition + idle warming/prefetch + sibling cache process (self-spawn ban) - not now, day 3 if needed.
 
-## 10. Router kapsamı / güvenlik / kalibrasyon (m01041, SO 0.937)
+## 10. Router scope / security / calibration (m01041, SO 0.937)
 
-16 dal + 3 deepen; anahtar bulgu: client hook'ları ya spawned process (YASAK) ya da karar yetkisiz → kapsam genişletmesi relay/MCP katmanında kalır.
+16 branches + 3 deepen; key finding: client hooks are either a spawned process (FORBIDDEN) or lack decision authority -> scope expansion stays in the relay/MCP layer.
 
-**Trigger yüzeyleri (Küme A):** model-öncesi VE karar yetkili tek yerel yüzey OpenCode V2 — `ctx.session.hook('experimental.model.resolve', ...)` (event.model mutate, same-provider, kind=primary|compaction|title|generate). Gemini CLI `BeforeModel` (llm_request override / llm_response sentetik / deny) gerçek ama runtime embed gerekir [UNVERIFIED]. Claude Code `UserPromptSubmit` model-öncesi AMA context-only (prompt değişmez, routing yok); `PreToolUse` tool-sonrası; `PermissionRequest` exit2 onurlandırılmaz. Cursor `beforeSubmitPrompt` continue/user_message-only. Cline `beforeModel` SDK/CLI/Kanban-only (VS Code yok), file hook `cancel:true` bloklar param mutasyonu yapmaz; Roo hook API yok (#10834). Windsurf/Devin 8 lifecycle hook, inference olayı yok. VS Code Copilot proposed chatHooks + in-process `registerLanguageModelChatProvider` (command hook = spawn = YASAK). Aider hook/middleware yok (litellm.completion direk). OS genişletme (DYLD_INSERT_LIBRARIES/path_helper/direnv/asdf/git hooks/launchd/systemd) hepsi new-process veya env-only → model çağrısına girmez, RED.
+**Trigger surfaces (Cluster A):** the only local surface that is both pre-model AND decision-authoritative is OpenCode V2 - `ctx.session.hook('experimental.model.resolve', ...)` (event.model mutate, same-provider, kind=primary|compaction|title|generate). Gemini CLI `BeforeModel` (llm_request override / synthetic llm_response / deny) is real but requires runtime embedding [UNVERIFIED]. Claude Code `UserPromptSubmit` is pre-model BUT context-only (prompt unchanged, no routing); `PreToolUse` is post-tool; `PermissionRequest` does not honor exit2. Cursor `beforeSubmitPrompt` is continue/user_message-only. Cline `beforeModel` is SDK/CLI/Kanban-only (no VS Code), file hook `cancel:true` blocks but does not mutate params; Roo has no hook API (#10834). Windsurf/Devin: 8 lifecycle hooks, no inference event. VS Code Copilot proposed chatHooks + in-process `registerLanguageModelChatProvider` (command hook = spawn = FORBIDDEN). Aider has no hook/middleware (litellm.completion direct). OS extension (DYLD_INSERT_LIBRARIES/path_helper/direnv/asdf/git hooks/launchd/systemd) is all new-process or env-only -> does not enter the model call, REJECTED.
 
-**Güvenlik (Küme B, deepen 0.937):** SO `state` trust boundary — sadece kullanıcı isteği girer. MRTR `InputRequiredResult.resultType=="input_required"` nested `systemPrompt`/`message` sunucu kaynaklıdır → state'e girerse PROMPT INJECTION; relay bunları ayrıştırıp SO yolundan çıkarır, client opak AEAD `requestState` + yeni id üretir. Bilinmeyen `resultType` + generic Exception → passthrough (503 ASLA); gerçek HTTPException blok. secret-clean BİRLEŞTİRMEDEN ÖNCE çalışır (örn. `arguments.code` kaynak kodu maskelenir). Capability gating zorunlu, yoksa -32602. `sampling`/`elicitation` ayrı izole çağrılar, ana yolu değiştirmez. Rego/CEL yasak → düz `gate(layer0) bool` stdlib predikatı, ham prompt/header feature struct'a girmez, log sadece boolean.
+**Security (Cluster B, deepen 0.937):** SO `state` trust boundary - only the user request enters. MRTR `InputRequiredResult.resultType=="input_required"` nested `systemPrompt`/`message` are server-sourced -> if they enter state, PROMPT INJECTION; the relay parses them out and removes them from the SO path, and the client produces an opaque AEAD `requestState` + a new id. Unknown `resultType` + generic Exception -> passthrough (NEVER 503); a real HTTPException blocks. secret-clean runs BEFORE COMBINING (e.g. `arguments.code` source code is masked). Capability gating is mandatory, otherwise -32602. `sampling`/`elicitation` are separate isolated calls, they do not change the main path. Rego/CEL forbidden -> plain `gate(layer0) bool` stdlib predicate, raw prompt/header does not enter the feature struct, log is boolean only.
 
-**Kalibrasyon (Küme C):** offline log seti (canlı SO YOK), saf-Go isotonic PAV ~30 satır, ECE 0.12→0.03 hedefi, gömülü statik tablo (DB yok). `strong_win_rate.quantile(1-strong_model_pct)` eşik; parse hatası/None → strong pin (yokluk ≠ düşük). R_zero baseline (konveks hull AIQ) yenilemezse 0.8'e dön; conf-rule cache key'e bağlı. KS drift → rekalibrasyon. RouteLLM quantile, UCCE isotonic, FrugalGPT kademeli eşik, RouterBench R_zero referansları kullanıldı.
+**Calibration (Cluster C):** offline log set (no live SO), pure-Go isotonic PAV ~30 lines, ECE target 0.12->0.03, embedded static table (no DB). `strong_win_rate.quantile(1-strong_model_pct)` threshold; parse error/None -> strong pin (absence != low). If the R_zero baseline (convex hull AIQ) cannot be refreshed, revert to 0.8; conf-rule tied to the cache key. KS drift -> recalibration. References used: RouteLLM quantile, UCCE isotonic, FrugalGPT staged thresholds, RouterBench R_zero.
 
-**Ölçüm (Küme D):** özel sayaç YOK — standart `gen_ai.client.inference` span + `gen_ai.client.inference.usage.input_tokens`. Kapsam = kendi karar kaydının `_count` / tüm istekler; ret = `finish_reasons` content_filter/refusal. `exception.message` PII → log'a YOK. `gen_ai.coverage.ratio` diye standart metrik yok (kendi kaydımız).
+**Measurement (Cluster D):** no custom counters - standard `gen_ai.client.inference` span + `gen_ai.client.inference.usage.input_tokens`. Coverage = our own decision record's `_count` / all requests; rejections = `finish_reasons` content_filter/refusal. `exception.message` is PII -> never logged. There is no standard metric called `gen_ai.coverage.ratio` (it is our own record).
 
-**Dürüst kapsam oranı (madde 30):** `(model-öncesi ∧ karar-yetkili ∧ relay-başarılı ∧ opt-in ∧ kalibre-geçen) / tüm istekler` — birleşim DEĞİL kesişim. Client×otorite matrisi tutulur; yerel gerçek kapsam sadece OpenCode V2, diğerleri opt-in benimsemeyle büyür.
+**Honest coverage ratio (item 30):** `(pre-model AND decision-authoritative AND relay-successful AND opt-in AND calibration-passing) / all requests` - intersection, NOT union. A client x authority matrix is kept; the real local scope is only OpenCode V2, others grow through opt-in adoption.
 
-## 11. Checker envanteri — 30 madde, hiç kaçmasın (SO `ekle_ve_say` 0.957)
+## 11. Checker inventory - 30 items, none missed (SO `ekle_ve_say` 0.957)
 
-Her yapılacak maddeye ≥1 doğrulama. `VAR` = mevcut checker, `EKLE` = mevcut 3 test dosyasına eklenecek assert (yeni dosya/modül YOK). 25–26 SKIP → checker yok.
+At least 1 verification per item to do. `VAR` = existing checker, `EKLE` = assert to be added to the existing 3 test files (no new file/module). Items 25-26 SKIP -> no checker.
 
-| Madde | Yapılacak | Checker | Durum |
+| Item | To do | Checker | Status |
 |---|---|---|---|
-| 1 | tek statik binary | `CGO_ENABLED=0 go build ./...` | VAR |
-| 2 | stdio relay çekirdek | `mcp_relay_test.go` frame round-trip | VAR |
-| 3 | protokol sadakati | `mcp_relay_test.go` id/progressToken/protocolVersion kopya | VAR |
-| 4 | opt-in extension | `mcp_relay_test.go` com.kerem marker'ı | VAR |
-| 5 | route sırası | `route_test.go` Katman0/1/2 ayrı assert | VAR |
-| 6 | fail-safe | `route_test.go` conf 0.799→pass / 0.801→pin, timeout, HTTP≠200 | VAR |
-| 7 | kapsam oranı (garanti değil) | shadow stderr dağılım + ret sayısı raporu | VAR |
-| 8 | 9 baked provider | `provider_test.go` (a) | VAR |
-| 9 | providers.txt trust boundary | `provider_test.go` (d) key env gizli, (e) symlink reddi, (g) loopback Host | VAR |
-| 10 | sticky pin + rotation | `provider_test.go` (c) restart pin yok, (f) deterministik rotation | VAR |
-| 11 | SYSTEMONE_ROUTE_URL | `mcp_relay_test.go` env set→özel endpoint / unset→normal | KODDA |
+| 1 | single static binary | `CGO_ENABLED=0 go build ./...` | VAR |
+| 2 | stdio relay core | `mcp_relay_test.go` frame round-trip | VAR |
+| 3 | protocol fidelity | `mcp_relay_test.go` id/progressToken/protocolVersion copy | VAR |
+| 4 | opt-in extension | `mcp_relay_test.go` com.kerem marker | VAR |
+| 5 | route order | `route_test.go` Layer0/1/2 separate asserts | VAR |
+| 6 | fail-safe | `route_test.go` conf 0.799->pass / 0.801->pin, timeout, HTTP!=200 | VAR |
+| 7 | coverage ratio (not a guarantee) | shadow stderr distribution + rejection count report | VAR |
+| 8 | 9 baked providers | `provider_test.go` (a) | VAR |
+| 9 | providers.txt trust boundary | `provider_test.go` (d) key env hidden, (e) symlink rejection, (g) loopback Host | VAR |
+| 10 | sticky pin + rotation | `provider_test.go` (c) no pin after restart, (f) deterministic rotation | VAR |
+| 11 | SYSTEMONE_ROUTE_URL | `mcp_relay_test.go` env set->dedicated endpoint / unset->normal | KODDA |
 | 12 | port fallback | `provider_test.go` (g) listen_addr loopback + port>0 | VAR |
-| 13 | karar cache | determinism testi + canary + counterfactual replay (§9) | VAR |
-| 14 | karar kanıtı | counterfactual replay + per-faz sayaç | VAR |
-| 15 | canary + self-heal | 1/N replay → mismatch → cell flush assert | VAR |
-| 16 | 3 gün shadow | benzersizlik ölçümü + key/hit/margin yan yana log | VAR |
-| 17 | SO şeması | `route_test.go` questions obje (array DEĞİL) + choice/score + 1500ms/retry yok | KODDA |
-| 18 | araç seçimi | `route_test.go` allowlist/scope önce + argmax assert | VAR (madde 24) |
-| 19 | stderr allowlist | `route_test.go` secret/args/prompt/context/header/env/ham key YOK, allowlist alanları VAR | KODDA |
-| 20 | sağlık/fallback | `route_test.go` classify() transient/permanent → reason-code | KODDA |
-| 21 | uygulama sırası | `CGO_ENABLED=0 go build ./... && go test ./...` (§6 adım 6) | VAR |
-| 22 | relay testi | `mcp_relay_test.go` (madde 22) | VAR |
-| 23 | provider testi | `provider_test.go` (a–g) | VAR |
-| 24 | self-check zorunluluğu | her non-trivial logic → assert; `go test ./...` | VAR |
-| 25 | SKIP (HITL vb.) | checker yok — bilinçli | — |
-| 26 | SKIP (self-spawn/ağ kapısı vb.) | checker yok — bilinçli | — |
-| 27 | tek şema makbuz | shadow JSON line + negatif kontrol (kasıtlı bozuk istek→ret) | VAR |
-| 28 | state trust boundary | `route_test.go` MRTR nested systemPrompt/message state'e girmez + secret-clean önce | KODDA |
-| 29 | offline kalibrasyon | `route_test.go` PAV öncesi/sonrası ECE assert (`ece_cal<ece_raw`) + R_zero karşılaştırma | KODDA |
-| 30 | dürüst kapsam oranı | `route_test.go` client×otorite matrisi: context-only/post-tool paydaya girmez | KODDA |
+| 13 | decision cache | determinism test + canary + counterfactual replay (§9) | VAR |
+| 14 | decision evidence | counterfactual replay + per-phase counters | VAR |
+| 15 | canary + self-heal | 1/N replay -> mismatch -> cell flush assert | VAR |
+| 16 | 3-day shadow | uniqueness measurement + key/hit/margin logged side by side | VAR |
+| 17 | SO schema | `route_test.go` questions object (NOT array) + choice/score + 1500ms/no retry | KODDA |
+| 18 | tool selection | `route_test.go` allowlist/scope first + argmax assert | VAR (item 24) |
+| 19 | stderr allowlist | `route_test.go` no secret/args/prompt/context/header/env/raw key, allowlist fields present | KODDA |
+| 20 | health/fallback | `route_test.go` classify() transient/permanent -> reason-code | KODDA |
+| 21 | implementation order | `CGO_ENABLED=0 go build ./... && go test ./...` (§6 step 6) | VAR |
+| 22 | relay test | `mcp_relay_test.go` (item 22) | VAR |
+| 23 | provider test | `provider_test.go` (a-g) | VAR |
+| 24 | self-check requirement | every non-trivial logic -> assert; `go test ./...` | VAR |
+| 25 | SKIP (HITL etc.) | no checker - deliberate | - |
+| 26 | SKIP (self-spawn/network gate etc.) | no checker - deliberate | - |
+| 27 | single-schema receipt | shadow JSON line + negative control (deliberately broken request -> rejection) | VAR |
+| 28 | state trust boundary | `route_test.go` MRTR nested systemPrompt/message not in state + secret-clean first | KODDA |
+| 29 | offline calibration | `route_test.go` PAV pre/post ECE assert (`ece_cal<ece_raw`) + R_zero comparison | KODDA |
+| 30 | honest coverage ratio | `route_test.go` client x authority matrix: context-only/post-tool do not count | KODDA |
 
-**Toplam: 28 checker** (19 VAR + 9 EKLE→KODDA); 2 SKIP maddesi checker'sız. 9 EKLE dağılımı: `route_test.go` 8, `mcp_relay_test.go` 1 — yeni dosya/modül YOK, 503/fail-safe kuralları korunur.
+**Total: 28 checkers** (19 VAR + 9 EKLE->KODDA); 2 SKIP items have no checker. Distribution of the 9 EKLE: `route_test.go` 8, `mcp_relay_test.go` 1 - no new file/module, 503/fail-safe rules preserved.
 
-**Uygulama durumu (v1+):** Tüm 28 checker kodda karşılandı. `route.go`, `cache.go`, `guard.go`, `calibrate.go`, `transport_unix.go`, `transport_http.go` + ilgili testler eklendi. `CGO_ENABLED=0 go build ./...` temiz. Son doğrulama `CGO_ENABLED=0 go test ./...` (agent-lsp teşhisi sonrası 3 fix: named-return panic recover, quantile epsilon, coalescing barrier).
+**Implementation status (v1+):** all 28 checkers are met in code. `route.go`, `cache.go`, `guard.go`, `calibrate.go`, `transport_unix.go`, `transport_http.go` + related tests were added. `CGO_ENABLED=0 go build ./...` is clean. Final verification `CGO_ENABLED=0 go test ./...` (3 fixes after agent-lsp diagnostics: named-return panic recover, quantile epsilon, coalescing barrier).
