@@ -106,8 +106,6 @@ func argsGuardCheck(tool string, args json.RawMessage) diffVerdict {
 	return argsDestructiveCheck(tool, args)
 }
 
-// destructiveCommand matches a shell command that removes or overwrites data
-// wholesale, the class with no file body to diff.
 // diffSecretKind names what refused, without echoing the secret itself.
 func diffSecretKind(line string) string {
 	for _, re := range diffSecretPatterns {
