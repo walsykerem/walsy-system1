@@ -569,11 +569,10 @@ func askSOQOnce(state string, q soQuestion) soDecision {
 			timedOut = true
 		}
 	}
-	if reason != "" {
-		return soDecision{Reason: reason}
-	}
-	if timedOut {
-		return soDecision{TimedOut: true, LatencyMS: time.Since(start).Milliseconds()}
+	// A typed rejection from one candidate must not hide a timeout from another:
+	// otherwise SO health and the latency budget read a dead oracle as healthy.
+	if reason != "" || timedOut {
+		return soDecision{Reason: reason, TimedOut: timedOut, LatencyMS: time.Since(start).Milliseconds()}
 	}
 	return soDecision{}
 }
