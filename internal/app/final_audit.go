@@ -95,7 +95,9 @@ func finalAudit(state string) auditVerdict {
 // risk, or says it was not checked, covers nothing.
 func riskCovered(key string, done map[string]bool) bool {
 	for d := range done {
-		if mentionsKey(d, key) && hasEvidence(d) && !deniesWork(d) {
+		// Judge the claim, not the risk name it quotes: a risk called
+		// "pending migration" can never be mentioned without its deny word.
+		if mentionsKey(d, key) && hasEvidence(d) && !deniesWork(strings.ReplaceAll(d, key, " ")) {
 			return true
 		}
 	}

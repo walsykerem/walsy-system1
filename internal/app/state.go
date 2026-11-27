@@ -393,6 +393,7 @@ func loadKeys(name string) ([]string, error) {
 	}
 	keys := []string{}
 	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		if line != "" && validKey(line) {
 			keys = append(keys, line)
 		}

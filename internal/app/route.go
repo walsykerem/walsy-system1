@@ -407,12 +407,31 @@ func ledgerMetadataMissing(state string) []string {
 		name string
 		raw  json.RawMessage
 	}{{"who", s.Who}, {"when", s.When}} {
-		v := strings.TrimSpace(string(f.raw))
-		if v == "" || v == `""` || v == "null" || v == "{}" || v == "[]" {
+		if ledgerValueEmpty(f.raw) {
 			missing = append(missing, f.name)
 		}
 	}
 	return missing
+}
+
+// ledgerValueEmpty treats a blank string or an empty container as no metadata.
+// Other shapes (numbers, booleans) still count: Who/When are shape-agnostic.
+func ledgerValueEmpty(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return true
+	}
+	switch v := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(v) == ""
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
 }
 
 func route(state string, p *pin) routeResult {
