@@ -21,10 +21,7 @@ import (
 // No target execution, no live process inspection, no real SO call, no key read.
 // The report is the artifact under test; the binary and the in-process handlers
 // are the ground truth used to check what the report is allowed to claim.
-const (
-	w23_FuncCount  = 11143
-	w23_OldFUNAddr = 0x12ad0
-)
+const w23_OldFUNAddr = 0x12ad0
 
 func w23_ReadReport(t *testing.T) string {
 	t.Helper()
@@ -227,6 +224,11 @@ func TestSimQ6(t *testing.T) {
 	t.Setenv("WALSY_SO_MODE", "")
 
 	_, mf := w23_ReadBinary(t)
+	_, digest := simReadDigest(t, simMachODigest())
+	wantFuncs := 0
+	if _, err := fmt.Sscanf(digest.Names, "pclntab:%d", &wantFuncs); err != nil || wantFuncs <= 0 {
+		t.Fatalf("Q6: digest names = %q, want pclntab:<count>: %v", digest.Names, err)
+	}
 	sec := mf.Section("__gopclntab")
 	if sec == nil || sec.Seg != "__TEXT" || sec.Size == 0 {
 		t.Fatalf("Q6: binary has no __TEXT,__gopclntab section")
@@ -242,8 +244,8 @@ func TestSimQ6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse pclntab: %v", err)
 	}
-	if len(tab.Funcs) != w23_FuncCount {
-		t.Fatalf("Q6: pclntab funcs = %d, want %d (recon digest)", len(tab.Funcs), w23_FuncCount)
+	if len(tab.Funcs) != wantFuncs {
+		t.Fatalf("Q6: pclntab funcs = %d, want %d (recon digest)", len(tab.Funcs), wantFuncs)
 	}
 	foundMain := false
 	staleAddr := false
