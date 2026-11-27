@@ -335,6 +335,7 @@ var eternalScenarioFiles = [...]string{
 	"fix4_08_sim_test.go",
 	"fix4_09_sim_test.go",
 	"fix4_10_sim_test.go",
+	"fix5_global_sim_test.go",
 }
 
 func eternalSourceDir(t *testing.T) string {

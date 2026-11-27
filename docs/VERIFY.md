@@ -17,7 +17,7 @@ Parent: run `bash scripts/verify.sh` after all parallel agents finish. Do not ru
 1. `gofmt -l *.go scripts/*/*.go` — must output nothing
 2. `CGO_ENABLED=0 go vet ./...`
 3. `CGO_ENABLED=1 go test -race -count=1 ./...` — race detector needs cgo
-4. `CGO_ENABLED=0 go build -trimpath -buildvcs=true -o walsy-system1 .`
+4. `CGO_ENABLED=0 go build -trimpath -buildvcs=false -o walsy-system1 ./cmd/walsy-system1`
 5. `lrecon --json ./walsy-system1` consumed by `go run ./scripts/recondigest` — digest + kind only
 6. `go run ./scripts/asciiscan *.go web/*` — stdlib non-ASCII scan, no `python3` in product verification
 7. `CGO_ENABLED=0 go vet ./scripts/...`

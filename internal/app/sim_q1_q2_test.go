@@ -76,6 +76,7 @@ type simDigestTarget struct {
 		FileSHA256 string `json:"file_sha256"`
 		HashScope  string `json:"hash_scope"`
 	} `json:"target"`
+	Names string `json:"names"`
 }
 
 // simReadDigest uses the parent-owned digest fixture as the SHA source; tests

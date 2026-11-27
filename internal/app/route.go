@@ -56,6 +56,10 @@ type stateEnvelope struct {
 	Request  string   `json:"request,omitempty"`
 	Criteria []string `json:"criteria,omitempty"`
 	Evidence []string `json:"evidence,omitempty"`
+	// Trust-boundary text is carried only as scrubbed data for the item's local
+	// Requires check; the raw value never enters State.
+	UntrustedText string `json:"untrusted_text,omitempty"`
+	ToolOutput    string `json:"tool_output,omitempty"`
 }
 
 // soStateFromEnvelope projects an envelope into the explicit SO-bound shape.
@@ -101,7 +105,37 @@ func soStateFromEnvelope(e stateEnvelope) (string, error) {
 			skel = d
 		}
 	}
-	return marshalSOState(skel)
+	payload, err := marshalSOState(skel)
+	if err != nil {
+		return "", err
+	}
+	if e.UntrustedText == "" && e.ToolOutput == "" {
+		return payload, nil
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(payload), &obj) != nil || obj == nil {
+		return payload, nil
+	}
+	for k, v := range map[string]string{"untrusted_text": e.UntrustedText, "tool_output": e.ToolOutput} {
+		if v == "" {
+			continue
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		obj[k] = b
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return "", err
+	}
+	if _, err := capSOState(string(b)); err != nil {
+		// Over-cap: keep the safe skeleton. The item's Requires then fails
+		// locally with its typed reason instead of leaking an oversized value.
+		return payload, nil
+	}
+	return string(b), nil
 }
 
 // droppedKeys are normalized key names removed recursively, before assembly.
@@ -186,6 +220,16 @@ func scrubText(s string) string {
 		joined = re.ReplaceAllString(joined, credentialWithheld)
 	}
 	return joined
+}
+
+// scrubUntrustedField also removes quoted/JSON-shaped credential assignments
+// that scrubText's token pass cannot see, before trust-boundary text goes out.
+func scrubUntrustedField(s string) string {
+	s = diffSecretAssign.ReplaceAllString(scrubText(s), credentialWithheld)
+	for _, re := range diffSecretPatterns {
+		s = re.ReplaceAllString(s, credentialWithheld)
+	}
+	return s
 }
 
 func boolField(obj map[string]any, keys ...string) bool {
@@ -278,10 +322,13 @@ func buildState(userRequest string) string {
 		Criteria:   stringListField(obj, "criteria"),
 		Evidence:   stringListField(obj, "evidence"),
 	}
+	e.UntrustedText = scrubUntrustedField(stringField(obj, "untrusted_text"))
+	e.ToolOutput = scrubUntrustedField(stringField(obj, "tool_output"))
 	for _, k := range []string{
 		"state", "request", "item", "need_label", "needLabel", "no_scratch", "noScratch",
 		"safe", "reversible", "opt_in", "enable", "capability", "capabilities",
 		"experimental", "phase", "authority", "decision_authority", "calibrated", "method",
+		"untrusted_text", "tool_output",
 	} {
 		delete(clean, k)
 	}
@@ -518,14 +565,10 @@ func routeInner(state string, p *pin) routeResult {
 	var d soDecision
 	if isItem {
 		q := item.question()
-		// YC7: a Requires gate is only checkable on a structured state. FA11
-		// typed probes carry free-form state, so keep their wire question
-		// unconditional; JSON states still suppress missing declared fields.
-		if strings.HasPrefix(strings.TrimSpace(state), "{") {
-			if !questionApplicable(q, state) {
-				return passResult("no-applicable-question", false)
-			}
-		} else {
+		// FA11 typed probes carry free-form state, so keep their wire question
+		// unconditional. JSON states keep Requires: askSOQ returns a typed
+		// reason and posts nothing when a declared field is absent.
+		if !strings.HasPrefix(strings.TrimSpace(state), "{") {
 			q.Requires = nil
 		}
 		d = askSOQ(state, q)

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"walsy-system1/internal/app"
 )
 
 const defaultEndpoint = "https://evren-llmapi.ssyz.org.tr/v1/systemone"
@@ -140,7 +142,19 @@ func run(thr float64) error {
 
 func decodeResponse(r io.Reader) (soResponse, error) {
 	var out soResponse
-	dec := json.NewDecoder(io.LimitReader(r, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
+	if err != nil {
+		return out, err
+	}
+	// Reject duplicate/case-variant keys, two documents and oversized bodies:
+	// encoding/json's last-wins decode can turn a failing verdict into PASS.
+	if _, err := app.StrictSOObject(raw, map[string]bool{
+		"model": true, "routed_model": true, "answers": true, "usage": true,
+		"session_id": true, "prompt_cache_key": true, "id": true,
+	}); err != nil {
+		return out, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return out, err
@@ -149,7 +163,7 @@ func decodeResponse(r io.Reader) (soResponse, error) {
 }
 
 func verdict(a soAnswer, thr float64) error {
-	if a.Choice != "complete" || a.Confidence < thr {
+	if a.Choice != "complete" || a.Confidence < thr || a.Confidence > 1 {
 		return fmt.Errorf("final label %q confidence %.3f is not complete at >= %.3f", a.Choice, a.Confidence, thr)
 	}
 	return nil
