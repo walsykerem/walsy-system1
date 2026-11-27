@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,19 +88,68 @@ func upgradePackage(dir, installed, target string, install func(staging string) 
 	if err := install(staged); err != nil {
 		return err
 	}
-	if err := os.Rename(staged, filepath.Join(dir, "pkg-"+target)); err != nil {
-		return err
-	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
+	var stale []string
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "pkg-") && e.Name() != "pkg-"+target {
-			if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
-				return err
-			}
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "pkg-") {
+			continue
+		}
+		pv, ok := parseVersion(strings.TrimPrefix(e.Name(), "pkg-"))
+		if ok && versionLess(pv, tv) {
+			stale = append(stale, e.Name())
 		}
 	}
-	return os.WriteFile(filepath.Join(dir, "VERSION"), []byte(target+"\n"), 0600)
+	// Prepare the new VERSION file before touching packages so the only
+	// fallible step left at commit time is an atomic rename.
+	newVersionPath := filepath.Join(dir, ".VERSION.new")
+	if err := os.WriteFile(newVersionPath, []byte(target+"\n"), 0600); err != nil {
+		return err
+	}
+	backup, err := os.MkdirTemp(dir, ".backup-")
+	if err != nil {
+		os.Remove(newVersionPath)
+		return err
+	}
+	targetPath := filepath.Join(dir, "pkg-"+target)
+	targetInstalled := false
+	var moved []string
+	rollback := func(cause error) error {
+		errs := []error{cause}
+		for i := len(moved) - 1; i >= 0; i-- {
+			if err := os.Rename(filepath.Join(backup, moved[i]), filepath.Join(dir, moved[i])); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if targetInstalled {
+			if err := os.RemoveAll(targetPath); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := os.Remove(newVersionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+		if len(errs) == 1 {
+			os.RemoveAll(backup)
+		}
+		return errors.Join(errs...)
+	}
+	if err := os.Rename(staged, targetPath); err != nil {
+		return rollback(err)
+	}
+	targetInstalled = true
+	for _, name := range stale {
+		if err := os.Rename(filepath.Join(dir, name), filepath.Join(backup, name)); err != nil {
+			return rollback(err)
+		}
+		moved = append(moved, name)
+	}
+	if err := os.Rename(newVersionPath, filepath.Join(dir, "VERSION")); err != nil {
+		return rollback(err)
+	}
+	// Commit succeeded; discarding the backup of stale packages is best effort.
+	os.RemoveAll(backup)
+	return nil
 }

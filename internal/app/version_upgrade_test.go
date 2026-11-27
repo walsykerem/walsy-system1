@@ -84,6 +84,55 @@ func TestUpgradePackageVersionCleanup(t *testing.T) {
 		}
 	})
 
+	t.Run("upgrade preserves newer package", func(t *testing.T) {
+		dir := seed(t, "1.0")
+		if err := os.Mkdir(filepath.Join(dir, "pkg-2.0"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := upgradePackage(dir, "1.0", "1.1e", install); err != nil {
+			t.Fatal(err)
+		}
+		if exists(t, filepath.Join(dir, "pkg-1.0")) {
+			t.Fatal("stale 1.0 package left behind")
+		}
+		if !exists(t, filepath.Join(dir, "pkg-2.0")) {
+			t.Fatal("newer 2.0 package removed")
+		}
+	})
+
+	t.Run("version write failure rolls back", func(t *testing.T) {
+		dir := seed(t, "1.0")
+		// Make VERSION a non-empty directory so the final rename onto it fails.
+		if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, "VERSION"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "VERSION", "blocker"), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := upgradePackage(dir, "1.0", "1.1e", install); err == nil {
+			t.Fatal("expected VERSION write error")
+		}
+		if !exists(t, filepath.Join(dir, "pkg-1.0", "old.txt")) {
+			t.Fatal("old package not restored after VERSION failure")
+		}
+		if exists(t, filepath.Join(dir, "pkg-1.1e")) {
+			t.Fatal("target package left behind after VERSION failure")
+		}
+		if exists(t, filepath.Join(dir, ".VERSION.new")) {
+			t.Fatal("prepared VERSION file left behind")
+		}
+		backups, err := filepath.Glob(filepath.Join(dir, ".backup-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(backups) != 0 {
+			t.Fatalf("backup left behind: %v", backups)
+		}
+	})
+
 	t.Run("below threshold leaves old state", func(t *testing.T) {
 		dir := seed(t, "1.0")
 		called := false
