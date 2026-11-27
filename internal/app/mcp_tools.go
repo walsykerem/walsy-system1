@@ -45,11 +45,13 @@ func (l *frameLimitReader) Read(p []byte) (int, error) {
 func runToolsServer(in io.Reader, out io.Writer) {
 	lr := &frameLimitReader{r: in}
 	dec := json.NewDecoder(lr)
-	enc := json.NewEncoder(out)
 	d := newDecisionBridge()
-	// shortcut: full cache resets at 1024 keys; raise when sessions outlive that.
+	// shortcut: full cache resets at 1024 keys or replayBytesMax bytes of
+	// cached replies; raise when sessions outlive that.
 	const replayMax = 1024
-	replies := make(map[string]map[string]any, replayMax)
+	const replayBytesMax = maxHTTPFrame
+	replies := make(map[[sha256.Size]byte][]byte, replayMax)
+	replyBytes := 0
 	for {
 		lr.n = 0
 		var raw json.RawMessage
@@ -67,23 +69,35 @@ func runToolsServer(in io.Reader, out io.Writer) {
 		if len(req.ID) == 0 {
 			continue // notification
 		}
-		idemKey := ""
-		if req.Method == "tools/call" {
-			idemKey = string(req.ID) + "\x00" + string(req.Params)
+		var idemKey [sha256.Size]byte
+		replayable := req.Method == "tools/call"
+		if replayable {
+			h := sha256.New()
+			h.Write(req.ID)
+			h.Write([]byte{0})
+			h.Write(req.Params)
+			h.Sum(idemKey[:0])
 			if cached, ok := replies[idemKey]; ok {
-				_ = enc.Encode(cached)
+				_, _ = out.Write(cached)
 				continue
 			}
 		}
 		_, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
 		reply := toolsReply(req.ID, req.Method, req.Params, d, dec)
-		if idemKey != "" {
-			if len(replies) >= replayMax {
-				replies = make(map[string]map[string]any, replayMax)
-			}
-			replies[idemKey] = reply
+		b, err := json.Marshal(reply)
+		if err != nil {
+			continue
 		}
-		_ = enc.Encode(reply)
+		b = append(b, '\n')
+		if replayable && len(b) <= replayBytesMax {
+			if len(replies) >= replayMax || replyBytes+len(b) > replayBytesMax {
+				replies = make(map[[sha256.Size]byte][]byte, replayMax)
+				replyBytes = 0
+			}
+			replies[idemKey] = b
+			replyBytes += len(b)
+		}
+		_, _ = out.Write(b)
 	}
 }
 
