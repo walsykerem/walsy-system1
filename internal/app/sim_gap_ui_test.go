@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -169,11 +170,11 @@ func TestSimGapUIKeySlotsOverHTTP(t *testing.T) {
 // spec is refused, and the listener is unreachable on a non-loopback address.
 func TestSimGapUIDashboardBindsLoopbackOnly(t *testing.T) {
 	port := freeLoopbackPort(t)
-	startDashboardWithMCP(port)
+	startDashboardWithMCP(context.Background(), port)
 	waitForDashboard(t, port)
 
 	other := freeLoopbackPort(t)
-	startDashboardWithMCP("0.0.0.0:" + other)
+	startDashboardWithMCP(context.Background(), "0.0.0.0:"+other)
 	resp, err := http.Get("http://127.0.0.1:" + other + "/")
 	if err == nil {
 		resp.Body.Close()

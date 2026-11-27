@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"testing"
@@ -11,11 +12,11 @@ import (
 // port that is already served must not take the MCP server down with it.
 func TestMCPDashboardComesUpWithTheTransport(t *testing.T) {
 	port := freeLoopbackPort(t)
-	startDashboardWithMCP(port)
+	startDashboardWithMCP(context.Background(), port)
 	waitForDashboard(t, port)
 
 	// A second start on the same port is a no-op: the first keeps serving.
-	startDashboardWithMCP(port)
+	startDashboardWithMCP(context.Background(), port)
 	waitForDashboard(t, port)
 }
 

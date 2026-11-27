@@ -44,27 +44,46 @@ func Main() {
 	}
 	// The dashboard rides along with the MCP server instead of a boot agent:
 	// it comes up when the client starts the transport and goes down with it.
+	// One signal context owns shutdown for every server this process runs.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 	if *flagDashboardIn != "" && *flagTransport != "dashboard" {
-		startDashboardWithMCP(*flagDashboardIn)
+		startDashboardWithMCP(ctx, *flagDashboardIn)
 	}
 
 	switch *flagTransport {
 	case "stdio":
 		runStdio(flag.Args())
 	case "unix":
-		runUnix(*flagListen, *flagUpstream)
+		runUntilDone(ctx, func() { runUnix(*flagListen, *flagUpstream) })
 	case "http":
-		runHTTP(*flagListen, *flagUpstream)
+		runUntilDone(ctx, func() { runHTTP(*flagListen, *flagUpstream) })
 	case "dashboard":
-		if err := RunDashboard(*flagListen); err != nil {
-			fmt.Fprintln(os.Stderr, "dashboard:", err)
-			os.Exit(1)
-		}
+		runUntilDone(ctx, func() {
+			if err := RunDashboard(*flagListen); err != nil {
+				fmt.Fprintln(os.Stderr, "dashboard:", err)
+				os.Exit(1)
+			}
+		})
 	case "tools":
-		runToolsServer(os.Stdin, os.Stdout)
+		runUntilDone(ctx, func() { runToolsServer(os.Stdin, os.Stdout) })
 	default:
 		fmt.Fprintln(os.Stderr, "transport must be stdio, unix, http, dashboard or tools")
 		os.Exit(2)
+	}
+}
+
+// runUntilDone runs a blocking server and returns once it exits or ctx is done.
+// Returning from Main ends the process, so a signal stops every server at once.
+func runUntilDone(ctx context.Context, run func()) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run()
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 }
 

@@ -13,10 +13,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -1092,15 +1090,15 @@ func serveDashboardContext(ctx context.Context, ln net.Listener) error {
 // startDashboardWithMCP serves the dashboard next to an MCP transport, so the
 // system comes up with the MCP server and goes down with it. A port that is
 // already served is not fatal: another instance of the system is up.
-func startDashboardWithMCP(port string) {
+// ctx is the process-wide shutdown context, so the dashboard stops with the
+// MCP transport instead of outliving it after a signal.
+func startDashboardWithMCP(ctx context.Context, port string) {
 	ln, err := net.Listen("tcp", "127.0.0.1:"+strings.TrimPrefix(port, ":"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dashboard: not started:", err)
 		return
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		defer stop()
 		if err := serveDashboardContext(ctx, ln); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintln(os.Stderr, "dashboard:", err)
 		}
