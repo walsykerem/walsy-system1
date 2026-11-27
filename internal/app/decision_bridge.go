@@ -395,6 +395,11 @@ func (d *decisionBridge) reaskLowConfidence(state string, first routeResult) rou
 		return first
 	}
 	second := route(string(tightened), d.pin)
+	// An enforcing-mode outage denial on the re-ask must reach the gate; it
+	// cannot be replaced by the weak first answer (fail-open).
+	if soMode() == soModeEnforcing && second.Decision == decDeny && second.Reason == "so-degraded" {
+		return second
+	}
 	if second.Decision == decPin && second.LastDecision.Choice == first.LastDecision.Choice &&
 		passesKeyConfRule(second.LastDecision) {
 		return second
