@@ -6,6 +6,51 @@ import (
 	"testing"
 )
 
+// A state root that becomes unsafe after enforcing is configured must keep
+// live checks enforcing, not downgrade to advisory.
+func TestFix511UnsafeRootKeepsEnforcing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WALSY_SO_MODE", "")
+	t.Setenv("WALSY_SO_APPROVER", "")
+	root := filepath.Join(home, ".walsy-system1")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "config.txt"), []byte("so_mode=enforcing\napprover=ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := soMode(); got != soModeEnforcing {
+		t.Fatalf("baseline soMode = %q, want enforcing", got)
+	}
+
+	// Loosen root permissions: config must not silently fall back to advisory.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := soMode(); got != soModeEnforcing {
+		t.Fatalf("after chmod soMode = %q, want enforcing", got)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace the root with a symlink to a directory holding a permissive config.
+	elsewhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(elsewhere, "config.txt"), []byte("so_mode=advisory\napprover=ops\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(root, root+".bak"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, root); err != nil {
+		t.Fatal(err)
+	}
+	if got := soMode(); got != soModeEnforcing {
+		t.Fatalf("after symlink soMode = %q, want enforcing", got)
+	}
+}
+
 // Production state has one guarded root. A cache env override or a symlink
 // into a generated-artifact cache must never redirect config/model/combo.
 func TestFix504StateNeverInCacheRoot(t *testing.T) {

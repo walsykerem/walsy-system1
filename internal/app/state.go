@@ -550,11 +550,11 @@ var soConfigKeyFlatten = strings.NewReplacer("-", "", "_", "", " ", "")
 func soConfigSecurityError() error {
 	path, err := soConfigPath()
 	if err != nil {
-		return nil
+		return err
 	}
 	data, err := readStateFile(path)
 	if err != nil {
-		return nil
+		return err
 	}
 	raw := string(data)
 	if strings.HasPrefix(raw, "\ufeff") {
