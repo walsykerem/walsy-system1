@@ -199,9 +199,11 @@ func mcpHTTPHandler() http.Handler { return mcpHTTPHandlerUpstream("") }
 
 func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 	d := newDecisionBridge()
-	enforcing := soMode() == "enforcing"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
+		// Resolve mode per request so a config rejected after construction
+		// still gates this request (no stale construction-time mode).
+		enforcing := soMode() == soModeEnforcing
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			w.WriteHeader(http.StatusMethodNotAllowed)
