@@ -707,11 +707,58 @@ func NewDashboardHandler() http.Handler {
 			// Test every stored key for the selected model: the first key the
 			// endpoint accepts wins. A rejected key does not end the test, the
 			// next stored key may still be valid. An answer about the request
-			// itself (400/404/422/429/5xx) ends it: another key would not change
-			// it.
+			// itself (400/404/422/429/5xx) ends it: another key would not change it.
+			// A 429 is quota, not the credential: back off once, audit it, and
+			// retry the same key before giving up.
+			probe429 := func(index int) (status int, retryAfter string) {
+				keys, err := loadKeys(req.Provider)
+				if err != nil || index < 1 || index > len(keys) {
+					return http.StatusUnauthorized, ""
+				}
+				view, err := providerView()
+				if err != nil {
+					return 0, ""
+				}
+				base := providerBase(view, req.Provider)
+				if !validProviderBase(base) {
+					return 0, ""
+				}
+				httpReq, err := http.NewRequest(http.MethodPost, base, strings.NewReader(soProbeBody(providerModel(req.Provider, selected))))
+				if err != nil {
+					return 0, ""
+				}
+				httpReq.Header.Set("Content-Type", "application/json")
+				httpReq.Header.Set("Authorization", "Bearer "+keys[index-1])
+				httpReq.Header.Set("x-api-key", keys[index-1])
+				resp, err := keyTestClient.Do(httpReq)
+				if err != nil {
+					return 0, ""
+				}
+				defer resp.Body.Close()
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+				return resp.StatusCode, resp.Header.Get("Retry-After")
+			}
 			outcome := http.StatusUnauthorized
 			for k := 1; k <= keyCount(req.Provider); k++ {
-				status := probeKeyStatus(req.Provider, k, selected)
+				status, retryAfter := probe429(k)
+				if status == http.StatusTooManyRequests {
+					var secs int
+					_, _ = fmt.Sscanf(strings.TrimSpace(retryAfter), "%d", &secs)
+					if secs < 0 {
+						secs = 0
+					}
+					if secs > 1 {
+						secs = 1 // a key test must not block for minutes
+					}
+					routerAudit("quota", "provider", req.Provider, "status", "429", "reason", "retry-after", "count", fmt.Sprintf("%d", secs), "outcome", "backoff")
+					if secs > 0 {
+						time.Sleep(time.Duration(secs) * time.Second)
+					}
+					status, _ = probe429(k)
+					if status == http.StatusTooManyRequests {
+						routerAudit("quota", "provider", req.Provider, "status", "429", "reason", "retry-after", "count", fmt.Sprintf("%d", secs), "outcome", "exhausted")
+					}
+				}
 				if status == http.StatusOK {
 					writeJSON(w, http.StatusOK, map[string]any{"status": 200, "result": "WINNER " + selected, "winner": selected})
 					return
