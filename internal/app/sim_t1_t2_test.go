@@ -195,10 +195,20 @@ func TestSimT1BreakerGatesSO(t *testing.T) {
 	if probe.Reason != "so-degraded" || stub.count() != 3 {
 		t.Fatalf("half-open probe: %+v posts=%d", probe, stub.count())
 	}
-	// A failed probe resets the failure window: the next call is allowed again.
-	next := route(simT1T2State("classify breaker case e", ""), nil)
-	if next.Reason != "so-degraded" || stub.count() != 4 {
-		t.Fatalf("post-cooldown call: %+v posts=%d", next, stub.count())
+	// A failed probe re-opens the breaker for a fresh cooldown: the next call is
+	// blocked, and a later elapsed cooldown grants a new probe.
+	blockedAgain := route(simT1T2State("classify breaker case e", ""), nil)
+	if blockedAgain.Reason != "so-degraded" || !blockedAgain.Abstained || stub.count() != 3 {
+		t.Fatalf("after failed probe: %+v posts=%d", blockedAgain, stub.count())
+	}
+	routerMu.Lock()
+	b = routerState.breakers["systemone"]
+	b.last = time.Now().Add(-2 * time.Hour)
+	routerState.breakers["systemone"] = b
+	routerMu.Unlock()
+	probe = route(simT1T2State("classify breaker case f", ""), nil)
+	if probe.Reason != "so-degraded" || stub.count() != 4 {
+		t.Fatalf("probe after fresh cooldown: %+v posts=%d", probe, stub.count())
 	}
 }
 

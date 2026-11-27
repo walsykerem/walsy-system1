@@ -97,17 +97,41 @@ func riskCovered(key string, done map[string]bool) bool {
 	for d := range done {
 		// Judge the claim, not the risk name it quotes: a risk called
 		// "pending migration" can never be mentioned without its deny word.
+		// Evidence ignores every name mention; the denial scan removes only one
+		// mention so denial words outside the name survive.
+		evidence := stripKey(d, key)
 		rest, ok := removeKeyMention(d, key)
-		if ok && hasEvidence(rest) && !deniesWork(rest) {
+		if ok && hasEvidence(evidence) && !deniesWork(rest) {
 			return true
 		}
 	}
 	return false
 }
 
+// stripKey removes only the word-bounded occurrences of key from s, the same
+// boundary rule mentionsKey uses, so "untested" survives stripping "test".
+func stripKey(s, key string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if key != "" && strings.HasPrefix(s[i:], key) {
+			end := i + len(key)
+			before := i == 0 || !isWordByte(s[i-1])
+			after := end == len(s) || !isWordByte(s[end])
+			if before && after {
+				b.WriteByte(' ')
+				i = end
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
 // removeKeyMention erases one word-bounded occurrence of key from s, leaving
-// every other byte (including other mentions and longer words that contain
-// key) intact. ok is false when key is not mentioned at all.
+// later mentions intact so denial language outside the risk name survives.
+// ok is false when key is not mentioned at all.
 func removeKeyMention(s, key string) (string, bool) {
 	for idx := strings.Index(s, key); idx >= 0; {
 		before := idx == 0 || !isWordByte(s[idx-1])
