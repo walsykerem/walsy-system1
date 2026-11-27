@@ -75,7 +75,12 @@ func runToolsServer(in io.Reader, out io.Writer) {
 				continue
 			}
 		}
-		_, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
+		r, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
+		if r.Reason == "no-applicable-question" && dec.Reason == "" {
+			// Bucket-only route results carry no decision; pass the typed reason
+			// so the tool can name the local refusal instead of a model failure.
+			dec.Reason = r.Reason
+		}
 		reply := toolsReply(req.ID, req.Method, req.Params, d, dec)
 		if idemKey != "" {
 			if len(replies) >= replayMax {
@@ -291,6 +296,9 @@ func toolsDecideWithBridge(item, state, phase string, strict bool, bridge *decis
 		return toolsError("model timeout")
 	}
 	if d.Choice == "" {
+		if d.Reason == "no-applicable-question" {
+			return toolsError("question inapplicable: missing required state fields")
+		}
 		return toolsError("model unavailable or answer outside the item's label set")
 	}
 	admitted := it.admits(d.Choice) && aboveThreshold(d.Conf, thr, strict)

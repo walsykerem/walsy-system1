@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"walsy-system1/internal/app"
 )
 
 type claim struct {
@@ -204,9 +206,14 @@ func ask(c claim) (string, float64, error) {
 		return "", 0, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, fmt.Errorf("http %d: %.160s", resp.StatusCode, raw)
+	}
+	// encoding/json would accept duplicate/case-variant keys and trailing docs,
+	// letting a malformed reply turn a missing acceptance into done.
+	if _, err := app.StrictSOObject(raw, map[string]bool{"answers": true}); err != nil {
+		return "", 0, fmt.Errorf("malformed SO response: %w", err)
 	}
 	var out reply
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -215,6 +222,9 @@ func ask(c claim) (string, float64, error) {
 	a, ok := out.Answers["claim"]
 	if !ok || a.Choice == "" {
 		return "", 0, fmt.Errorf("no label: %.160s", raw)
+	}
+	if a.Confidence < 0 || a.Confidence > 1 {
+		return "", 0, fmt.Errorf("invalid confidence: %.160s", raw)
 	}
 	return a.Choice, a.Confidence, nil
 }

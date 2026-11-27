@@ -79,13 +79,6 @@ func runStdio(args []string) {
 	// upstream lifecycle rule covers both: the child is always reaped.
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSignals()
-	go func() {
-		select {
-		case <-sigCtx.Done():
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	// Upstream stderr shares the metric channel; give it a distinct prefix the
@@ -116,19 +109,16 @@ func runStdio(args []string) {
 	select {
 	case <-relayed:
 	case <-sigCtx.Done():
-		cancel()
 	case <-clientGone:
 		// stdin is half-closed: a well-behaved child flushes and exits. Only
 		// kill it if it still holds the relay after the drain window.
 		select {
 		case <-relayed:
 		case <-sigCtx.Done():
-			cancel()
 		case <-time.After(upstreamDrainGrace):
-			cancel()
 		}
 	}
-	// No upstream may outlive the relay that spawned it.
+	// No upstream may outlive the relay that spawned it. One cancel, one caller.
 	cancel()
 	// Record the upstream exit in the session metric boolean field; never as a secret.
 	if err := cmd.Wait(); err != nil {

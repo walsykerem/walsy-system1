@@ -24,10 +24,11 @@ var buildTargets = map[string][2]string{
 }
 
 const (
-	buildTargetFile = "build-target.txt"
-	buildTimeout    = 300 * time.Second
-	maxBuildTail    = 4096
-	errSourceDir    = "source directory not found; run the dashboard from the repo root"
+	buildTargetFile  = "build-target.txt"
+	buildVersionFile = "build-version.txt"
+	buildTimeout     = 300 * time.Second
+	maxBuildTail     = 4096
+	errSourceDir     = "source directory not found; run the dashboard from the repo root"
 )
 
 var errUnknownBuildTarget = errors.New("unknown build target")
@@ -81,6 +82,42 @@ func saveBuildTarget(id string) error {
 		return err
 	}
 	return writeStateFile(path, []byte(id+"\n"))
+}
+
+// releaseVersion names the version the installed binary was built from. The
+// tag is repo metadata (0644), not a dashboard state file: read only the first
+// bounded line and reject control characters so it cannot forge state content.
+func releaseVersion(sourceDir string) string {
+	data, err := os.ReadFile(filepath.Join(sourceDir, "release.tag"))
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	line = strings.TrimSpace(line)
+	if line == "" || len(line) > 128 || strings.ContainsFunc(line, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return ""
+	}
+	return line
+}
+
+func installedBuildVersion() string {
+	dir, err := stateDir()
+	if err != nil {
+		return ""
+	}
+	data, err := readStateFile(filepath.Join(dir, buildVersionFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func saveInstalledBuildVersion(version string) error {
+	dir, err := stateDir()
+	if err != nil {
+		return err
+	}
+	return writeStateFile(filepath.Join(dir, buildVersionFile), []byte(version+"\n"))
 }
 
 func effectiveBuildTarget() (string, string) {
@@ -252,6 +289,18 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 		renderBuildResult(w, "BUILD FAILED: dist directory unavailable")
 		return
 	}
+	// A stale binary from an older release must never be served as current;
+	// drop it before the rebuild starts so even a failed build cannot leave it.
+	version := releaseVersion(sourceDir)
+	if installedBuildVersion() != version {
+		_ = os.Remove(filepath.Join(sourceDir, rel))
+		_ = os.Remove(filepath.Join(sourceDir, rel+".prev"))
+	} else if version != "" {
+		if _, err := os.Stat(filepath.Join(sourceDir, rel)); err == nil {
+			renderBuildResult(w, "BUILD OK: "+rel+" ("+goos+"/"+goarch+") (version "+version+" cached)")
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), buildTimeout)
 	defer cancel()
 	// Cheap static pre-check: a dirty vet result would fail the consumer anyway.
@@ -288,6 +337,13 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 		if err := installBuild(sourceDir, tmp, rel); err != nil {
 			renderBuildResult(w, "BUILD FAILED: NEW BINARY NOT INSTALLED\n"+err.Error()+"\n"+tail)
 			return
+		}
+		if version != "" {
+			if err := saveInstalledBuildVersion(version); err != nil {
+				_ = os.Remove(filepath.Join(sourceDir, rel))
+				renderBuildResult(w, "BUILD FAILED: VERSION NOT RECORDED\n"+err.Error())
+				return
+			}
 		}
 		buildAttempts.counts = map[string]int{} // green build clears the failure ledger
 		renderBuildResult(w, "BUILD OK: "+rel+" ("+goos+"/"+goarch+")\n"+tail)

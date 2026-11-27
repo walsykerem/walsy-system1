@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,72 @@ func TestBuildTargetRouteValidation(t *testing.T) {
 	}
 	if got := loadBuildTarget(); got != "darwin/amd64" {
 		t.Fatalf("saved target = %q", got)
+	}
+}
+
+// A version change must invalidate the installed binary before it is served;
+// the same version must reuse the artifact without invoking the toolchain.
+func TestBuildVersionInvalidatesInstalledBinary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	rel := filepath.Join("dist", "walsy-system1-"+runtime.GOOS+"-"+runtime.GOARCH)
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	setVersion := func(v string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "release.tag"), []byte(v+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builds := 0
+	origBuild, origVet, origTest := runGoBuild, runGoVet, runGoTest
+	t.Cleanup(func() { runGoBuild, runGoVet, runGoTest = origBuild, origVet, origTest })
+	runGoVet = func(context.Context, string) ([]byte, error) { return nil, nil }
+	runGoTest = func(context.Context, string) ([]byte, error) { return nil, nil }
+	runGoBuild = func(_ context.Context, d, out, _, _ string) ([]byte, error) {
+		builds++
+		return nil, os.WriteFile(filepath.Join(d, out), []byte("built-"+strconv.Itoa(builds)), 0755)
+	}
+	build := func() {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handleUIBuild(rec, dashRequest(http.MethodPost, "/ui/build", nil), dir)
+		if !strings.Contains(rec.Body.String(), "BUILD OK") {
+			t.Fatalf("banner = %q", rec.Body.String())
+		}
+	}
+	readBinary := func() string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	setVersion("1.0.0")
+	build()
+	if builds != 1 || readBinary() != "built-1" {
+		t.Fatalf("first build: builds=%d binary=%q", builds, readBinary())
+	}
+	build()
+	if builds != 1 || readBinary() != "built-1" {
+		t.Fatalf("unchanged version rebuilt: builds=%d binary=%q", builds, readBinary())
+	}
+
+	// Simulate an update shipped over an installed binary, then rebuild.
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte("stale-1.0.0"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	setVersion("1.1.1")
+	build()
+	if builds != 2 || readBinary() != "built-2" {
+		t.Fatalf("version change did not rebuild: builds=%d binary=%q", builds, readBinary())
+	}
+	build()
+	if builds != 2 || readBinary() != "built-2" {
+		t.Fatalf("new version not cached: builds=%d binary=%q", builds, readBinary())
 	}
 }
 
