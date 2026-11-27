@@ -162,6 +162,8 @@ func loadReceiptChain() *receiptChain {
 	}
 	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
 	var prev []byte
+	// digests[i] is the chain head after line i+1.
+	digests := make([][]byte, 0, len(lines))
 	frames := map[string]bool{}
 	for i, line := range lines {
 		var r receipt
@@ -177,6 +179,7 @@ func loadReceiptChain() *receiptChain {
 		}
 		sum := chainHash(prev, body)
 		prev = sum[:]
+		digests = append(digests, prev)
 	}
 	if populated {
 		hp, err := receiptHeadPath()
@@ -184,7 +187,18 @@ func loadReceiptChain() *receiptChain {
 			return nil
 		}
 		recorded, err := os.ReadFile(hp)
-		if err != nil || strings.TrimSpace(string(recorded)) != hex.EncodeToString(prev) {
+		if err != nil {
+			return nil
+		}
+		rec := strings.TrimSpace(string(recorded))
+		// The line is written before the sidecar is updated, so a crash in
+		// between leaves the sidecar exactly one line behind. That is an
+		// interrupted append, not a rollback: the next append rewrites the
+		// sidecar. Any other mismatch (deleted or rewritten tail) fails closed.
+		switch {
+		case rec == hex.EncodeToString(prev):
+		case len(digests) >= 2 && rec == hex.EncodeToString(digests[len(digests)-2]):
+		default:
 			return nil
 		}
 	}
