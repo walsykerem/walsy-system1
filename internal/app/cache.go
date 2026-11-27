@@ -354,9 +354,15 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 	s.mu.Lock()
 	d, expiresAt, hit := s.lookupLocked(key)
 	if hit {
+		// Never extend a previously recorded grace bound: a cell restored from
+		// warm fallback carries that deadline as its expiresAt already.
+		bound := expiresAt.Add(warmStaleGrace)
 		c.warmMu.Lock()
+		if prev, ok := c.warmExpires[k]; ok && prev.Before(bound) {
+			bound = prev
+		}
 		c.warmDec[k] = d
-		c.warmExpires[k] = expiresAt.Add(warmStaleGrace)
+		c.warmExpires[k] = bound
 		c.warmMu.Unlock()
 		s.mu.Unlock()
 		if hot {
