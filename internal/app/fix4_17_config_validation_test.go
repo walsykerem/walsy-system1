@@ -36,6 +36,7 @@ func TestFix417ConfigValidationFailClosed(t *testing.T) {
 		{"duplicate downgrade", "so_mode=enforcing\nso_mode=advisory\n", soModeEnforcing, true},
 		{"BOM prefix", "\xef\xbb\xbfso_mode=enforcing\n", soModeEnforcing, true},
 		{"broken line", "so_mode enforcing\n", soModeEnforcing, true},
+		{"dotted mode key", "so.mode=enforcing\n", soModeEnforcing, true},
 		{"valid CRLF advisory", "so_mode=advisory\r\napprover=Op\r\n", soModeAdvisory, false},
 		{"valid CRLF enforcing", "so_mode=enforcing\r\napprover=Op\r\n", soModeEnforcing, false},
 	}

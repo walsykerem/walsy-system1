@@ -516,7 +516,7 @@ func readSOConfig() map[string]string {
 	return out
 }
 
-var soConfigKeyFlatten = strings.NewReplacer("-", "", "_", "", " ", "")
+var soConfigKeyFlatten = strings.NewReplacer("-", "", "_", "", " ", "", ".", "")
 
 // soConfigSecurityError rejects config shapes the permissive reader drops but
 // that can silently downgrade security: BOM, near-miss or duplicate
