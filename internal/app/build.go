@@ -25,7 +25,6 @@ var buildTargets = map[string][2]string{
 
 const (
 	buildTargetFile  = "build-target.txt"
-	buildVersionFile = "build-version.txt"
 	buildTimeout     = 300 * time.Second
 	maxBuildTail     = 4096
 	errSourceDir     = "source directory not found; run the dashboard from the repo root"
@@ -100,24 +99,23 @@ func releaseVersion(sourceDir string) string {
 	return line
 }
 
-func installedBuildVersion() string {
-	dir, err := stateDir()
-	if err != nil {
-		return ""
-	}
-	data, err := readStateFile(filepath.Join(dir, buildVersionFile))
+// targetVersionPath is the per-target sidecar recording which release a
+// target's binary was built from. Binaries are stored per target, so the
+// version must be tracked per target too.
+func targetVersionPath(sourceDir, rel string) string {
+	return filepath.Join(sourceDir, rel+".version")
+}
+
+func installedBuildVersion(sourceDir, rel string) string {
+	data, err := os.ReadFile(targetVersionPath(sourceDir, rel))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
 }
 
-func saveInstalledBuildVersion(version string) error {
-	dir, err := stateDir()
-	if err != nil {
-		return err
-	}
-	return writeStateFile(filepath.Join(dir, buildVersionFile), []byte(version+"\n"))
+func saveInstalledBuildVersion(sourceDir, rel, version string) error {
+	return os.WriteFile(targetVersionPath(sourceDir, rel), []byte(version+"\n"), 0644)
 }
 
 func effectiveBuildTarget() (string, string) {
@@ -292,9 +290,10 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 	// A stale binary from an older release must never be served as current;
 	// drop it before the rebuild starts so even a failed build cannot leave it.
 	version := releaseVersion(sourceDir)
-	if installedBuildVersion() != version {
+	if installedBuildVersion(sourceDir, rel) != version {
 		_ = os.Remove(filepath.Join(sourceDir, rel))
 		_ = os.Remove(filepath.Join(sourceDir, rel+".prev"))
+		_ = os.Remove(targetVersionPath(sourceDir, rel))
 	} else if version != "" {
 		if _, err := os.Stat(filepath.Join(sourceDir, rel)); err == nil {
 			renderBuildResult(w, "BUILD OK: "+rel+" ("+goos+"/"+goarch+") (version "+version+" cached)")
@@ -339,8 +338,9 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 			return
 		}
 		if version != "" {
-			if err := saveInstalledBuildVersion(version); err != nil {
+			if err := saveInstalledBuildVersion(sourceDir, rel, version); err != nil {
 				_ = os.Remove(filepath.Join(sourceDir, rel))
+				_ = os.Remove(targetVersionPath(sourceDir, rel))
 				renderBuildResult(w, "BUILD FAILED: VERSION NOT RECORDED\n"+err.Error())
 				return
 			}
