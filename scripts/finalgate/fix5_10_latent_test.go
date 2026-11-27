@@ -23,6 +23,7 @@ func TestFix5_10StrictClaimVerdict(t *testing.T) {
 		{"over-1mib", `{"answers":{"claim":{"choice":"done","confidence":0.9},"pad":"` + strings.Repeat("x", 1<<20) + `"}}`, false},
 		{"confidence-1.5", `{"answers":{"claim":{"choice":"done","confidence":1.5}}}`, false},
 		{"good", `{"answers":{"claim":{"choice":"done","confidence":0.9}}}`, true},
+		{"good-with-model", `{"model":"clef","answers":{"claim":{"choice":"done","confidence":0.9}}}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
