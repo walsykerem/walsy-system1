@@ -97,11 +97,32 @@ func riskCovered(key string, done map[string]bool) bool {
 	for d := range done {
 		// Judge the claim, not the risk name it quotes: a risk called
 		// "pending migration" can never be mentioned without its deny word.
-		if mentionsKey(d, key) && hasEvidence(d) && !deniesWork(strings.ReplaceAll(d, key, " ")) {
+		rest, ok := removeKeyMention(d, key)
+		if ok && hasEvidence(rest) && !deniesWork(rest) {
 			return true
 		}
 	}
 	return false
+}
+
+// removeKeyMention erases one word-bounded occurrence of key from s, leaving
+// every other byte (including other mentions and longer words that contain
+// key) intact. ok is false when key is not mentioned at all.
+func removeKeyMention(s, key string) (string, bool) {
+	for idx := strings.Index(s, key); idx >= 0; {
+		before := idx == 0 || !isWordByte(s[idx-1])
+		end := idx + len(key)
+		after := end == len(s) || !isWordByte(s[end])
+		if before && after {
+			return s[:idx] + " " + s[end:], true
+		}
+		next := strings.Index(s[idx+1:], key)
+		if next < 0 {
+			return s, false
+		}
+		idx += 1 + next
+	}
+	return s, false
 }
 
 // mentionsKey requires the risk key to sit on word boundaries, so a short key
