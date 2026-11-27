@@ -231,10 +231,15 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 		}
 		return
 	}
-	if b.halfOpen || b.failures == 0 || now.Sub(b.last) >= routerState.cooldown {
-		b.failures = 0
+	if b.halfOpen {
+		// A failed probe re-opens the breaker for a fresh cooldown.
+		b.failures = routerState.threshold
+	} else {
+		if b.failures == 0 || now.Sub(b.last) >= routerState.cooldown {
+			b.failures = 0
+		}
+		b.failures++
 	}
-	b.failures++
 	b.last = now
 	b.halfOpen = false
 	routerState.breakers[name] = b
