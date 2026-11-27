@@ -365,3 +365,17 @@ func TestF3MethodScope(t *testing.T) {
 		}
 	}
 }
+
+// A done claim's owner/round metadata must not be satisfied by a blank value:
+// whitespace-only strings and empty containers are not an owner.
+func TestLedgerBlankMetadataStaysOpen(t *testing.T) {
+	for _, state := range []string{
+		`{"todo":["ship it"],"done":["ship it"],"who":" ","when":"\t"}`,
+		`{"todo":["ship it"],"done":["ship it"],"who":{ },"when":[ ]}`,
+	} {
+		r := route(envelopeWithState("antishirk.todo_ledger", state), nil)
+		if r.Reason != "ledger-open" || r.Decision != decPass || !strings.Contains(r.Steer, "who") {
+			t.Fatalf("blank metadata %s = %+v, want ledger-open naming who", state, r)
+		}
+	}
+}
