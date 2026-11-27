@@ -136,6 +136,7 @@ type proxyResult struct {
 	status  int
 	body    []byte
 	headers http.Header
+	failed  bool
 }
 
 // requestID reads the JSON-RPC id from a frame so an error reply can echo it
@@ -151,7 +152,7 @@ func requestID(body []byte) json.RawMessage {
 }
 
 func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Request) proxyResult {
-	fail := proxyResult{status: http.StatusOK, body: rpcError(requestID(body), -32000, "upstream unavailable")}
+	fail := proxyResult{status: http.StatusOK, body: rpcError(requestID(body), -32000, "upstream unavailable"), failed: true}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream, bytes.NewReader(body))
 	if err != nil {
 		return fail
@@ -175,7 +176,13 @@ func proxyHTTP(ctx context.Context, upstream string, body []byte, r *http.Reques
 	// past the cap was cut by LimitReader and needs an error frame.
 	if int64(len(out)) > maxHTTPFrame {
 		return proxyResult{status: http.StatusOK,
-			body: rpcError(requestID(body), -32001, "upstream response too large"), headers: resp.Header}
+			body: rpcError(requestID(body), -32001, "upstream response too large"), failed: true}
+	}
+	// A 304 has no JSON-RPC body: forwarding it would hand the frontend an
+	// empty reply with stale validators attached.
+	if resp.StatusCode == http.StatusNotModified {
+		return proxyResult{status: http.StatusOK,
+			body: rpcError(requestID(body), -32002, "upstream conditional response"), failed: true}
 	}
 	return proxyResult{status: resp.StatusCode, body: out, headers: resp.Header}
 }
@@ -197,18 +204,31 @@ func (d *decisionBridge) advisoryHTTP(request []byte, f frame) {
 // decisions run after response flush, never blocking or logging payloads.
 func mcpHTTPHandler() http.Handler { return mcpHTTPHandlerUpstream("") }
 
+// writeHTTPJSONError keeps the JSON-RPC endpoint's content type and no-store
+// policy consistent on rejection paths too.
+func writeHTTPJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 	d := newDecisionBridge()
 	enforcing := soMode() == "enforcing"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
+		// Reply bodies are state snapshots: no heuristic cache may reuse them,
+		// including on the error paths below.
+		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		if !originAllowed(r) {
-			http.Error(w, "origin forbidden", http.StatusForbidden)
+			writeHTTPJSONError(w, http.StatusForbidden, "origin forbidden")
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxHTTPFrame)
@@ -216,22 +236,22 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+				writeHTTPJSONError(w, http.StatusRequestEntityTooLarge, "request too large")
 				return
 			}
 			// A truncated or aborted body used to return without writing a
 			// status, which the net/http server answers as 200 with no frame.
-			http.Error(w, "request unreadable", http.StatusBadRequest)
+			writeHTTPJSONError(w, http.StatusBadRequest, "request unreadable")
 			return
 		}
 		relayLog("client", body)
 		f, derr := decodeFrame(body)
 		if derr != nil {
-			http.Error(w, "invalid JSON-RPC", http.StatusBadRequest)
+			writeHTTPJSONError(w, http.StatusBadRequest, "invalid JSON-RPC")
 			return
 		}
 		if !sep2243Valid(r, f) {
-			http.Error(w, "invalid MCP headers", http.StatusBadRequest)
+			writeHTTPJSONError(w, http.StatusBadRequest, "invalid MCP headers")
 			return
 		}
 
@@ -301,7 +321,7 @@ func mcpHTTPHandlerUpstream(upstream string) http.Handler {
 		// SO never holds the client past the deadline budget (F5/T2/N2.2).
 		// No Content-Length: net/http keeps the chunked body open until return,
 		// so callers reading to EOF observe the bounded advisory window.
-		if !enforcing {
+		if !enforcing && !out.failed {
 			done := make(chan struct{})
 			go func() {
 				d.advisoryHTTP(body, f)
