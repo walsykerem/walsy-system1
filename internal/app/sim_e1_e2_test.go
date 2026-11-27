@@ -23,8 +23,6 @@ import (
 	"time"
 )
 
-const w24ShippedSHA256 = "2ec4526bef5588f524f42be2714b8a5dbc5adefb924b496e1310535d1ff0dde6"
-
 // audFRepoRoot resolves the module root from this test file, so the shipped
 // artifact is found regardless of the package working directory.
 func audFRepoRoot(t *testing.T) string {
@@ -459,9 +457,10 @@ func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 	shippedDigest := ""
 	if _, err := os.Stat(bin); err == nil {
 		digest := w24_SHA256File(t, bin)
-		// The checked-in literal describes the darwin build. Linux CI pins the
+		// The checked-in digest describes the darwin build. Linux CI pins the
 		// native build hash in a digest fixture instead of baking a second literal.
-		want := w24ShippedSHA256
+		_, pinned := simReadDigest(t, simMachODigest())
+		want := pinned.Target.FileSHA256
 		if p := os.Getenv("WALSY_SIM_DIGEST"); p != "" {
 			_, pinned := simReadDigest(t, p)
 			want = pinned.Target.FileSHA256

@@ -20,10 +20,24 @@ import (
 // Static-only simulation for MANIFEST B22 items Q3 and Q4.
 // No target binary execution, no live process inspection, no real SO call.
 const (
-	simAESOffset  = 0x89d440
 	simAESBytes   = "637c777bf26b6fc5"
 	simAESSegment = "__DATA,__noptrdata"
 )
+
+// simAESOffset locates the S-box by content so a rebuild that moves the
+// constant does not stale the checker.
+func simAESOffset(t *testing.T, raw []byte) int {
+	t.Helper()
+	needle, err := hex.DecodeString(simAESBytes)
+	if err != nil {
+		t.Fatalf("decode aes_sbox bytes: %v", err)
+	}
+	off := bytes.Index(raw, needle)
+	if off < 0 {
+		t.Fatalf("aes_sbox bytes not found in binary")
+	}
+	return off
+}
 
 var (
 	simSegmentRe = regexp.MustCompile(`__[A-Za-z0-9_]+,__[A-Za-z0-9_]+`)
@@ -47,8 +61,8 @@ func simReadReport(t *testing.T) string {
 // other than the ones the analyzed Mach-O actually carries the constant in. A
 // line with no segment name is accepted: Q3 allows deleting the label, but it
 // must still name the constant and its offset to exercise that control.
-func simQ3BadAESLines(report, wantSegment string) []string {
-	wantOffset := fmt.Sprintf("0x%x", simAESOffset)
+func simQ3BadAESLines(report, wantSegment string, wantOffset int) []string {
+	wantHex := fmt.Sprintf("0x%x", wantOffset)
 	var bad []string
 	for _, line := range strings.Split(report, "\n") {
 		if !strings.Contains(line, "aes_sbox") {
@@ -59,7 +73,7 @@ func simQ3BadAESLines(report, wantSegment string) []string {
 			continue
 		}
 		for _, off := range simHexRe.FindAllString(line, -1) {
-			if strings.ToLower(off) != wantOffset {
+			if strings.ToLower(off) != wantHex {
 				bad = append(bad, strings.TrimSpace(line))
 				break
 			}
@@ -83,6 +97,8 @@ func TestSimQ3(t *testing.T) {
 	if digest.Target.Size != int64(len(raw)) {
 		t.Fatalf("digest target.size=%d, binary size=%d", digest.Target.Size, len(raw))
 	}
+	off := simAESOffset(t, raw)
+	wantHex := fmt.Sprintf("0x%x", off)
 	mf, err := macho.NewFile(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("parse Mach-O: %v", err)
@@ -93,48 +109,48 @@ func TestSimQ3(t *testing.T) {
 		if s.Offset == 0 {
 			continue
 		}
-		if uint64(s.Offset) <= simAESOffset && simAESOffset < uint64(s.Offset)+s.Size {
+		if uint64(s.Offset) <= uint64(off) && uint64(off) < uint64(s.Offset)+s.Size {
 			section = s.Seg + "," + s.Name
 			break
 		}
 	}
 	if section == "" {
-		t.Fatalf("offset 0x%x belongs to no section", simAESOffset)
+		t.Fatalf("offset %s belongs to no section", wantHex)
 	}
 	buf := make([]byte, len(simAESBytes)/2)
-	if _, err := bytes.NewReader(raw).ReadAt(buf, simAESOffset); err != nil {
-		t.Fatalf("read bytes at 0x%x: %v", simAESOffset, err)
+	if _, err := bytes.NewReader(raw).ReadAt(buf, int64(off)); err != nil {
+		t.Fatalf("read bytes at %s: %v", wantHex, err)
 	}
 	if got := hex.EncodeToString(buf); got != simAESBytes {
-		t.Fatalf("bytes at 0x%x = %s want %s", simAESOffset, got, simAESBytes)
+		t.Fatalf("bytes at %s = %s want %s", wantHex, got, simAESBytes)
 	}
 	if section != simAESSegment {
-		t.Fatalf("aes_sbox at 0x%x lives in %s, not %s", simAESOffset, section, simAESSegment)
+		t.Fatalf("aes_sbox at %s lives in %s, not %s", wantHex, section, simAESSegment)
 	}
 
-	if bad := simQ3BadAESLines(simReadReport(t), section); len(bad) != 0 {
+	if bad := simQ3BadAESLines(simReadReport(t), section, off); len(bad) != 0 {
 		for _, line := range bad {
 			t.Errorf("report mislabels aes_sbox: %s", line)
 		}
 	}
 
-	oldLine := "0x89d440: 637c777bf26b6fc5 (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)"
-	if got := simQ3BadAESLines(oldLine, simAESSegment); len(got) != 1 {
+	oldLine := fmt.Sprintf("%s: %s (digest constant aes_sbox __TEXT,__rodata; xxd at file offset matches)", wantHex, simAESBytes)
+	if got := simQ3BadAESLines(oldLine, simAESSegment, off); len(got) != 1 {
 		t.Fatalf("checker failed to reject old label: %v", got)
 	}
-	wrongOffset := strings.Replace(oldLine, "__TEXT,__rodata", simAESSegment, 1)
-	wrongOffset = strings.Replace(wrongOffset, "0x89d440", "0x858c40", 1)
-	if got := simQ3BadAESLines(wrongOffset, simAESSegment); len(got) != 1 {
+	wrongOffset := strings.Replace(oldLine, wantHex, fmt.Sprintf("0x%x", off-0x1000), 1)
+	wrongOffset = strings.Replace(wrongOffset, "__TEXT,__rodata", simAESSegment, 1)
+	if got := simQ3BadAESLines(wrongOffset, simAESSegment, off); len(got) != 1 {
 		t.Fatalf("checker failed to reject stale offset: %v", got)
 	}
 	fixedLine := strings.Replace(oldLine, "__TEXT,__rodata", simAESSegment, 1)
-	if got := simQ3BadAESLines(fixedLine, simAESSegment); len(got) != 0 {
+	if got := simQ3BadAESLines(fixedLine, simAESSegment, off); len(got) != 0 {
 		t.Fatalf("checker rejected corrected label: %v", got)
 	}
 	// Deleting only the segment label must still pass: the line keeps the
 	// aes_sbox marker and the verified offset, so the control is not vacuous.
-	deletedLine := "aes_sbox 637c777bf26b6fc5 at 0x89d440 (no segment label)"
-	if got := simQ3BadAESLines(deletedLine, simAESSegment); len(got) != 0 {
+	deletedLine := fmt.Sprintf("aes_sbox %s at %s (no segment label)", simAESBytes, wantHex)
+	if got := simQ3BadAESLines(deletedLine, simAESSegment, off); len(got) != 0 {
 		t.Fatalf("checker rejected label deletion: %v", got)
 	}
 }

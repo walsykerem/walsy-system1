@@ -367,7 +367,7 @@ func askSOQ(state string, q soQuestion) soDecision {
 	}
 	if !questionApplicable(q, state) {
 		routerAudit("gate", "reason", "no-applicable-question", "status", "skipped")
-		return soDecision{}
+		return soDecision{Reason: "no-applicable-question"}
 	}
 	select {
 	case soSem <- struct{}{}:
@@ -524,7 +524,7 @@ func soPool() []soCandidate {
 func askSOQOnce(state string, q soQuestion) soDecision {
 	if !questionApplicable(q, state) {
 		routerAudit("gate", "reason", "no-applicable-question", "status", "skipped")
-		return soDecision{}
+		return soDecision{Reason: "no-applicable-question"}
 	}
 	cands := soPool()
 	if len(cands) == 0 {

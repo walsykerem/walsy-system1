@@ -78,20 +78,42 @@ func validModel(m string) bool {
 	return true
 }
 
-func stateDir() (string, error) {
+// stateDirName is the single on-disk root for production state. Config,
+// models, combo and keys all resolve here; generated artifacts and caches never do.
+const stateDirName = ".walsy-system1"
+
+// stateDirPath is the one canonical root derivation. No state path may be built
+// from a cache root (GOCACHE/XDG_CACHE_HOME), so a cache wipe cannot touch state.
+func stateDirPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home unavailable")
 	}
-	dir := filepath.Join(home, ".walsy-system1")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("state dir failed")
-	}
+	return filepath.Join(home, stateDirName), nil
+}
+
+// stateRootIfSafe applies the directory trust boundary without creating it, so
+// read-only config resolution cannot be redirected into a cache directory.
+func stateRootIfSafe(dir string) (string, error) {
 	st, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return dir, nil
+	}
 	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm() != 0700 {
 		return "", fmt.Errorf("state dir rejected")
 	}
 	return dir, nil
+}
+
+func stateDir() (string, error) {
+	dir, err := stateDirPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("state dir failed")
+	}
+	return stateRootIfSafe(dir)
 }
 
 // readStateFile applies the same trust boundary as loadRegistryFrom.
@@ -479,11 +501,15 @@ const (
 )
 
 func soConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := stateDirPath()
 	if err != nil {
-		return "", fmt.Errorf("home unavailable")
+		return "", err
 	}
-	return filepath.Join(home, ".walsy-system1", "config.txt"), nil
+	dir, err = stateRootIfSafe(dir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.txt"), nil
 }
 
 // readSOConfig parses key=value lines. Malformed lines and comments are

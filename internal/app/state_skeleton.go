@@ -46,11 +46,15 @@ type StateSkeleton struct {
 	Calibrated bool        `json:"calibrated,omitempty"`
 	Item       string      `json:"item,omitempty"`
 	Prompts    []PromptRef `json:"prompts,omitempty"`
-	Request    string      `json:"request,omitempty"`
-	Criteria   []string    `json:"criteria,omitempty"`
-	Evidence   []string    `json:"evidence,omitempty"`
-	Omitted    []string    `json:"omitted,omitempty"`
-	Unverified []string    `json:"unverified,omitempty"`
+	// Trust-boundary evidence: scrubbed, never a prompt body. The key names are
+	// the registry's state_fields, so Requires stays a local capability check.
+	UntrustedText string   `json:"untrusted_text,omitempty"`
+	ToolOutput    string   `json:"tool_output,omitempty"`
+	Request       string   `json:"request,omitempty"`
+	Criteria      []string `json:"criteria,omitempty"`
+	Evidence      []string `json:"evidence,omitempty"`
+	Omitted       []string `json:"omitted,omitempty"`
+	Unverified    []string `json:"unverified,omitempty"`
 	// Truncated is mechanical: set only by distillSOState when the cap forced
 	// verbatim text out, so a caller can tell a cut state from a whole one.
 	Truncated bool `json:"truncated,omitempty"`

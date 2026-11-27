@@ -312,6 +312,20 @@ func probeKeyStatus(name string, index int, model string) int {
 	return resp.StatusCode
 }
 
+// retryAfterSeconds reads RFC 7231 delay-seconds or an HTTP-date. The caller
+// clamps the result so a key test never blocks for minutes.
+func retryAfterSeconds(v string, now time.Time) int {
+	v = strings.TrimSpace(v)
+	var secs int
+	if _, err := fmt.Sscanf(v, "%d", &secs); err == nil {
+		return secs
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return int(t.Sub(now).Seconds())
+	}
+	return 0
+}
+
 // keyTestResult names a probe outcome. It never echoes a key value.
 func keyTestResult(status int) string {
 	switch {
@@ -340,6 +354,13 @@ var unlockedPost = map[string]bool{
 	"/ui/combo/run":      true,
 	"/ui/build":          true,
 	"/ui/providers/keys": true,
+}
+
+// unlockedGet lists the only routes readable from another origin; every other
+// GET exposes SO/provider state and requires a matching browser Origin.
+var unlockedGet = map[string]bool{
+	"/style.css":   true,
+	"/favicon.ico": true,
 }
 
 // isLoopbackName accepts only the names the dashboard is actually bound to.
@@ -650,6 +671,10 @@ func NewDashboardHandler() http.Handler {
 			writeAPIError(w, "host not allowed")
 			return
 		}
+		if r.Method == http.MethodGet && !unlockedGet[r.URL.Path] && !sameOrigin(r) {
+			writeAPIError(w, "origin not allowed")
+			return
+		}
 		if r.Method == http.MethodPost && !unlockedPost[r.URL.Path] {
 			stateMu.Lock()
 			defer stateMu.Unlock()
@@ -742,8 +767,7 @@ func NewDashboardHandler() http.Handler {
 			for k := 1; k <= keyCount(req.Provider); k++ {
 				status, retryAfter := probe429(k)
 				if status == http.StatusTooManyRequests {
-					var secs int
-					_, _ = fmt.Sscanf(strings.TrimSpace(retryAfter), "%d", &secs)
+					secs := retryAfterSeconds(retryAfter, time.Now())
 					if secs < 0 {
 						secs = 0
 					}

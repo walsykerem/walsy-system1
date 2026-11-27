@@ -2,6 +2,8 @@ package app
 
 import (
 	"bytes"
+	"io"
+	"sync"
 	"testing"
 	"time"
 )
@@ -33,5 +35,30 @@ func TestRelayStdioVerbatim(t *testing.T) {
 	}
 	if !bytes.Equal(clientOut.Bytes(), in) {
 		t.Fatalf("client got %q, want verbatim %q", clientOut.Bytes(), in)
+	}
+}
+
+// eofReader is stateless so concurrent Read calls are race-free by construction.
+type eofReader struct{}
+
+func (eofReader) Read([]byte) (int, error) { return 0, io.EOF }
+
+// drain signal: concurrent EOF observations close gone exactly once (-race).
+func TestNotifyEOFClosesOnceUnderRace(t *testing.T) {
+	gone := make(chan struct{})
+	c := &notifyEOF{r: eofReader{}, gone: gone}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = c.Read(make([]byte, 1))
+		}()
+	}
+	wg.Wait()
+	select {
+	case <-gone:
+	default:
+		t.Fatal("gone not closed after EOF")
 	}
 }
