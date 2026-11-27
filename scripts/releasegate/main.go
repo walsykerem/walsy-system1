@@ -61,6 +61,10 @@ func run(thr float64) error {
 		return err
 	}
 	version := strings.TrimSpace(string(tag))
+	if version == "" {
+		// An empty tag would make the Contains check below vacuously true.
+		return errors.New("release.tag is empty")
+	}
 	changelog, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
 	if err != nil {
 		return err
