@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -222,9 +223,15 @@ func scrubText(s string) string {
 	return joined
 }
 
+// untrustedAuthHeader matches an Authorization header value with or without
+// spaces or JSON quoting, including the optional scheme word, so the credential
+// after "Bearer" is removed too.
+var untrustedAuthHeader = regexp.MustCompile(`(?i)\b(?:proxy-)?authorization\b\\?["']?\s*[:=]\s*\\?["']?(?:(?:bearer|basic|token)\s*[:=]?\s*)?[^\s"',;\\]+`)
+
 // scrubUntrustedField also removes quoted/JSON-shaped credential assignments
 // that scrubText's token pass cannot see, before trust-boundary text goes out.
 func scrubUntrustedField(s string) string {
+	s = untrustedAuthHeader.ReplaceAllString(s, credentialWithheld)
 	s = diffSecretAssign.ReplaceAllString(scrubText(s), credentialWithheld)
 	for _, re := range diffSecretPatterns {
 		s = re.ReplaceAllString(s, credentialWithheld)
