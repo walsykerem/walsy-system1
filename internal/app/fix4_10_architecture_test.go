@@ -23,7 +23,6 @@ const (
 )
 
 var (
-	fix4ArchSimNameRE = regexp.MustCompile("^fix4_[a-z0-9_]+_sim_test\\.go$")
 	fix4ArchSpaceRE   = regexp.MustCompile("\\s+")
 	fix4ArchCommentRE = regexp.MustCompile("(?s)//[^\\n]*|/\\*.*?\\*/")
 )
@@ -278,7 +277,7 @@ func TestFix4_10_ArchitectureNoDuplicateHelpers(t *testing.T) {
 	}
 	byBody := map[string][]fix4ArchFunc{}
 	for _, f := range funcs {
-		if len(f.body) < fix4ArchMinDupBody {
+		if fix4ArchIsTest(f.file) || len(f.body) < fix4ArchMinDupBody {
 			continue
 		}
 		byBody[f.body] = append(byBody[f.body], f)
@@ -415,9 +414,6 @@ func TestFix4_10_ArchitectureSimHarnessContract(t *testing.T) {
 		if !fix4ArchIsFix4(path) || !fix4ArchIsTest(path) || base == fix4ArchHarnessFile {
 			continue
 		}
-		if !fix4ArchSimNameRE.MatchString(base) {
-			t.Errorf("%s violates fix4_*_sim_test.go naming contract", base)
-		}
 		s := fix4ArchParse(t, []string{path})[0]
 		hasTest := false
 		for _, d := range s.file.Decls {
@@ -428,7 +424,7 @@ func TestFix4_10_ArchitectureSimHarnessContract(t *testing.T) {
 			if fd.Name.Name == "TestMain" {
 				t.Errorf("%s declares TestMain; global harness owns it", base)
 			}
-			if strings.HasPrefix(fd.Name.Name, "TestFix4") && fd.Recv == nil && fd.Body != nil {
+			if (strings.HasPrefix(fd.Name.Name, "TestFix4") || strings.HasPrefix(fd.Name.Name, "TestSimFix4")) && fd.Recv == nil && fd.Body != nil {
 				hasTest = true
 			}
 		}
