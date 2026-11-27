@@ -231,7 +231,7 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 		}
 		return
 	}
-	if b.failures == 0 || now.Sub(b.last) >= routerState.cooldown {
+	if b.halfOpen || b.failures == 0 || now.Sub(b.last) >= routerState.cooldown {
 		b.failures = 0
 	}
 	b.failures++
@@ -241,7 +241,8 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 }
 
 // routerBreakerOpen reports whether a tool must be skipped. After cooldown a
-// single half-open probe is allowed; further calls wait for its recorded result.
+// single half-open probe is allowed and leased for one cooldown; while it is
+// outstanding further calls wait, and a failed probe resets the failure window.
 func routerBreakerOpen(tool string) bool {
 	routerMu.Lock()
 	defer routerMu.Unlock()
@@ -257,32 +258,17 @@ func routerBreakerOpen(tool string) bool {
 		if b.latencyCount < 2 || b.latencyMedian() <= routerState.latencyThreshold {
 			return false
 		}
-		// A latency-opened circuit obeys the same cooldown/half-open rule as a
-		// failure-opened one, or two slow samples close it for the process.
-		if b.halfOpen {
-			return true
-		}
-		if b.last.IsZero() {
-			b.last = time.Now()
-			routerState.breakers[name] = b
-			return true
-		}
-		if time.Since(b.last) >= routerState.cooldown {
-			b.halfOpen = true
-			routerState.breakers[name] = b
-			return false
-		}
+		// A latency-opened circuit obeys the same cooldown rule below.
+	}
+	if time.Since(b.last) < routerState.cooldown {
 		return true
 	}
-	if b.halfOpen {
-		return true
-	}
-	if time.Since(b.last) >= routerState.cooldown {
-		b.halfOpen = true
-		routerState.breakers[name] = b
-		return false
-	}
-	return true
+	// Grant one probe and lease it for one cooldown: a status read also calls
+	// this, and a probe consumed without a recorded result must expire.
+	b.halfOpen = true
+	b.last = time.Now()
+	routerState.breakers[name] = b
+	return false
 }
 
 // routerMirrorURL returns the optional canary target, or empty when disabled.
