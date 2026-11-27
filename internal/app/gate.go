@@ -898,3 +898,77 @@ func answerMargin(p map[string]float64) (float64, bool) {
 	}
 	return best - second, true
 }
+
+// soAutonomy is the at-most-once ledger for autonomous execution of a decision
+// suggestion. A suggestion is identified by the SO oracle identity and its own
+// text; a repeat is never re-asked and never re-run.
+type soAutonomy struct {
+	mu   sync.Mutex
+	seen map[[32]byte]bool
+}
+
+// soAutonomyResult reports whether the suggestion was executed. Reason is a
+// short refusal code; ID is the stable hashed suggestion identity.
+type soAutonomyResult struct {
+	Acted  bool
+	Reason string
+	ID     string
+}
+
+// act executes a reversible suggestion only after a strong, well-formed SO
+// approval. It fails closed: no layer0 gate, a degraded answer, a sub-cut
+// confidence, a weak probability margin, or a failed action never reaches op.
+func (a *soAutonomy) act(state string, q soQuestion, f layer0, suggestion string, op func() error) soAutonomyResult {
+	if !gate(f) {
+		return soAutonomyResult{Reason: "layer0-gate"}
+	}
+	h := sha256.New()
+	h.Write(soOracleIdentity())
+	h.Write([]byte{0})
+	h.Write([]byte(suggestion))
+	var key [32]byte
+	copy(key[:], h.Sum(nil))
+	id := fmt.Sprintf("%x", key[:6])
+
+	a.mu.Lock()
+	if a.seen == nil {
+		a.seen = make(map[[32]byte]bool)
+	}
+	if a.seen[key] {
+		a.mu.Unlock()
+		routerAudit("gate", "reason", "so-autonomous", "status", "duplicate", "id", id)
+		return soAutonomyResult{Reason: "duplicate", ID: id}
+	}
+	a.seen[key] = true // claim before the POST: no concurrent double execution
+	a.mu.Unlock()
+
+	refuse := func(reason string) soAutonomyResult {
+		a.mu.Lock()
+		delete(a.seen, key) // transient refusals stay retryable
+		a.mu.Unlock()
+		routerAudit("gate", "reason", "so-autonomous", "status", "refused", "id", id, "decision", reason)
+		return soAutonomyResult{Reason: reason, ID: id}
+	}
+	d := askSOQ(state, q)
+	if d.Reason != "" || d.TimedOut || d.Choice == "" || d.AnswerType == "noul" {
+		return refuse("so-degraded")
+	}
+	if len(d.Probabilities) == 0 || invalidSOProbabilities(d.Probabilities) {
+		return refuse("invalid_probabilities")
+	}
+	if p, ok := d.Probabilities[d.Choice]; !ok || p < defaultThreshold() {
+		return refuse("invalid_probabilities")
+	}
+	if d.Conf < defaultThreshold() {
+		return refuse("so-low-conf")
+	}
+	if margin, ok := answerMargin(d.Probabilities); ok && margin < 0.10 {
+		return refuse("low-margin")
+	}
+	if err := op(); err != nil {
+		routerAudit("gate", "reason", "so-autonomous", "status", "failed", "id", id, "label", d.Choice)
+		return soAutonomyResult{Reason: "action-failed", ID: id}
+	}
+	routerAudit("gate", "reason", "so-autonomous", "status", "done", "id", id, "label", d.Choice)
+	return soAutonomyResult{Acted: true, ID: id}
+}
