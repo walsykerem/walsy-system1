@@ -203,11 +203,16 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 			b.latencyCount++
 		}
 		if b.latencyMedian() > routerState.latencyThreshold {
+			if b.slowStreak == 0 {
+				b.last = now // latency circuit opens here; its cooldown starts now
+			}
 			b.slowStreak++
 		} else {
 			b.slowStreak = 0
 		}
-		if b.slowStreak >= routerState.threshold {
+		// A half-open probe must reach the ok/fail branches below so its result
+		// closes or reopens the circuit; a slow probe is still evidence.
+		if !b.halfOpen && b.slowStreak >= routerState.threshold {
 			b.failures = routerState.threshold
 			b.last, b.halfOpen = now, false
 			routerState.breakers[name] = b
@@ -215,10 +220,13 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 		}
 	}
 	if ok {
-		if b.failures == 0 && b.slowStreak == 0 {
+		// Success closes the breaker, including a successful half-open probe of
+		// a latency-opened circuit whose stale slow samples still dominate.
+		if b.halfOpen || b.failures == 0 && b.slowStreak == 0 {
 			delete(routerState.breakers, name)
 		} else {
-			b.failures, b.halfOpen, b.last = 0, false, time.Time{}
+			// Keep b.last: it is also the latency circuit's open time.
+			b.failures, b.halfOpen = 0, false
 			routerState.breakers[name] = b
 		}
 		return
@@ -246,7 +254,25 @@ func routerBreakerOpen(tool string) bool {
 	if b.failures < routerState.threshold {
 		// Two slow median samples open the circuit: waiting for a full ring
 		// admits a burst of slow calls before the breaker reacts.
-		return b.latencyCount >= 2 && b.latencyMedian() > routerState.latencyThreshold
+		if b.latencyCount < 2 || b.latencyMedian() <= routerState.latencyThreshold {
+			return false
+		}
+		// A latency-opened circuit obeys the same cooldown/half-open rule as a
+		// failure-opened one, or two slow samples close it for the process.
+		if b.halfOpen {
+			return true
+		}
+		if b.last.IsZero() {
+			b.last = time.Now()
+			routerState.breakers[name] = b
+			return true
+		}
+		if time.Since(b.last) >= routerState.cooldown {
+			b.halfOpen = true
+			routerState.breakers[name] = b
+			return false
+		}
+		return true
 	}
 	if b.halfOpen {
 		return true
