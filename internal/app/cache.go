@@ -196,6 +196,8 @@ const (
 	// shortcut: a hot key may coast one window past its cell TTL; upgrade to a
 	// per-item staleness budget when freshness matters more than latency.
 	warmStaleGrace = 30 * time.Second
+	// Cache cells are process-local generated artifacts, never written to the
+	// canonical state root; ~/.walsy-system1 stays outside this cache.
 )
 
 type cacheCell struct {
