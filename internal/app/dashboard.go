@@ -342,6 +342,13 @@ var unlockedPost = map[string]bool{
 	"/ui/providers/keys": true,
 }
 
+// unlockedGet lists the only routes readable from another origin; every other
+// GET exposes SO/provider state and requires a matching browser Origin.
+var unlockedGet = map[string]bool{
+	"/style.css":   true,
+	"/favicon.ico": true,
+}
+
 // isLoopbackName accepts only the names the dashboard is actually bound to.
 func isLoopbackName(host string) bool {
 	return host == "127.0.0.1" || host == "localhost" || host == "::1"
@@ -648,6 +655,10 @@ func NewDashboardHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !loopbackHost(r) {
 			writeAPIError(w, "host not allowed")
+			return
+		}
+		if r.Method == http.MethodGet && !unlockedGet[r.URL.Path] && !sameOrigin(r) {
+			writeAPIError(w, "origin not allowed")
 			return
 		}
 		if r.Method == http.MethodPost && !unlockedPost[r.URL.Path] {
