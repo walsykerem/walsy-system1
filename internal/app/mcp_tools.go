@@ -47,6 +47,9 @@ func runToolsServer(in io.Reader, out io.Writer) {
 	dec := json.NewDecoder(lr)
 	enc := json.NewEncoder(out)
 	d := newDecisionBridge()
+	// shortcut: full cache resets at 1024 keys; raise when sessions outlive that.
+	const replayMax = 1024
+	replies := make(map[string]map[string]any, replayMax)
 	for {
 		lr.n = 0
 		var raw json.RawMessage
@@ -61,11 +64,26 @@ func runToolsServer(in io.Reader, out io.Writer) {
 		if json.Unmarshal(raw, &req) != nil {
 			continue
 		}
-		_, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
 		if len(req.ID) == 0 {
 			continue // notification
 		}
-		_ = enc.Encode(toolsReply(req.ID, req.Method, req.Params, d, dec))
+		idemKey := ""
+		if req.Method == "tools/call" {
+			idemKey = string(req.ID) + "\x00" + string(req.Params)
+			if cached, ok := replies[idemKey]; ok {
+				_ = enc.Encode(cached)
+				continue
+			}
+		}
+		_, dec := d.decideFrameDetailed(toolsGateFrame(raw, req))
+		reply := toolsReply(req.ID, req.Method, req.Params, d, dec)
+		if idemKey != "" {
+			if len(replies) >= replayMax {
+				replies = make(map[string]map[string]any, replayMax)
+			}
+			replies[idemKey] = reply
+		}
+		_ = enc.Encode(reply)
 	}
 }
 
