@@ -13,7 +13,8 @@ import (
 
 // writeGuard closes two holes the registry gate cannot see: a write to a path
 // this session never touched, and one identical call repeated without limit.
-// Both fail open on unparsable arguments, like every other guard here.
+// A non-write call with unparsable arguments fails open, like every other
+// guard here; a write with no readable target path fails closed (check).
 // shortcut: tool-name verbs, not per-server schemas; upgrade when a client
 // ships tools/list input schemas worth parsing.
 const (

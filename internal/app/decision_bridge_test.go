@@ -198,7 +198,7 @@ func TestTransientNotCached(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("degraded result was cached: SO called %d times, want 2", calls)
 	}
-	if _, hit := d.cache.lookup(gateKeyBytes(req, soCapability())); hit {
+	if _, hit := d.cache.lookup(d.cacheKey(req, soCapability(), d.pin.generation())); hit {
 		t.Fatal("transient/degraded outcome must not be stored in cache")
 	}
 }

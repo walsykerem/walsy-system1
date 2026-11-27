@@ -693,6 +693,10 @@ func NewDashboardHandler() http.Handler {
 				writeJSON(w, http.StatusOK, map[string]any{"status": 400, "result": "NO MODEL CONFIGURED", "winner": ""})
 				return
 			}
+			if keyCount(req.Provider) == 0 {
+				writeJSON(w, http.StatusOK, map[string]any{"status": 400, "result": "NO KEY STORED", "winner": ""})
+				return
+			}
 			selected := req.Model
 			if selected == "" {
 				selected = models[req.Provider][0]

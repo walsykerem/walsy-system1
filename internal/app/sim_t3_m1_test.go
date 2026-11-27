@@ -187,26 +187,6 @@ func (w *w18SignalWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func w18Post(t *testing.T, srv *httptest.Server, frame []byte) (int, []byte) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, bytes.NewReader(frame))
-	if err != nil {
-		t.Fatalf("build POST: %v", err)
-	}
-	resp, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("POST frame: %v", err)
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
-	return resp.StatusCode, b
-}
-
 // T3, HTTP path. A blocking SO stub makes pre-forward marker placement
 // observable: the client would get no response byte until SO answered.
 func Test_w18_T3_HTTPAdvisoryMarkerAfterFlush(t *testing.T) {

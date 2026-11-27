@@ -221,8 +221,8 @@ func TestSimF1KeepAliveFrameEquivalence(t *testing.T) {
 // ---- F2 ------------------------------------------------------------------
 
 // F2 requires operator config to stop supplying opt-ins the client omitted.
-// On the current tree unwrapParams still backfills from config.txt, so this
-// simulation fails and names the exact production gap.
+// unwrapParams no longer backfills from config.txt; this test fails if that
+// backfill returns.
 func TestSimF2NoConfigOptInBackfill(t *testing.T) {
 	home := w01_env(t)
 	t.Setenv("WALSY_SO_MODE", soModeEnforcing)
@@ -242,7 +242,8 @@ func TestSimF2NoConfigOptInBackfill(t *testing.T) {
 	}
 	t.Logf("F2 strict fail-closed: frame with no opt-ins blocked; resp=%s", resp)
 
-	// Control: same frame, empty config, must block. Proves config is causal.
+	// Control: same frame, empty config, must block. It blocked with the config
+	// present too, so config opt-ins are not what admits the frame.
 	cfgPath := filepath.Join(home, ".walsy-system1", "config.txt")
 	if err := writeStateFile(cfgPath, nil); err != nil {
 		t.Fatal(err)
