@@ -27,9 +27,15 @@ type soTemplateQuestion struct {
 // soRequestTemplate returns the ready-to-POST System One decision body. The
 // credential stays in the x-api-key header and cannot enter this body.
 func soRequestTemplate(model string, state soTemplateState, questions map[string]soTemplateQuestion) ([]byte, error) {
+	// The System One envelope carries state as a string, so the structured
+	// state is JSON-encoded into it.
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(struct {
 		Model     string                        `json:"model"`
-		State     soTemplateState               `json:"state"`
+		State     string                        `json:"state"`
 		Questions map[string]soTemplateQuestion `json:"questions"`
-	}{Model: model, State: state, Questions: questions})
+	}{Model: model, State: string(stateJSON), Questions: questions})
 }

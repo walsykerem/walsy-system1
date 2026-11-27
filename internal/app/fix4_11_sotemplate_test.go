@@ -55,13 +55,8 @@ func fix411Wire(t *testing.T, questions map[string]soTemplateQuestion) []byte {
 }
 
 type fix411EnvelopeShape struct {
-	Model string `json:"model"`
-	State struct {
-		Intent      string   `json:"intent"`
-		Constraints []string `json:"constraints"`
-		Evidence    []string `json:"evidence"`
-		WorkDone    []string `json:"work_done"`
-	} `json:"state"`
+	Model     string `json:"model"`
+	State     string `json:"state"`
 	Questions map[string]struct {
 		Type         string          `json:"type"`
 		Instructions string          `json:"instructions"`
@@ -81,9 +76,19 @@ func fix411Envelope(t *testing.T, body []byte) fix411EnvelopeShape {
 	if env.Model != "clef" {
 		t.Errorf("model = %q, want clef", env.Model)
 	}
-	if env.State.Intent == "" || len(env.State.Constraints) == 0 ||
-		len(env.State.Evidence) == 0 || len(env.State.WorkDone) == 0 {
+	// The wire state must be a string holding the JSON-encoded state object.
+	var state soTemplateState
+	if err := json.Unmarshal([]byte(env.State), &state); err != nil {
+		t.Fatalf("wire state must be a JSON string encoding an object: %s (%v)", env.State, err)
+	}
+	if state.Intent == "" || len(state.Constraints) == 0 ||
+		len(state.Evidence) == 0 || len(state.WorkDone) == 0 {
 		t.Errorf("state missing intent/constraint/evidence/work_done: %s", body)
+	}
+	if want := fix411State(); state.Intent != want.Intent ||
+		len(state.Constraints) != len(want.Constraints) || len(state.Evidence) != len(want.Evidence) ||
+		len(state.WorkDone) != len(want.WorkDone) {
+		t.Errorf("decoded state = %+v, want %+v", state, want)
 	}
 	// No history or tools outside state; no credential in the body at all.
 	for _, leak := range []string{"fix411-SENTINEL-DO-NOT-LEAK", `"api_key"`, `"x-api-key"`,
