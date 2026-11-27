@@ -88,8 +88,18 @@ func withReceiptLock(fn func() error) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	lockDir := filepath.Dir(path)
+	_, statErr := os.Lstat(lockDir)
+	dirNew := os.IsNotExist(statErr)
+	if err := os.MkdirAll(lockDir, 0700); err != nil {
 		return err
+	}
+	if dirNew {
+		// The ledger directory entry lives in its parent; sync that too so a
+		// fresh install's first append survives a crash.
+		if err := syncReceiptDir(filepath.Dir(lockDir)); err != nil {
+			return err
+		}
 	}
 	if st, err := os.Lstat(path); err == nil {
 		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
