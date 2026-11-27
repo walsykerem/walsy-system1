@@ -549,7 +549,7 @@ func (d *decisionBridge) decideFrame(raw []byte) routeResult {
 
 func (d *decisionBridge) decideFrameDetailed(raw []byte) (routeResult, soDecision) {
 	// YC8 trust boundary: refuse a frame above the transport budget before any parse or SO call.
-	if len(raw) >= maxHTTPFrame {
+	if len(raw) > maxHTTPFrame {
 		return passResult("frame-too-large", false), soDecision{}
 	}
 	f, err := decodeFrame(raw)
