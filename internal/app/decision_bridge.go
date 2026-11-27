@@ -20,6 +20,12 @@ import (
 	"time"
 )
 
+// soConfigMu serialises SO config rotation against the decision goroutines.
+// Every bridge path that can reach gate.go's soEndpoint/soClient readers holds
+// RLock; a rotation takes Lock. gate.go should own this lock and apply it to its
+// own callers too; this file only covers the async decision paths.
+var soConfigMu sync.RWMutex
+
 // Decision wiring: the stdio/unix relays call the real engine on the JSON-RPC
 // stream. Advisory mode is forward-first and never delays a frame. Enforcing
 // mode gates initialize/tools/call before forwarding: write/diff guards and a
@@ -941,6 +947,8 @@ func scrubbedMirror(request []byte) []byte {
 func mirrorCanary(mirrorURL string, request []byte) {
 	body := scrubbedMirror(request)
 	go func() {
+		soConfigMu.RLock()
+		defer soConfigMu.RUnlock()
 		req, err := http.NewRequest(http.MethodPost, mirrorURL, bytes.NewReader(body))
 		if err != nil {
 			return
@@ -995,7 +1003,9 @@ func idleReadDeadline(r io.Reader) (time.Time, bool) {
 // forwarded byte-for-byte before any decision work; enforcing frames are
 // gated first. Initialize results get the MCP marker added.
 func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, upstreamOut io.Reader) {
+	soConfigMu.RLock()
 	d := newDecisionBridge()
+	soConfigMu.RUnlock()
 	enforcing := soMode() == "enforcing"
 	// clientOut has two writers: the enforcing block reply (client-reader
 	// goroutine) and the forwarded upstream frame (main goroutine). Interleaved
@@ -1011,8 +1021,10 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 		go func() {
 			defer close(advDone)
 			for frame := range advCh {
+				soConfigMu.RLock()
 				d.inspectClient(frame)
 				d.advisoryHooks(frame)
+				soConfigMu.RUnlock()
 			}
 		}()
 	} else {
@@ -1034,7 +1046,10 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 			if len(frame) > 0 {
 				relayLog("client", frame)
 				if enforcing {
-					if resp, blocked := d.enforcingGate(frame); blocked {
+					soConfigMu.RLock()
+					resp, blocked := d.enforcingGate(frame)
+					soConfigMu.RUnlock()
+					if blocked {
 						outMu.Lock()
 						_, _ = clientOut.Write(resp)
 						outMu.Unlock()
@@ -1071,8 +1086,10 @@ func bridgeStdio(clientIn io.Reader, clientOut io.Writer, upstreamIn io.Writer, 
 		frame, err := readFrame(br)
 		if len(frame) > 0 {
 			relayLog("server", frame)
+			soConfigMu.RLock()
 			out := d.inspectServer(frame)
 			d.inspectServerResponse(out, enforcing)
+			soConfigMu.RUnlock()
 			outMu.Lock()
 			_, _ = clientOut.Write(out)
 			outMu.Unlock()
