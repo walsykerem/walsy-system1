@@ -217,6 +217,31 @@ func TestUIComboAddSheet(t *testing.T) {
 	}
 }
 
+// A step saved with an API weight is still the same provider/model pair: the add
+// form must refuse it as a duplicate instead of appending a second row.
+func TestUIComboAddRefusesWeightedDuplicate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := NewDashboardHandler()
+	const name = "Evren System One"
+	if err := saveModels(map[string][]string{name: {"clef"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCombo([]stateStep{{Provider: name, Model: "clef", Weight: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postFormTest(t, h, "/ui/combo/add?sheet=1", url.Values{"provider": {name}, "model": {"clef"}})
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "MODEL+ALREADY+IN+COMBO") {
+		t.Fatalf("weighted duplicate add: location = %q", loc)
+	}
+	steps, err := loadCombo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Weight != 2 {
+		t.Fatalf("combo after duplicate add = %+v", steps)
+	}
+}
+
 // A duplicate key and a full list are refusals, not silent successes; a key for
 // a provider that does not exist must not leave a file behind.
 func TestUIKeyAddRefusals(t *testing.T) {
