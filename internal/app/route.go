@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"math"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -222,9 +223,19 @@ func scrubText(s string) string {
 	return joined
 }
 
+// untrustedPEMBlock matches a whole private-key block, body and footer included.
+// It runs on the raw text, before scrubText collapses the newlines.
+var untrustedPEMBlock = regexp.MustCompile(`-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?(?:-----END[ A-Z]*PRIVATE KEY-----|$)`)
+
+// untrustedQuotedSecret matches a quoted credential assignment whose value may
+// contain backslash-escaped quotes, so no secret suffix survives the match.
+var untrustedQuotedSecret = regexp.MustCompile(`(?i)\\?["']?\b(password|passwd|pwd|secret|api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key|token|aws_secret_access_key|aws_access_key_id)\b\\?["']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')`)
+
 // scrubUntrustedField also removes quoted/JSON-shaped credential assignments
 // that scrubText's token pass cannot see, before trust-boundary text goes out.
 func scrubUntrustedField(s string) string {
+	s = untrustedPEMBlock.ReplaceAllString(s, credentialWithheld)
+	s = untrustedQuotedSecret.ReplaceAllString(s, credentialWithheld)
 	s = diffSecretAssign.ReplaceAllString(scrubText(s), credentialWithheld)
 	for _, re := range diffSecretPatterns {
 		s = re.ReplaceAllString(s, credentialWithheld)
@@ -570,6 +581,13 @@ func routeInner(state string, p *pin) routeResult {
 		// reason and posts nothing when a declared field is absent.
 		if !strings.HasPrefix(strings.TrimSpace(state), "{") {
 			q.Requires = nil
+		}
+		// A declared field that is absent is a local refusal, not a classifier
+		// outage: no POST, and a steer that the enforcing relay blocks on.
+		if !questionApplicable(q, state) {
+			r := passResult("no-applicable-question", true)
+			r.Steer = SteerText("no-applicable-question", "")
+			return r
 		}
 		d = askSOQ(state, q)
 	} else {
