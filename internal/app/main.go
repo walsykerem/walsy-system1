@@ -1,12 +1,18 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 )
 
 // v1: stdio relay. Client spawns this binary as its MCP `type:local` command
@@ -67,7 +73,21 @@ func runStdio(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: walsy-system1 [-transport stdio] <upstream MCP command> [args...]")
 		os.Exit(2)
 	}
-	cmd := exec.Command(args[0], args[1:]...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A signal cancels the same context as a vanished client stream, so one
+	// upstream lifecycle rule covers both: the child is always reaped.
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	go func() {
+		select {
+		case <-sigCtx.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	// Upstream stderr shares the metric channel; give it a distinct prefix the
 	// upstream cannot forge as a session metric (metric lines start with '{').
 	cmd.Stderr = &prefixWriter{w: os.Stderr, prefix: []byte("upstream: ")}
@@ -88,11 +108,50 @@ func runStdio(args []string) {
 	}
 
 	emitMetric(metric{Seq: 1, PID: os.Getpid(), Decision: "passthrough", Reason: "shadow", Passthrough: true})
-	relayStdio(os.Stdin, os.Stdout, upIn, upOut)
+	clientGone, relayed := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(relayed)
+		relayStdio(&notifyEOF{r: os.Stdin, gone: clientGone}, os.Stdout, upIn, upOut)
+	}()
+	select {
+	case <-relayed:
+	case <-sigCtx.Done():
+		cancel()
+	case <-clientGone:
+		// stdin is half-closed: a well-behaved child flushes and exits. Only
+		// kill it if it still holds the relay after the drain window.
+		select {
+		case <-relayed:
+		case <-sigCtx.Done():
+			cancel()
+		case <-time.After(upstreamDrainGrace):
+			cancel()
+		}
+	}
+	// No upstream may outlive the relay that spawned it.
+	cancel()
 	// Record the upstream exit in the session metric boolean field; never as a secret.
 	if err := cmd.Wait(); err != nil {
 		emitMetric(metric{Seq: 2, PID: os.Getpid(), UpstreamExit: "error", Decision: "passthrough"})
 	}
+}
+
+const upstreamDrainGrace = 2 * time.Second
+
+// notifyEOF marks a vanished client stream without killing the upstream: the
+// relay half-closes stdin first so a child can flush its last reply.
+type notifyEOF struct {
+	r    io.Reader
+	gone chan struct{}
+	once sync.Once
+}
+
+func (c *notifyEOF) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if err != nil {
+		c.once.Do(func() { close(c.gone) })
+	}
+	return n, err
 }
 
 // prefixWriter tags each upstream stderr Write so it cannot be mistaken for a

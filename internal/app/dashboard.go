@@ -13,8 +13,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
 
 //go:embed web/index.html web/style.css
@@ -1055,6 +1058,14 @@ func RunDashboard(addr string) error {
 
 // serveDashboard serves the dashboard on an already bound loopback listener.
 func serveDashboard(ln net.Listener) error {
+	return serveDashboardContext(context.Background(), ln)
+}
+
+const dashboardShutdownTimeout = 5 * time.Second
+
+// serveDashboardContext drains in-flight requests when ctx is done, instead of
+// leaving a loopback server behind after its MCP transport is gone.
+func serveDashboardContext(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{
 		Addr:              ln.Addr().String(),
 		Handler:           NewDashboardHandler(),
@@ -1063,7 +1074,19 @@ func serveDashboard(ln net.Listener) error {
 		WriteTimeout:      buildTimeout + httpWriteTimeout,
 		IdleTimeout:       httpIdleTimeout,
 	}
-	return srv.Serve(ln)
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, done := context.WithTimeout(context.Background(), dashboardShutdownTimeout)
+			defer done()
+			_ = srv.Shutdown(shutdownCtx)
+		case <-stopped:
+		}
+	}()
+	err := srv.Serve(ln)
+	close(stopped)
+	return err
 }
 
 // startDashboardWithMCP serves the dashboard next to an MCP transport, so the
@@ -1075,8 +1098,10 @@ func startDashboardWithMCP(port string) {
 		fmt.Fprintln(os.Stderr, "dashboard: not started:", err)
 		return
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		if err := serveDashboard(ln); err != nil && err != http.ErrServerClosed {
+		defer stop()
+		if err := serveDashboardContext(ctx, ln); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintln(os.Stderr, "dashboard:", err)
 		}
 	}()
