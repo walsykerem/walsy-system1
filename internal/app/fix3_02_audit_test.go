@@ -23,3 +23,36 @@ func TestFix302RiskKeyDenyWordSelfBlock(t *testing.T) {
 		t.Errorf("finalAudit(%s) = OK=true, want refusal: the sentence denies the work", denied)
 	}
 }
+
+// Restating a risk name is not evidence, even when the name contains an
+// evidence substring ("verified" inside "unverified").
+func TestFix302RiskNameAloneIsNotProof(t *testing.T) {
+	cases := []string{
+		`{"risk":["unverified tool"],"done":["unverified tool"]}`,
+		`{"risk":["untested feature"],"done":["untested feature"]}`,
+	}
+	for _, state := range cases {
+		if v := finalAudit(state); v.OK {
+			t.Errorf("finalAudit(%s) = OK=true, want refusal: name alone is not proof", state)
+		}
+	}
+	// Explicit evidence outside the risk name stays coverable.
+	ok := `{"risk":["unverified tool"],"done":["verified unverified tool"]}`
+	if v := finalAudit(ok); !v.OK {
+		t.Errorf("finalAudit(%s) = OK=false Missing=%v, want OK", ok, v.Missing)
+	}
+}
+
+// Denials outside the single risk mention must survive, including ones that
+// share letters with the risk key or repeat the key.
+func TestFix302DenialOutsideRiskMentionIsKept(t *testing.T) {
+	cases := []string{
+		`{"risk":["test"],"done":["test verified, the suite was untested"]}`,
+		`{"risk":["open"],"done":["verified open but still open"]}`,
+	}
+	for _, state := range cases {
+		if v := finalAudit(state); v.OK {
+			t.Errorf("finalAudit(%s) = OK=true, want refusal: denial outside the risk mention", state)
+		}
+	}
+}
