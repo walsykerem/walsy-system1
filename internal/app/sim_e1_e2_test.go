@@ -457,14 +457,20 @@ func TestSimE2W24ArtifactFingerprint(t *testing.T) {
 	shippedDigest := ""
 	if _, err := os.Stat(bin); err == nil {
 		digest := w24_SHA256File(t, bin)
-		// The checked-in digest describes the darwin build. Linux CI pins the
-		// native build hash in a digest fixture instead of baking a second literal.
-		_, pinned := simReadDigest(t, simMachODigest())
-		want := pinned.Target.FileSHA256
-		if p := os.Getenv("WALSY_SIM_DIGEST"); p != "" {
-			_, pinned := simReadDigest(t, p)
-			want = pinned.Target.FileSHA256
+		// The checked-in root digest describes the darwin build. Non-darwin
+		// builds are ELF, so they compare against the native CI pin instead.
+		digestPath := filepath.Join(audFRepoRoot(t), "testdata", "ci-linux", "walsy-system1.digest.json")
+		if runtime.GOOS == "darwin" {
+			digestPath = simMachODigest()
+			if !filepath.IsAbs(digestPath) {
+				digestPath = filepath.Join(audFRepoRoot(t), digestPath)
+			}
 		}
+		if p := os.Getenv("WALSY_SIM_DIGEST"); p != "" {
+			digestPath = p
+		}
+		_, pinned := simReadDigest(t, digestPath)
+		want := pinned.Target.FileSHA256
 		if digest != want {
 			t.Fatalf("shipped binary digest = %s, want %s", digest, want)
 		}
