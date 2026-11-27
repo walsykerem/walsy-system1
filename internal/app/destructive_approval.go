@@ -107,6 +107,16 @@ func destructiveApproved(d soDecision) bool {
 
 // destructiveFingerprint hashes the answer alone, not the prompt: the same
 // label/confidence returned twice is a replay, not a second independent vote.
+// destructiveDenied is an explicit, high-confidence refusal. It is terminal:
+// it must never be retried or overwritten by a later approval.
+func destructiveDenied(d soDecision) bool {
+	return d.Choice == "deny" && !d.TimedOut && d.Reason == "" &&
+		(d.AnswerType == "" || d.AnswerType == "choice") &&
+		!math.IsNaN(d.Conf) && !math.IsInf(d.Conf, 0) && d.Conf >= destructiveConfidenceCut
+}
+
+// destructiveFingerprint hashes the answer alone, not the prompt: the same
+// label/confidence returned twice is a replay, not a second independent vote.
 func destructiveFingerprint(d soDecision) string {
 	h := sha256.New()
 	writeField(h, d.Choice)
@@ -150,6 +160,17 @@ func approveDestructive(r destructiveRequest) destructiveApproval {
 		d := r.Ask(state, q)
 		out.Calls++
 		retried := false
+		if destructiveDenied(d) {
+			// Explicit high-confidence denial is terminal: no re-ask, and no
+			// later approval may overwrite it.
+			fp := destructiveFingerprint(d)
+			sum := sha256.Sum256([]byte(state))
+			out.Verdicts = append(out.Verdicts, destructiveVerdict{
+				Slot: slot, Label: d.Choice, Confidence: d.Conf, Question: q.Instructions,
+				StateDigest: hex.EncodeToString(sum[:]), Fingerprint: fp,
+			})
+			return cancel("approval-cancelled")
+		}
 		if !destructiveApproved(d) {
 			// Weak/no verdict: tighten the state, revise the question and
 			// restate the intent so the model is judging the same operation.

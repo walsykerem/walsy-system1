@@ -153,6 +153,22 @@ func TestFix404AnyDropCancelsWithoutRunning(t *testing.T) {
 	}
 }
 
+func TestFix404ExplicitDenyIsTerminalNotRetried(t *testing.T) {
+	// A high-confidence deny must not be re-asked; a following approve must
+	// not overwrite it and the action must never run.
+	ask := &fix404Ask{answers: []soDecision{
+		fix404Deny(0.95), fix404Approve(0.99), fix404Approve(0.99), fix404Approve(0.99),
+	}}
+	ran, rolled := 0, 0
+	got := approveDestructive(fix404Request(ask, &ran, &rolled))
+	if got.Approved || got.Reason != "approval-cancelled" || ran != 0 || rolled == 0 {
+		t.Fatalf("explicit deny must cancel without running: %+v ran=%d rolled=%d", got, ran, rolled)
+	}
+	if ask.askCalls() != 1 || len(got.Verdicts) != 1 || got.Verdicts[0].Label != "deny" || got.Verdicts[0].Retried {
+		t.Fatalf("deny must be the single terminal verdict: calls=%d %+v", ask.askCalls(), got.Verdicts)
+	}
+}
+
 func TestFix404ThresholdIsExactlyPointEight(t *testing.T) {
 	// Identical answers are replays; vary ResponseID so the three 0.8
 	// decisions are independent while still probing the exact threshold.
