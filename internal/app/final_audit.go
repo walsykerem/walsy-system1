@@ -97,11 +97,38 @@ func riskCovered(key string, done map[string]bool) bool {
 	for d := range done {
 		// Judge the claim, not the risk name it quotes: a risk called
 		// "pending migration" can never be mentioned without its deny word.
-		if mentionsKey(d, key) && hasEvidence(d) && !deniesWork(strings.ReplaceAll(d, key, " ")) {
+		if !mentionsKey(d, key) {
+			continue
+		}
+		// Evidence and denial are judged only on the text outside the risk name,
+		// so a name that contains a denial word or an evidence verb cannot count.
+		rest := stripKey(d, key)
+		if hasEvidence(rest) && !deniesWork(rest) {
 			return true
 		}
 	}
 	return false
+}
+
+// stripKey removes only the word-bounded occurrences of key from s, the same
+// boundary rule mentionsKey uses, so "untested" survives stripping "test".
+func stripKey(s, key string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if key != "" && strings.HasPrefix(s[i:], key) {
+			end := i + len(key)
+			before := i == 0 || !isWordByte(s[i-1])
+			after := end == len(s) || !isWordByte(s[end])
+			if before && after {
+				b.WriteByte(' ')
+				i = end
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // mentionsKey requires the risk key to sit on word boundaries, so a short key
