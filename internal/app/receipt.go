@@ -61,6 +61,17 @@ type receiptChain struct {
 
 var errReceiptUnsafeFile = errors.New("receipt.chain is not a regular file")
 
+// syncReceiptDir makes newly created ledger directory entries survive a crash.
+// It is a var only so the focused test can count calls without a new dependency.
+var syncReceiptDir = func(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
 // receiptLockPath is stable even when the store is replaced.
 func receiptLockPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -127,7 +138,10 @@ func linkReceiptEvidence(store, evidence string) error {
 	}
 	st, err := os.Lstat(evidence)
 	if os.IsNotExist(err) {
-		return os.Link(store, evidence)
+		if err := os.Link(store, evidence); err != nil {
+			return err
+		}
+		return syncReceiptDir(filepath.Dir(evidence))
 	}
 	if err != nil {
 		return err
@@ -313,11 +327,14 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
+		newStore := false
 		if st, err := os.Lstat(path); err == nil {
 			if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
 				return errReceiptUnsafeFile
 			}
-		} else if !os.IsNotExist(err) {
+		} else if os.IsNotExist(err) {
+			newStore = true
+		} else {
 			return err
 		}
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
@@ -334,6 +351,11 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 		}
 		if err := f.Sync(); err != nil {
 			return err
+		}
+		if newStore {
+			if err := syncReceiptDir(filepath.Dir(path)); err != nil {
+				return err
+			}
 		}
 		// The line is durable now: advance before the sidecar steps, or a later
 		// failure reuses this seq and breaks every later append.
@@ -367,6 +389,11 @@ func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 // writeReceiptHead replaces the sidecar atomically; a kill during a rewrite
 // must not leave a torn digest that looks like a rollback.
 func writeReceiptHead(path string, sum [32]byte) error {
+	_, statErr := os.Lstat(path)
+	newHead := os.IsNotExist(statErr)
+	if statErr != nil && !newHead {
+		return statErr
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".receipt-head-*")
 	if err != nil {
 		return err
@@ -384,7 +411,13 @@ func writeReceiptHead(path string, sum [32]byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if newHead {
+		return syncReceiptDir(filepath.Dir(path))
+	}
+	return nil
 }
 
 // canonicalJSON returns a byte-stable JSON encoding (sorted keys via encoding/json).
