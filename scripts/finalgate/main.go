@@ -212,7 +212,11 @@ func ask(c claim) (string, float64, error) {
 	}
 	// encoding/json would accept duplicate/case-variant keys and trailing docs,
 	// letting a malformed reply turn a missing acceptance into done.
-	if _, err := app.StrictSOObject(raw, map[string]bool{"answers": true}); err != nil {
+	// Same supported top-level keys as scripts/releasegate decodeResponse.
+	if _, err := app.StrictSOObject(raw, map[string]bool{
+		"model": true, "routed_model": true, "answers": true, "usage": true,
+		"session_id": true, "prompt_cache_key": true, "id": true,
+	}); err != nil {
 		return "", 0, fmt.Errorf("malformed SO response: %w", err)
 	}
 	var out reply
