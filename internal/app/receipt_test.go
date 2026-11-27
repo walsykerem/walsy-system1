@@ -54,53 +54,42 @@ func TestLoadReceiptChainAcceptsInitialEmptyStore(t *testing.T) {
 // A tail dropped or rewritten at a line boundary still parses as a shorter,
 // internally consistent chain: only the head sidecar records the newest line.
 func TestLoadReceiptChainRejectsTailRollback(t *testing.T) {
-	rewriteLast := func(t *testing.T, lines []string) []string {
+	t.Setenv("HOME", t.TempDir())
+	chain := &receiptChain{}
+	for _, d := range []string{decPin, decPin} {
+		if _, err := chain.appendReceipt(receipt{Event: "decision", Decision: d, Method: "tools/call"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path, err := receiptStorePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	write := func(lines []string) {
 		t.Helper()
-		var r receipt
-		if err := json.Unmarshal([]byte(lines[1]), &r); err != nil {
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		r.Decision = decPass
-		body, err := canonicalJSON(r)
-		if err != nil {
-			t.Fatal(err)
+		if got := loadReceiptChain(); got != nil {
+			t.Fatalf("rolled-back chain loaded as seq %d", got.seq)
 		}
-		return []string{lines[0], string(body)}
 	}
-	cases := []struct {
-		name   string
-		mutate func(t *testing.T, lines []string) []string
-	}{
-		{"deleted newest receipt", func(_ *testing.T, lines []string) []string { return lines[:1] }},
-		{"rewritten newest receipt", rewriteLast},
+	write(lines[:1]) // newest receipt deleted
+	var last receipt
+	if err := json.Unmarshal([]byte(lines[1]), &last); err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-
-			chain := &receiptChain{}
-			for _, d := range []string{decPin, decPin} {
-				if _, err := chain.appendReceipt(receipt{Event: "decision", Decision: d, Method: "tools/call"}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			path, err := receiptStorePath()
-			if err != nil {
-				t.Fatal(err)
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-			if err := os.WriteFile(path, []byte(strings.Join(c.mutate(t, lines), "\n")+"\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if got := loadReceiptChain(); got != nil {
-				t.Fatalf("rolled-back chain loaded as seq %d", got.seq)
-			}
-		})
+	last.Decision = decPass
+	body, err := canonicalJSON(last)
+	if err != nil {
+		t.Fatal(err)
 	}
+	write([]string{lines[0], string(body)}) // newest receipt rewritten
 }
 
 // A post-write failure (a foreign evidence file is refused) must leave the
