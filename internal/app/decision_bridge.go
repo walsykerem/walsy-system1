@@ -360,6 +360,48 @@ func passesKeyConfRule(d soDecision) bool {
 	return !d.MarginKnown || d.Margin >= 0.10
 }
 
+// reaskLowConfidence gives one bounded second look to a below-cut general
+// decision over the same route/SO wire path, label set and cut. A different
+// label or another weak answer keeps the original abstain.
+// shortcut: at most one extra POST; skipped without a weak probability margin
+// or when the breaker, budget or a missing Requires already suppresses SO.
+// Upgrade only with a measured sweep.
+func (d *decisionBridge) reaskLowConfidence(state string, first routeResult) routeResult {
+	if first.Reason != "so-low-conf" || first.LastDecision.Choice == "" ||
+		!first.LastDecision.MarginKnown || first.LastDecision.Margin >= 0.10 ||
+		routerBreakerOpen("systemone") || routerBudgetLeft() <= 0 {
+		return first
+	}
+	var env stateEnvelope
+	if json.Unmarshal([]byte(state), &env) != nil {
+		return first
+	}
+	if strings.HasPrefix(strings.TrimSpace(state), "{") {
+		if it, ok := decisionItemFor(env.Item); ok && !questionApplicable(it.question(), state) {
+			return first
+		}
+	}
+	var obj map[string]any
+	if json.Unmarshal([]byte(state), &obj) != nil {
+		return first
+	}
+	text, _ := obj["state"].(string)
+	if text == "" {
+		return first
+	}
+	obj["state"] = text + " recheck: same decision, exact labels, no new facts"
+	tightened, err := json.Marshal(obj)
+	if err != nil {
+		return first
+	}
+	second := route(string(tightened), d.pin)
+	if second.Decision == decPin && second.LastDecision.Choice == first.LastDecision.Choice &&
+		passesKeyConfRule(second.LastDecision) {
+		return second
+	}
+	return first
+}
+
 // cacheKey binds the request key to the engine generation and pinned oracle
 // identity. A rotated or swapped-out engine never reads another engine's cell;
 // generation is identity, not a TTL.
@@ -442,7 +484,10 @@ func (d *decisionBridge) decideWithKey(request []byte, base *[32]byte) routeResu
 		admitStats.record(r.Decision == decPin)
 		return r
 	}
-	r := d.flight.do(key, func() routeResult { return route(state, d.pin) })
+	r := d.flight.do(key, func() routeResult {
+		first := route(state, d.pin)
+		return d.reaskLowConfidence(state, first)
+	})
 	// Shadow only: preflight NEVER changes r. Recorded after r is final.
 	recordPreflight(p, r, d.preflight)
 	// FA5: an ambiguous shadow verdict is still probed in advisory mode, but
