@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -103,8 +104,8 @@ func linkReceiptEvidence(store, evidence string) error {
 }
 
 // receiptHeadPath is a durable sidecar written after every successful append.
-// Its presence means a chain once held records, so an empty or missing store
-// is truncation/loss, not a fresh chain.
+// It records the newest digest, so an empty, shorter or rewritten store is
+// truncation/loss, not a fresh chain.
 func receiptHeadPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -176,6 +177,16 @@ func loadReceiptChain() *receiptChain {
 		}
 		sum := chainHash(prev, body)
 		prev = sum[:]
+	}
+	if populated {
+		hp, err := receiptHeadPath()
+		if err != nil {
+			return nil
+		}
+		recorded, err := os.ReadFile(hp)
+		if err != nil || strings.TrimSpace(string(recorded)) != hex.EncodeToString(prev) {
+			return nil
+		}
 	}
 	return &receiptChain{head: prev, seq: len(lines), frames: frames}
 }
