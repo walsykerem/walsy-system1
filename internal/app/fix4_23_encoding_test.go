@@ -55,4 +55,22 @@ func TestFix4_23AuditTailEncodingNormalization(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("encoding-normalized tail differs\ngot  = %+v\nwant = %+v", got, want)
 	}
+
+	// BOM directly after a bare CR must not survive normalization.
+	crBOM := []byte{0xEF, 0xBB, 0xBF}
+	crBOM = append(crBOM, []byte(`{"event":"old","status":"ok"}`)...)
+	crBOM = append(crBOM, []byte("\r")...)
+	crBOM = append(crBOM, 0xEF, 0xBB, 0xBF)
+	crBOM = append(crBOM, []byte(`{"event":"new","status":"error_-32001"}`)...)
+	crBOM = append(crBOM, []byte("\r")...)
+	if err := os.WriteFile(path, crBOM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gotCR, err := auditLogRowsTail(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotCR) != 2 {
+		t.Fatalf("BOM-after-CR rows = %d, want 2: %+v", len(gotCR), gotCR)
+	}
 }

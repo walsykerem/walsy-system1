@@ -252,9 +252,10 @@ func auditLogRows() ([]auditRow, error) {
 func normalizeAuditTail(data []byte) []byte {
 	s := strings.TrimPrefix(string(data), "\ufeff")
 	s = strings.ToValidUTF8(s, "\ufffd")
-	s = strings.ReplaceAll(s, "\n\ufeff", "\n")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	return []byte(strings.ReplaceAll(s, "\r", "\n"))
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "\n\ufeff", "\n")
+	return []byte(s)
 }
 
 // auditLogRowsTail returns at most limit newest rows, reading only the file's
