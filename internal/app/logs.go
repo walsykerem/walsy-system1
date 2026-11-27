@@ -247,6 +247,16 @@ func auditLogRows() ([]auditRow, error) {
 	return rows, nil
 }
 
+// normalizeAuditTail makes hand-edited JSONL readable: a leading BOM, CRLF/CR
+// endings and invalid UTF-8 bytes must not hide otherwise valid rows.
+func normalizeAuditTail(data []byte) []byte {
+	s := strings.TrimPrefix(string(data), "\ufeff")
+	s = strings.ToValidUTF8(s, "\ufffd")
+	s = strings.ReplaceAll(s, "\n\ufeff", "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return []byte(strings.ReplaceAll(s, "\r", "\n"))
+}
+
 // auditLogRowsTail returns at most limit newest rows, reading only the file's
 // tail. The UI opens this on every sheet click; a full scan of a large audit
 // file made the LOGS sheet render megabytes of rows and stall the click.
@@ -287,6 +297,7 @@ func auditLogRowsTail(limit int) ([]auditRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = normalizeAuditTail(data)
 	if off > 0 {
 		// Seek may start mid-line; only lines after the first newline are whole.
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {

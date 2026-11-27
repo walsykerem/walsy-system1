@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,24 +73,26 @@ func encString(s string) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
+// An exact rational keeps distinct large JSON integers in distinct cells;
+// float64 collapsed them and leaked one state's decision into another.
 func canonNumber(raw string) string {
-	f, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
+	if len(raw) > 1024 {
 		return "n:" + raw
 	}
-	if math.IsNaN(f) {
-		return "NaN"
+	if i := strings.IndexAny(raw, "eE"); i >= 0 {
+		exp, err := strconv.Atoi(raw[i+1:])
+		if err != nil || exp > 4096 || exp < -4096 {
+			return "n:" + raw
+		}
 	}
-	if math.IsInf(f, 1) {
-		return "Inf"
+	r, ok := new(big.Rat).SetString(raw)
+	if !ok {
+		return "n:" + raw
 	}
-	if math.IsInf(f, -1) {
-		return "-Inf"
+	if r.Sign() == 0 {
+		return "0"
 	}
-	if f == 0 {
-		f = 0 // fold -0
-	}
-	return strconv.FormatFloat(f, 'g', -1, 64)
+	return r.RatString()
 }
 
 func encodeCanon(v any, b *strings.Builder) {
@@ -352,17 +354,13 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 	s.mu.Lock()
 	d, expiresAt, hit := s.lookupLocked(key)
 	if hit {
-		s.mu.Unlock()
 		c.warmMu.Lock()
 		c.warmDec[k] = d
 		c.warmExpires[k] = expiresAt.Add(warmStaleGrace)
 		c.warmMu.Unlock()
+		s.mu.Unlock()
 		if hot {
-			// Async TTL refresh from a lookup hit: no second SO POST.
-			go func(kk [32]byte, dd cachedDecision) {
-				c.store(kk, dd)
-				c.refreshDone(kk)
-			}(k, d)
+			c.refreshDone(k) // handoff only: a hit must never renew the cell TTL
 		}
 		return d, true
 	}
@@ -374,6 +372,7 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 		c.warmMu.Unlock()
 		if ok && time.Now().Before(deadline) {
 			s.storeLocked(key, warm)
+			s.idx[key].Value.(*cacheCell).expiresAt = deadline
 			s.mu.Unlock()
 			c.refreshDone(k) // no async refresh was launched on this warm hit
 			return warm, true
@@ -395,6 +394,10 @@ func (c *shardedCache) lookupForDecision(k [32]byte) (cachedDecision, bool) {
 func (c *shardedCache) store(k [32]byte, d cachedDecision) {
 	s := c.shard(k)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.storeLocked(hex.EncodeToString(k[:]), d)
+	s.mu.Unlock()
+	c.warmMu.Lock()
+	delete(c.warmDec, k)
+	delete(c.warmExpires, k)
+	c.warmMu.Unlock()
 }

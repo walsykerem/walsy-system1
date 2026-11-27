@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // receipt is the minimal, redacted audit record. It carries no prompt, key,
@@ -47,10 +48,10 @@ type receipt struct {
 	BuildSHA      string `json:"build_sha"`
 }
 
-// receiptChain is a single-process hash chain persisted as newline-delimited
-// JSON. Each append covers the previous digest, so an edited or dropped line
-// breaks verification. Directory 0700, file 0600; a symlink or non-regular
-// file is refused.
+// receiptChain is a hash chain persisted as newline-delimited JSON. Each append
+// covers the previous digest, so an edited or dropped line breaks verification.
+// A cross-process lock covers load, hash, write and head update; the on-disk
+// tail is authoritative. Directory 0700, file 0600; symlinks are refused.
 type receiptChain struct {
 	mu     sync.Mutex
 	head   []byte
@@ -59,6 +60,44 @@ type receiptChain struct {
 }
 
 var errReceiptUnsafeFile = errors.New("receipt.chain is not a regular file")
+
+// receiptLockPath is stable even when the store is replaced.
+func receiptLockPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, routerDir, "receipt.chain.lock"), nil
+}
+
+// withReceiptLock serialises the whole read/hash/append/sidecar sequence across
+// processes. The in-process mutex is still needed for callers sharing a chain.
+func withReceiptLock(fn func() error) error {
+	path, err := receiptLockPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	if st, err := os.Lstat(path); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
+			return errReceiptUnsafeFile
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	return fn()
+}
 
 // receiptPath is the evidence-facing path: the chain lives in the per-user
 // evidence directory convention used by the arch-map artifacts.
@@ -133,6 +172,15 @@ func chainWasPopulated() (bool, error) {
 // loadReceiptChain rebuilds in-memory chain state from the persisted tail.
 // It fails closed (nil) on an unreadable, tampered or truncated chain.
 func loadReceiptChain() *receiptChain {
+	var out *receiptChain
+	if err := withReceiptLock(func() error { out = loadReceiptChainLocked(); return nil }); err != nil {
+		return nil
+	}
+	return out
+}
+
+// loadReceiptChainLocked rebuilds state while the caller holds the flock.
+func loadReceiptChainLocked() *receiptChain {
 	path, err := receiptStorePath()
 	if err != nil {
 		return &receiptChain{}
@@ -147,6 +195,15 @@ func loadReceiptChain() *receiptChain {
 			return &receiptChain{}
 		}
 		return nil
+	}
+	// A kill during a line write leaves an unterminated tail. It can never be
+	// a valid receipt: cut back to the last complete line under the lock.
+	if len(raw) > 0 && raw[len(raw)-1] != '\n' {
+		cut := bytes.LastIndexByte(raw, '\n') + 1
+		if err := os.Truncate(path, int64(cut)); err != nil {
+			return nil
+		}
+		raw = raw[:cut]
 	}
 	// A zero-length store is only a fresh chain if no prior append ever
 	// completed. A populated chain truncated in place must not reset to seq 1.
@@ -216,80 +273,118 @@ func receiptNonce() (string, error) {
 }
 
 // appendReceipt writes one chained receipt. It returns the new head digest.
+// The on-disk tail is authoritative: processes sharing the store reload it under
+// a cross-process lock, so no writer can reuse another writer's seq or prev.
 func (c *receiptChain) appendReceipt(r receipt) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// An outbound mirror of a frame already chained as a decision is the same
-	// request, not a second one. Unmatched server frames (no inbound receipt)
-	// still chain, so the outbound side keeps its own decision point.
-	if r.Event == "outbound_response" && r.FrameID != "" && c.frames[r.FrameID] {
-		return hex.EncodeToString(c.head), nil
-	}
-	nonce, err := receiptNonce()
-	if err != nil {
-		return "", err
-	}
-	r.Nonce = nonce
-	r.Seq = c.seq + 1
-	r.ResponseID = "none" // never fabricated, never "NEVER"
-	r.Choice = "redacted" // raw SO answer is never persisted
-	prev := hex.EncodeToString(c.head)
-	r.Prev = prev
-	body, err := canonicalJSON(r)
-	if err != nil {
-		return "", err
-	}
-	sum := chainHash(c.head, body)
-	path, err := receiptStorePath()
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return "", err
-	}
-	if st, err := os.Lstat(path); err == nil {
-		if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
-			return "", errReceiptUnsafeFile
+	var out string
+	err := withReceiptLock(func() error {
+		disk := loadReceiptChainLocked()
+		if disk == nil {
+			return errReceiptUnsafeFile
 		}
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		// An outbound mirror of a frame already chained as a decision is the same
+		// request, not a second one. Unmatched server frames (no inbound receipt)
+		// still chain, so the outbound side keeps its own decision point.
+		if r.Event == "outbound_response" && r.FrameID != "" && disk.frames[r.FrameID] {
+			out = hex.EncodeToString(disk.head)
+			return nil
+		}
+		nonce, err := receiptNonce()
+		if err != nil {
+			return err
+		}
+		r.Nonce = nonce
+		r.Seq = disk.seq + 1
+		r.ResponseID = "none" // never fabricated, never "NEVER"
+		r.Choice = "redacted" // raw SO answer is never persisted
+		prev := hex.EncodeToString(disk.head)
+		r.Prev = prev
+		body, err := canonicalJSON(r)
+		if err != nil {
+			return err
+		}
+		sum := chainHash(disk.head, body)
+		path, err := receiptStorePath()
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
+		if st, err := os.Lstat(path); err == nil {
+			if st.Mode()&os.ModeSymlink != 0 || !st.Mode().IsRegular() {
+				return errReceiptUnsafeFile
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := f.Chmod(0600); err != nil {
+			return err
+		}
+		line := append(body, '\n')
+		if _, err := f.Write(line); err != nil {
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			return err
+		}
+		// The line is durable now: advance before the sidecar steps, or a later
+		// failure reuses this seq and breaks every later append.
+		c.head, c.seq = sum[:], r.Seq
+		if r.Event != "outbound_response" && r.FrameID != "" {
+			if c.frames == nil {
+				c.frames = map[string]bool{}
+			}
+			c.frames[r.FrameID] = true
+		}
+		evidence, err := receiptPath()
+		if err != nil {
+			return err
+		}
+		if err := linkReceiptEvidence(path, evidence); err != nil {
+			return err
+		}
+		hp, err := receiptHeadPath()
+		if err != nil {
+			return err
+		}
+		if err := writeReceiptHead(hp, sum); err != nil {
+			return err
+		}
+		out = hex.EncodeToString(sum[:])
+		return nil
+	})
+	return out, err
+}
+
+// writeReceiptHead replaces the sidecar atomically; a kill during a rewrite
+// must not leave a torn digest that looks like a rollback.
+func writeReceiptHead(path string, sum [32]byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".receipt-head-*")
 	if err != nil {
-		return "", err
+		return err
 	}
-	defer f.Close()
+	tmp := f.Name()
+	defer os.Remove(tmp)
 	if err := f.Chmod(0600); err != nil {
-		return "", err
+		f.Close()
+		return err
 	}
-	line := append(body, '\n')
-	if _, err := f.Write(line); err != nil {
-		return "", err
+	if _, err := f.WriteString(hex.EncodeToString(sum[:]) + "\n"); err != nil {
+		f.Close()
+		return err
 	}
-	// The line is durable now: advance the in-memory chain before the sidecar
-	// steps, or a later failure reuses this seq and breaks every later append.
-	c.head, c.seq = sum[:], r.Seq
-	if r.Event != "outbound_response" && r.FrameID != "" {
-		if c.frames == nil {
-			c.frames = map[string]bool{}
-		}
-		c.frames[r.FrameID] = true
+	if err := f.Close(); err != nil {
+		return err
 	}
-	evidence, err := receiptPath()
-	if err != nil {
-		return "", err
-	}
-	if err := linkReceiptEvidence(path, evidence); err != nil {
-		return "", err
-	}
-	hp, err := receiptHeadPath()
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(hp, []byte(hex.EncodeToString(sum[:])+"\n"), 0600); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(sum[:]), nil
+	return os.Rename(tmp, path)
 }
 
 // canonicalJSON returns a byte-stable JSON encoding (sorted keys via encoding/json).

@@ -197,6 +197,13 @@ func routerRecord(tool string, ok bool, observed ...time.Duration) {
 	b := routerState.breakers[name]
 	now := time.Now()
 	if len(observed) > 0 && observed[0] > 0 {
+		// A fast answer supersedes stale slow samples before they can reopen
+		// the circuit; otherwise a recovered candidate stays marked dead
+		// until the whole ring rotates on its own.
+		if observed[0] <= routerState.latencyThreshold {
+			clear(b.latencies[:])
+			b.latencyIdx, b.latencyCount, b.slowStreak = 0, 0, 0
+		}
 		b.latencies[b.latencyIdx] = observed[0]
 		b.latencyIdx = (b.latencyIdx + 1) % routerState.latencyRing
 		if b.latencyCount < routerState.latencyRing {
@@ -274,6 +281,48 @@ func routerBreakerOpen(tool string) bool {
 	b.last = time.Now()
 	routerState.breakers[name] = b
 	return false
+}
+
+// routerRouteOrder ranks candidate names without probing or consuming a
+// half-open lease. Healthy candidates come first by descending score; ties keep
+// caller order. A timed-out or slow candidate has an open breaker and is
+// demoted, so failover reaches a live candidate first.
+func routerRouteOrder(names []string, scores map[string]float64) []string {
+	routerMu.Lock()
+	defer routerMu.Unlock()
+	routerInitLocked()
+	type ranked struct {
+		name  string
+		score float64
+		index int
+		dead  bool
+	}
+	items := make([]ranked, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for i, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		b := routerState.breakers[name]
+		dead := b.failures >= routerState.threshold ||
+			b.latencyCount >= 2 && b.latencyMedian() > routerState.latencyThreshold
+		items = append(items, ranked{name: name, score: scores[name], index: i, dead: dead})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].dead != items[j].dead {
+			return !items[i].dead
+		}
+		if items[i].score != items[j].score {
+			return items[i].score > items[j].score
+		}
+		return items[i].index < items[j].index
+	})
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.name)
+	}
+	return out
 }
 
 // routerMirrorURL returns the optional canary target, or empty when disabled.

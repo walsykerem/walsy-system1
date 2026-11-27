@@ -516,6 +516,57 @@ func readSOConfig() map[string]string {
 	return out
 }
 
+var soConfigKeyFlatten = strings.NewReplacer("-", "", "_", "", " ", "")
+
+// soConfigSecurityError rejects config shapes the permissive reader drops but
+// that can silently downgrade security: BOM, near-miss or duplicate
+// so_mode/approver keys, and a key without '='. Other keys stay ignored.
+func soConfigSecurityError() error {
+	path, err := soConfigPath()
+	if err != nil {
+		return nil
+	}
+	data, err := readStateFile(path)
+	if err != nil {
+		return nil
+	}
+	raw := string(data)
+	if strings.HasPrefix(raw, "\ufeff") {
+		return fmt.Errorf("config BOM rejected")
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, "\ufeff") {
+			return fmt.Errorf("config BOM rejected")
+		}
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		i := strings.IndexByte(line, '=')
+		key := line
+		if i >= 0 {
+			key = strings.TrimSpace(line[:i])
+		}
+		if key == "so_mode" || key == "approver" {
+			if i < 0 {
+				return fmt.Errorf("malformed %s", key)
+			}
+			if seen[key] {
+				return fmt.Errorf("duplicate %s", key)
+			}
+			seen[key] = true
+			continue
+		}
+		if flat := soConfigKeyFlatten.Replace(strings.ToLower(key)); flat == "somode" || flat == "approver" ||
+			strings.HasPrefix(key, "so_") && key != "so_go_confidence" {
+			return fmt.Errorf("unknown security key")
+		}
+	}
+	return nil
+}
+
 func validSOMode(v string) bool {
 	return v == soModeAdvisory || v == soModeEnforcing
 }
@@ -524,8 +575,13 @@ func validSOMode(v string) bool {
 // explicitly. soMode() keeps its fail-open string contract for in-process
 // callers; only main.go uses this check before any serve loop begins.
 func soModeStartupError() error {
-	cfg := readSOConfig()
 	envMode := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE")))
+	if !validSOMode(envMode) {
+		if err := soConfigSecurityError(); err != nil {
+			return fmt.Errorf("config.txt rejected: %v (mode fails closed to enforcing)", err)
+		}
+	}
+	cfg := readSOConfig()
 	fileMode := strings.ToLower(strings.TrimSpace(cfg["so_mode"]))
 	mode := fileMode
 	if validSOMode(envMode) {
@@ -547,13 +603,18 @@ func soModeStartupError() error {
 }
 
 // soMode resolves the active mode. Env overrides the file; unknown values are
-// ignored at both layers. Selecting enforcing requires a named approver from
-// WALSY_SO_APPROVER or config.txt; without one the flip is audited as denied.
+// ignored at both layers. Rejected security config fails closed to enforcing
+// and is audited; config is reread on every call so a flip needs no restart.
+// Selecting enforcing requires a named approver from WALSY_SO_APPROVER or
+// config.txt; without one the flip is audited as denied.
 func soMode() string {
 	cfg := readSOConfig()
 	var v string
 	if e := strings.ToLower(strings.TrimSpace(os.Getenv("WALSY_SO_MODE"))); validSOMode(e) {
 		v = e
+	} else if err := soConfigSecurityError(); err != nil {
+		routerAudit("so_config", "outcome", "rejected", "reason", "invalid")
+		return soModeEnforcing
 	} else if f := strings.ToLower(strings.TrimSpace(cfg["so_mode"])); validSOMode(f) {
 		v = f
 	}
