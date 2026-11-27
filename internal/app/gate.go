@@ -907,6 +907,10 @@ type soAutonomy struct {
 	seen map[[32]byte]bool
 }
 
+// soActionApproveLabel is the only SO label that authorizes an autonomous
+// action. Every other label (including refusals such as "hold") never acts.
+const soActionApproveLabel = "go"
+
 // soAutonomyResult reports whether the suggestion was executed. Reason is a
 // short refusal code; ID is the stable hashed suggestion identity.
 type soAutonomyResult struct {
@@ -921,6 +925,9 @@ type soAutonomyResult struct {
 func (a *soAutonomy) act(state string, q soQuestion, f layer0, suggestion string, op func() error) soAutonomyResult {
 	if !gate(f) {
 		return soAutonomyResult{Reason: "layer0-gate"}
+	}
+	if _, ok := q.Criteria[soActionApproveLabel]; !ok {
+		return soAutonomyResult{Reason: "no-approval-label"}
 	}
 	h := sha256.New()
 	h.Write(soOracleIdentity())
@@ -952,6 +959,9 @@ func (a *soAutonomy) act(state string, q soQuestion, f layer0, suggestion string
 	d := askSOQ(state, q)
 	if d.Reason != "" || d.TimedOut || d.Choice == "" || d.AnswerType == "noul" {
 		return refuse("so-degraded")
+	}
+	if d.Choice != soActionApproveLabel {
+		return refuse("not-approved")
 	}
 	if len(d.Probabilities) == 0 || invalidSOProbabilities(d.Probabilities) {
 		return refuse("invalid_probabilities")

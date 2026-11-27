@@ -155,6 +155,24 @@ func TestSimFix403DegradedAnswersDoNotAct(t *testing.T) {
 	}
 }
 
+func TestSimFix403HighConfidenceHoldDoesNotAct(t *testing.T) {
+	home := fix403Env(t)
+	var hits, acts atomic.Int64
+	fix403SO(t, fix403Answer(map[string]any{
+		"type": "choice", "choice": "hold", "confidence": 0.99,
+		"probabilities": map[string]float64{"hold": 0.95, "go": 0.05},
+	}), &hits, 0)
+	a := &soAutonomy{}
+	r := a.act(`{"item":"fix4-03"}`, fix403Question(), fix403Layer0(), "hold-suggestion",
+		func() error { acts.Add(1); return nil })
+	if r.Acted || acts.Load() != 0 {
+		t.Fatalf("high-confidence hold acted (reason %q, actions %d)", r.Reason, acts.Load())
+	}
+	if fix403Count(fix403Audit(t, home), `"status":"done"`) != 0 {
+		t.Fatal("hold wrote a done audit line")
+	}
+}
+
 func TestSimFix403Layer0BoundaryAndIdempotency(t *testing.T) {
 	t.Run("destructive", func(t *testing.T) {
 		home := fix403Env(t)
