@@ -100,24 +100,34 @@ func releaseVersion(sourceDir string) string {
 	return line
 }
 
-func installedBuildVersion() string {
+// buildVersionPath keys the marker by target so rebuilding one target does not
+// make another target's older binary look current.
+func buildVersionPath(goos, goarch string) (string, error) {
 	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "build-version-"+goos+"-"+goarch+".txt"), nil
+}
+
+func installedBuildVersion(goos, goarch string) string {
+	path, err := buildVersionPath(goos, goarch)
 	if err != nil {
 		return ""
 	}
-	data, err := readStateFile(filepath.Join(dir, buildVersionFile))
+	data, err := readStateFile(path)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
 }
 
-func saveInstalledBuildVersion(version string) error {
-	dir, err := stateDir()
+func saveInstalledBuildVersion(goos, goarch, version string) error {
+	path, err := buildVersionPath(goos, goarch)
 	if err != nil {
 		return err
 	}
-	return writeStateFile(filepath.Join(dir, buildVersionFile), []byte(version+"\n"))
+	return writeStateFile(path, []byte(version+"\n"))
 }
 
 func effectiveBuildTarget() (string, string) {
@@ -292,7 +302,7 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 	// A stale binary from an older release must never be served as current;
 	// drop it before the rebuild starts so even a failed build cannot leave it.
 	version := releaseVersion(sourceDir)
-	if installedBuildVersion() != version {
+	if installedBuildVersion(goos, goarch) != version {
 		_ = os.Remove(filepath.Join(sourceDir, rel))
 		_ = os.Remove(filepath.Join(sourceDir, rel+".prev"))
 	} else if version != "" {
@@ -348,4 +358,5 @@ func handleUIBuild(w http.ResponseWriter, r *http.Request, sourceDir string) {
 		buildAttempts.counts = map[string]int{} // green build clears the failure ledger
 		renderBuildResult(w, "BUILD OK: "+rel+" ("+goos+"/"+goarch+")\n"+tail)
 	}
+}
 }
