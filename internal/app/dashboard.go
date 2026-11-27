@@ -15,8 +15,9 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 )
+
+import "time"
 
 //go:embed web/index.html web/style.css
 var dashboardAssets embed.FS
