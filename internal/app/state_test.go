@@ -523,3 +523,29 @@ func assertNoStateTemp(t *testing.T, dir string) {
 		}
 	}
 }
+
+// An operator hand-edit or a copy that rewrote keys.txt with CRLF must not
+// silently drop every key: models.txt, combo.txt and config.txt already trim
+// the same "\r", and validKey rejects it, so trimming here is lossless.
+func TestLoadKeysToleratesCRLFFile(t *testing.T) {
+	gapStateHome(t)
+	const name = "CRLF Provider"
+	if err := writeKeyList(name, []string{"key-a", "key-b"}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := keyFilePath(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gapStateWriteState(t, path, []byte("key-a\r\nkey-b\r\n"))
+	keys, err := loadKeys(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[0] != "key-a" || keys[1] != "key-b" {
+		t.Fatalf("keys = %q, want [key-a key-b]", keys)
+	}
+	if n := keyCount(name); n != 2 {
+		t.Fatalf("keyCount = %d, want 2", n)
+	}
+}
