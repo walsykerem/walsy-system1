@@ -62,19 +62,18 @@ var evidenceFiles = []string{
 	"scripts/finalgate/evidence/K16.txt",
 }
 
-func localEvidence(root string) string {
+// localEvidence fails if any required evidence file is missing or unreadable,
+// so the gate never submits a verdict request without all of its evidence.
+func localEvidence(root string) (string, error) {
 	var b strings.Builder
 	for _, rel := range evidenceFiles {
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			continue
+			return "", fmt.Errorf("required evidence %s unavailable: %w", rel, err)
 		}
 		fmt.Fprintf(&b, "[%s]\n%s\n", rel, strings.TrimSpace(string(raw)))
 	}
-	if b.Len() == 0 {
-		return "(no local evidence files found)"
-	}
-	return b.String()
+	return b.String(), nil
 }
 
 func run(thr float64) error {
@@ -99,6 +98,11 @@ func run(thr float64) error {
 		return fmt.Errorf("release.tag %q absent from CHANGELOG.md", version)
 	}
 
+	evidence, err := localEvidence(root)
+	if err != nil {
+		return err
+	}
+
 	owner, err := approvalOwner()
 	if err != nil {
 		return err
@@ -117,7 +121,7 @@ func run(thr float64) error {
 	}
 	body := map[string]any{
 		"model": "clef",
-		"state": fmt.Sprintf(finalStateFmt, version, localEvidence(root), owner),
+		"state": fmt.Sprintf(finalStateFmt, version, evidence, owner),
 		"questions": map[string]any{
 			"final": map[string]any{
 				"type":         "choice",

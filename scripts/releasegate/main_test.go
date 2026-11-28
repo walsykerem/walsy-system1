@@ -122,14 +122,26 @@ func TestLocalEvidenceAndRunState(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "K12.txt"), []byte("== 1/10 gofmt ==\nrelease gate: PASS\n"), 0o600); err != nil {
+	for _, rel := range evidenceFiles {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("== 1/10 gofmt ==\nrelease gate: PASS\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := localEvidence(root)
+	if err != nil || !strings.Contains(got, "== 1/10 gofmt ==") {
+		t.Fatalf("localEvidence omitted recorded evidence: %v", err)
+	}
+	if _, err := localEvidence(t.TempDir()); err == nil {
+		t.Fatal("localEvidence accepted a tree with no evidence files")
+	}
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(evidenceFiles[0]))); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(localEvidence(root), "== 1/10 gofmt ==") {
-		t.Fatal("localEvidence omitted recorded evidence")
+	if _, err := localEvidence(root); err == nil {
+		t.Fatal("localEvidence accepted a tree with a missing evidence file")
 	}
-	if got := localEvidence(t.TempDir()); !strings.Contains(got, "no local evidence") {
-		t.Fatalf("empty evidence = %q", got)
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(evidenceFiles[0])), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	home := t.TempDir()
