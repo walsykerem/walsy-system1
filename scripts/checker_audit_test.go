@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -46,6 +48,43 @@ func TestAuditRedactionTokensPresent(t *testing.T) {
 		}
 		if !strings.Contains(string(b), token) {
 			t.Fatalf("%s lost redaction token %q", path, token)
+		}
+	}
+}
+
+// Stale -run names silently skip tests: every Test name the checker scripts
+// ask for must exist in the app test sources.
+func TestCheckerRunNamesExist(t *testing.T) {
+	files, err := filepath.Glob("../internal/app/*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no internal/app tests: %v", err)
+	}
+	defined := map[string]bool{}
+	funcRe := regexp.MustCompile(`^func (Test\w+)\(`)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if m := funcRe.FindStringSubmatch(line); m != nil {
+				defined[m[1]] = true
+			}
+		}
+	}
+	runRe := regexp.MustCompile(`-run\s*=?\s*['"]([^'"]+)['"]`)
+	nameRe := regexp.MustCompile(`Test\w+`)
+	for _, script := range []string{"checker_audit.sh", "checker_sim.sh"} {
+		b, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range runRe.FindAllStringSubmatch(string(b), -1) {
+			for _, name := range nameRe.FindAllString(m[1], -1) {
+				if !defined[name] {
+					t.Errorf("%s: -run name %s has no func Test in ../internal/app/*_test.go", script, name)
+				}
+			}
 		}
 	}
 }

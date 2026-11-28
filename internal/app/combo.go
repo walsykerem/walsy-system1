@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -115,8 +118,8 @@ func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 		r.LatencyMS = time.Since(start).Milliseconds()
 		return r
 	}
-	n, _ := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	respB = int(n)
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	respB = len(bodyBytes)
 	resp.Body.Close()
 	cancel()
 	// A probe answers one question: is this credential usable on this endpoint?
@@ -127,6 +130,12 @@ func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 	r.LatencyMS = time.Since(start).Milliseconds()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		// shortcut: body validation applies only to SO-shaped endpoints; other
+		// 2xx probes stay reachability-only to preserve existing behavior.
+		if isSOEndpoint(s.Base) && !validSOProbeBody(bodyBytes) {
+			r.Detail = "invalid system one response"
+			break
+		}
 		r.OK = true
 		r.Detail = "endpoint reachable"
 		if s.Key != "" {
@@ -144,6 +153,29 @@ func probeComboStep(s ComboStep, timeout time.Duration) ComboResult {
 	}
 	routerRecord(s.Name, r.OK)
 	return r
+}
+
+// isSOEndpoint matches the System One wire path. A malformed 200 from such an
+// endpoint is not admission: the probe asked for a typed decision and got no
+// answers object back. Keyless/non-SO probes stay reachability-only.
+func isSOEndpoint(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && strings.HasSuffix(strings.TrimSuffix(u.Path, "/"), "/systemone")
+}
+
+// validSOProbeBody requires a JSON object with at least one answers object,
+// matching the strict SO decode used by the decision hub.
+func validSOProbeBody(body []byte) bool {
+	var v map[string]json.RawMessage
+	if err := json.Unmarshal(bytes.TrimSpace(body), &v); err != nil {
+		return false
+	}
+	raw, ok := v["answers"]
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	var answers map[string]json.RawMessage
+	return json.Unmarshal(raw, &answers) == nil && len(answers) > 0
 }
 
 // comboModel returns the model id a step probes: the step's own model, else

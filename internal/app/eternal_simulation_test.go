@@ -332,9 +332,7 @@ var eternalScenarioFiles = [...]string{
 	"fix4_05_sim_test.go",
 	"fix4_06_sim_test.go",
 	"fix4_07_sim_test.go",
-	"fix4_08_sim_test.go",
-	"fix4_09_sim_test.go",
-	"fix4_10_sim_test.go",
+	"fix4_10_architecture_test.go",
 	"fix5_global_sim_test.go",
 }
 
@@ -372,19 +370,14 @@ func eternalScenarioForFile(file string, i int) eternalScenario {
 	}
 }
 
-// eternalRunCatalog is the permanent catalogue driver. A missing scenario file
-// is skipped, never a compile or test failure; when every named file is present
-// the log says the unified simulation is complete.
+// eternalRunCatalog is the permanent catalogue driver. Every named scenario
+// must exist; a missing one fails the stable-release catalogue.
 func eternalRunCatalog(t *testing.T, h *eternalHarness, dir string, files []string) int {
 	t.Helper()
 	ran := 0
 	for i, file := range files {
 		if _, err := os.Stat(filepath.Join(dir, file)); err != nil {
-			if !os.IsNotExist(err) {
-				t.Errorf("stat %s: %v", file, err)
-			} else {
-				t.Logf("skip missing scenario %s", file)
-			}
+			t.Errorf("stat %s: %v", file, err)
 			continue
 		}
 		tr, err := h.runScenario(t, eternalScenarioForFile(file, i+1))
@@ -395,9 +388,6 @@ func eternalRunCatalog(t *testing.T, h *eternalHarness, dir string, files []stri
 		t.Logf("scenario %s: at=%s port=%s decision=%s action=%s audit=%v cacheHit=%v calls=%d",
 			file, tr.At.Format(time.RFC3339), tr.Port, tr.Decision.Choice, tr.Action, tr.AuditOK, tr.CacheHit, tr.Calls)
 		ran++
-	}
-	if ran == 0 {
-		t.Skip("no fix4_NN_sim_test.go scenario files present")
 	}
 	if ran == len(files) {
 		t.Logf("all %d scenarios present: unified eternal simulation complete", len(files))
@@ -414,16 +404,10 @@ func TestEternalSimulationSuite(t *testing.T) {
 	eternalRunCatalog(t, h, eternalSourceDir(t), eternalScenarioFiles[:])
 }
 
-// The all-present branch is exercised without adding scenario files to this
-// isolated worktree: ten empty placeholders live only in a t.TempDir.
+// The all-present branch proves the permanent catalogue exists in source.
 func TestEternalSimulationCatalogAllPresent(t *testing.T) {
 	h := newEternalHarness(t)
-	dir := t.TempDir()
-	for _, file := range eternalScenarioFiles {
-		if err := os.WriteFile(filepath.Join(dir, file), nil, 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	dir := eternalSourceDir(t)
 	if got := eternalRunCatalog(t, h, dir, eternalScenarioFiles[:]); got != len(eternalScenarioFiles) {
 		t.Fatalf("catalog ran %d scenarios, want %d", got, len(eternalScenarioFiles))
 	}

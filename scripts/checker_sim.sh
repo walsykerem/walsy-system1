@@ -26,7 +26,7 @@ if [ "$n" -ge 49 ]; then ok "tests>=49 ($n)"; else no "tests>=49 ($n)"; fi
 
 # 2. Cache dir wiped on both stdin transports, persistent state untouched.
 # Both tests pin TMPDIR/HOME to their own t.TempDir(); nothing here shares a path.
-if go test -count=1 -run '^Test(NoDiskCacheDirOnMCPStart|ColdStartNeedsNoCacheDir)$' ./internal/app >/dev/null 2>&1; then ok "cache-dir"; else no "cache-dir"; fi
+if go test -count=1 -run '^TestNoDiskCacheDirOnMCPStart$' ./internal/app >/dev/null 2>&1; then ok "cache-dir"; else no "cache-dir"; fi
 
 # 3. SO state build benchmark still runs (short smoke, not the 200k timing run).
 if go test -bench='^BenchmarkSOStateBuild$' -run='^$' -benchtime=200x ./internal/app >/dev/null 2>&1; then

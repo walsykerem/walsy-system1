@@ -16,7 +16,7 @@ func TestFix5_10StrictGateVerdict(t *testing.T) {
 		{"case-top", `{"ANSWERS":{"final":{"choice":"complete","confidence":0.9}}}`, false},
 		{"over-1mib", `{"answers":{"final":{"choice":"complete","confidence":0.9},"pad":"` + strings.Repeat("x", 1<<20) + `"}}`, false},
 		{"confidence-1.5", `{"answers":{"final":{"choice":"complete","confidence":1.5}}}`, false},
-		{"good", `{"answers":{"final":{"choice":"complete","confidence":0.9}}}`, true},
+		{"good", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.9}}}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -35,9 +35,9 @@ func TestFix4_26ReleaseGateBlocks(t *testing.T) {
 		wantCode              int
 		wantErr               string
 	}{
-		{"no approval", "", `{"answers":{"final":{"choice":"complete","confidence":0.9}}}`, 1, "no RELEASE_APPROVAL"},
-		{"low confidence", "fix4-26-approver", `{"answers":{"final":{"choice":"complete","confidence":0.5}}}`, 1, "not complete"},
-		{"approved high confidence", "fix4-26-approver", `{"answers":{"final":{"choice":"complete","confidence":0.9}}}`, 0, ""},
+		{"no approval", "", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.9}}}`, 1, "approval requires both"},
+		{"low confidence", "fix4-26-approver", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.5}}}`, 1, "not complete"},
+		{"approved high confidence", "fix4-26-approver", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.9}}}`, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,13 +48,17 @@ func TestFix4_26ReleaseGateBlocks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "CHANGELOG.md"), []byte("# 0.1.0\nlocal checks\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			home := t.TempDir()
+			if tc.approval != "" {
+				writeConfig(t, home, tc.approval)
+			}
 			cmd := exec.Command(os.Args[0], "-test.run=^TestFix4_26ReleaseGateBlocks$")
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(),
 				"FIX4_26_GATE_HELPER=1",
 				"FIX4_26_GATE_REPLY="+tc.reply,
 				"RELEASE_APPROVAL="+tc.approval,
-				"HOME="+t.TempDir(),
+				"HOME="+home,
 			)
 			out, err := cmd.CombinedOutput()
 			code := 0

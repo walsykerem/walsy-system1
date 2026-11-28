@@ -22,8 +22,16 @@ func TestRunRejectsEmptyReleaseTag(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Chdir(root)
-		t.Setenv("HOME", t.TempDir())
 		t.Setenv("RELEASE_APPROVAL", "approver")
+		home := t.TempDir()
+		dir := filepath.Join(home, ".walsy-system1")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.txt"), []byte("m1_approval_owner=approver\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
 		t.Setenv("EVREN_API_KEY", "key")
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, `{"answers":{"final":{"choice":"complete","confidence":0.9}}}`)
