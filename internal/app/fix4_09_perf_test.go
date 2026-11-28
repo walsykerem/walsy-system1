@@ -10,7 +10,7 @@ import (
 // hotspots and a self-check of the measurement itself; no port ships.
 const (
 	fix4PerfRequest = `{"state":"classify the intent of: add a retry loop","item":"intake.intent","need_label":true,"no_scratch":true,"safe":true,"reversible":true,"authority":true,"calibrated":true,"phase":"before-model"}`
-	fix4PerfAlias   = "İstanbul STRASSE straße ĞÜNÜÜn ÇİÇEKLER mixed-WÖRTER 12345"
+	fix4PerfAlias   = "\u0130stanbul STRASSE stra\u00DFe \u011E\u00DCN\u00DC\u00DCn \u00C7\u0130\u00C7EKLER mixed-W\u00D6RTER 12345"
 )
 
 var fix4PerfSink string

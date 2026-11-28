@@ -81,7 +81,7 @@ func TestGapScriptFindRootNearestTag(t *testing.T) {
 
 // run() had no test at all: it must build the documented request from a local
 // throwaway tree and accept a loopback verdict.
-func gapReleaseSetup(t *testing.T, version, changelog string) {
+func gapReleaseSetup(t *testing.T, version, changelog, approval string) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "release.tag"), []byte(version+"\n"), 0o600); err != nil {
@@ -91,11 +91,19 @@ func gapReleaseSetup(t *testing.T, version, changelog string) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	dir := filepath.Join(home, ".walsy-system1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.txt"), []byte("m1_approval_owner="+approval+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
 }
 
 func TestGapScriptRunBuildsRequestAndAcceptsVerdict(t *testing.T) {
-	gapReleaseSetup(t, "9.9.9", "# 9.9.9\nlocal checks\n")
+	gapReleaseSetup(t, "9.9.9", "# 9.9.9\nlocal checks\n", "gap-approver")
 	t.Setenv("RELEASE_APPROVAL", "gap-approver")
 	t.Setenv("EVREN_API_KEY", "gap-dummy-key")
 	var got struct {
@@ -159,17 +167,17 @@ func TestGapScriptRunRejections(t *testing.T) {
 		wantErr                               string
 	}{
 		{"tag absent from changelog", "# 2.0.0", "a", "k", good, 200, 0.8, "absent from CHANGELOG"},
-		{"no approver", "0.1.0", "", "k", good, 200, 0.8, "no RELEASE_APPROVAL"},
+		{"no approver", "0.1.0", "", "k", good, 200, 0.8, "approval requires both"},
 		{"no key", "0.1.0", "a", "", good, 200, 0.8, "no System One key"},
 		{"http error", "0.1.0", "a", "k", "", 503, 0.8, "System One status 503"},
 		{"no final answer", "0.1.0", "a", "k", `{"answers":{}}`, 200, 0.8, "no final answer"},
-		{"bad label", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"hold","confidence":0.99}}}`, 200, 0.8, "not complete"},
-		{"low confidence", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.5}}}`, 200, 0.8, "not complete"},
-		{"boundary passes", "0.1.0", "a", "k", `{"answers":{"final":{"choice":"complete","confidence":0.8}}}`, 200, 0.8, ""},
+		{"bad label", "0.1.0", "a", "k", `{"answers":{"final":{"type":"choice","choice":"hold","confidence":0.99}}}`, 200, 0.8, "not complete"},
+		{"low confidence", "0.1.0", "a", "k", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.5}}}`, 200, 0.8, "not complete"},
+		{"boundary passes", "0.1.0", "a", "k", `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.8}}}`, 200, 0.8, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gapReleaseSetup(t, "0.1.0", tc.changelog)
+			gapReleaseSetup(t, "0.1.0", tc.changelog, tc.approval)
 			t.Setenv("RELEASE_APPROVAL", tc.approval)
 			t.Setenv("EVREN_API_KEY", tc.key)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

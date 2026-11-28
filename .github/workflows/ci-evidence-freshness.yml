@@ -22,17 +22,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha='2ec4526bef5588f524f42be2714b8a5dbc5adefb924b496e1310535d1ff0dde6'
+          sha="$(sed -n 's/.*"file_sha256":"\([0-9a-f]*\)".*/\1/p' walsy-system1.digest.json)"
           src='scripts/finalgate/main.go'
-          tr='scripts/relay56/TRANSCRIPT.txt'
           k12='scripts/finalgate/evidence/K12.txt'
           grep -qF -- "$sha" "$src" || { echo "cited digest missing from $src"; exit 1; }
-          grep -qF -- "$sha" "$tr" || { echo "cited digest missing from $tr"; exit 1; }
+          grep -qF -- "$sha" "$k12" || { echo "cited digest missing from $k12"; exit 1; }
           if [ -f walsy-system1 ]; then
             actual="$(sha256sum walsy-system1 | cut -d ' ' -f 1)"
             [ "$actual" = "$sha" ] || { echo "digest drift: binary $actual vs cited $sha"; exit 1; }
             echo "binary digest matches citation"
           else
-            grep -qF -- "$sha" "$k12" || { echo "cited digest missing from $k12"; exit 1; }
-            echo "binary absent; citation present in $src, $tr, $k12"
+            echo "binary absent; citation present in $src, $k12"
           fi

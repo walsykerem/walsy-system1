@@ -352,8 +352,8 @@ func TestFix4_12FallbackAuditNamesWinnerAndChainsOnce(t *testing.T) {
 }
 
 // Combo-level fallback: the secondary step is the winner when the primary
-// fails, and the loop stops in round 1. A 2xx with a malformed SO body still
-// wins today - recorded here as evidence for slice 05, not edited here.
+// fails, and the loop stops in round 1. A 2xx with a malformed SO body no
+// longer wins: SO-shaped endpoints must return at least one answers object.
 func TestFix4_12ComboFallbackStepAndInvalidBodyDefect(t *testing.T) {
 	fix4_12_base(t)
 	good := func(int) (int, string) { return 200, w11_reply("yes", 0.95)(1) }
@@ -373,12 +373,21 @@ func TestFix4_12ComboFallbackStepAndInvalidBodyDefect(t *testing.T) {
 
 	bad, _ := fix4_12_server(t, func(int) (int, string) { return 200, `{"answers":` })
 	badSteps := []ComboStep{
-		{Name: "Fix4-BadBody", Base: bad.URL, Key: "b", Model: "fix4-bad", Weight: 2},
+		{Name: "Fix4-BadBody/clef", Base: bad.URL + "/v1/systemone", Key: "b", Model: "clef", Weight: 2},
 		steps[1],
 	}
 	badOut := RunCombo(badSteps, 300*time.Millisecond)
-	if badOut.Winner != "Fix4-BadBody" {
-		t.Fatalf("unexpected: 200 + malformed SO body no longer wins (%+v); remove the slice 05 defect note", badOut)
+	if badOut.Winner != fix4_12_secondary || badOut.Steps[0].OK || badOut.Steps[0].Detail != "invalid system one response" {
+		t.Fatalf("malformed SO 200 must fail and fall back: %+v", badOut)
 	}
-	t.Logf("SLICE 05 DEFECT: probeComboStep accepts HTTP 200 with malformed SO body as OK; invalid-answer primary blocks fallback (combo.go:128-144)")
+
+	valid, _ := fix4_12_server(t, func(int) (int, string) { return 200, w11_reply("yes", 0.95)(1) })
+	validSteps := []ComboStep{
+		{Name: "Fix4-ValidBody/clef", Base: valid.URL + "/v1/systemone", Key: "v", Model: "clef", Weight: 2},
+		steps[1],
+	}
+	validOut := RunCombo(validSteps, 300*time.Millisecond)
+	if validOut.Winner != "Fix4-ValidBody/clef" || !validOut.Steps[0].OK {
+		t.Fatalf("valid SO answer must stay OK: %+v", validOut)
+	}
 }

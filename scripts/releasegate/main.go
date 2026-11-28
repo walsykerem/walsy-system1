@@ -51,7 +51,31 @@ func main() {
 	fmt.Println("release gate: PASS")
 }
 
-const finalStateFmt = "verify.sh stage 9 gate for %s; source tree: 70/70 MANIFEST items verified, full CGO=0 go test ./... green, race suite green, stages 1-8 green, decision_items signature OK, ascii clean, recon digest current, advisory fail-open; M1 approval PENDING - this call checks local verification completeness only, NOT a release decision"
+// State quotes recorded local evidence verbatim; it never re-runs or asserts a
+// check this process did not perform.
+const finalStateFmt = "verify.sh stage 9 gate for %s; local evidence files verified present (recorded outputs, NOT re-run by this gate):\n%s\nM1 approval owner: %s; approval PENDING - this call checks local verification evidence only, NOT a release decision; advisory fail-open"
+
+var evidenceFiles = []string{
+	"scripts/finalgate/evidence/FINALGATE-R9.txt",
+	"scripts/finalgate/evidence/K12.txt",
+	"scripts/finalgate/evidence/K15.txt",
+	"scripts/finalgate/evidence/K16.txt",
+}
+
+func localEvidence(root string) string {
+	var b strings.Builder
+	for _, rel := range evidenceFiles {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "[%s]\n%s\n", rel, strings.TrimSpace(string(raw)))
+	}
+	if b.Len() == 0 {
+		return "(no local evidence files found)"
+	}
+	return b.String()
+}
 
 func run(thr float64) error {
 	root, err := findRoot()
@@ -75,12 +99,9 @@ func run(thr float64) error {
 		return fmt.Errorf("release.tag %q absent from CHANGELOG.md", version)
 	}
 
-	owner := strings.TrimSpace(os.Getenv("RELEASE_APPROVAL"))
-	if owner == "" {
-		owner = configValue("m1_approval_owner")
-	}
-	if owner == "" {
-		return errors.New("no RELEASE_APPROVAL / m1_approval_owner")
+	owner, err := approvalOwner()
+	if err != nil {
+		return err
 	}
 
 	endpoint := os.Getenv("WALSY_SO_ENDPOINT")
@@ -96,7 +117,7 @@ func run(thr float64) error {
 	}
 	body := map[string]any{
 		"model": "clef",
-		"state": fmt.Sprintf(finalStateFmt, version),
+		"state": fmt.Sprintf(finalStateFmt, version, localEvidence(root), owner),
 		"questions": map[string]any{
 			"final": map[string]any{
 				"type":         "choice",
@@ -137,7 +158,40 @@ func run(thr float64) error {
 	if !ok {
 		return errors.New("no final answer")
 	}
+	if err := checkModel(out); err != nil {
+		return err
+	}
 	return verdict(a, thr)
+}
+
+// approvalOwner requires the same named owner from env and config: a mismatch
+// means the release is not approved, not a fallback to either side.
+func approvalOwner() (string, error) {
+	envOwner := strings.TrimSpace(os.Getenv("RELEASE_APPROVAL"))
+	cfgOwner := strings.TrimSpace(configValue("m1_approval_owner"))
+	if envOwner == "" || cfgOwner == "" {
+		return "", errors.New("approval requires both RELEASE_APPROVAL and m1_approval_owner")
+	}
+	if envOwner != cfgOwner {
+		return "", errors.New("approval mismatch: RELEASE_APPROVAL and m1_approval_owner differ")
+	}
+	return envOwner, nil
+}
+
+func checkModel(out soResponse) error {
+	for _, got := range []string{out.Model, out.RoutedModel} {
+		if got == "" {
+			continue
+		}
+		last := got
+		if i := strings.LastIndex(got, "/"); i >= 0 {
+			last = got[i+1:]
+		}
+		if last != "clef" {
+			return fmt.Errorf("System One model %q is not clef", got)
+		}
+	}
+	return nil
 }
 
 func decodeResponse(r io.Reader) (soResponse, error) {
@@ -163,6 +217,9 @@ func decodeResponse(r io.Reader) (soResponse, error) {
 }
 
 func verdict(a soAnswer, thr float64) error {
+	if a.Type != "choice" {
+		return fmt.Errorf("final answer type %q is not choice", a.Type)
+	}
 	if a.Choice != "complete" || a.Confidence < thr || a.Confidence > 1 {
 		return fmt.Errorf("final label %q confidence %.3f is not complete at >= %.3f", a.Choice, a.Confidence, thr)
 	}

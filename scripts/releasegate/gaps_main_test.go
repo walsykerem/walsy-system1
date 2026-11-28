@@ -40,12 +40,15 @@ func TestGapScriptMain(t *testing.T) {
 	t.Chdir("../..")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"answers":{"final":{"choice":"complete","confidence":0.9}}}`)
+		io.WriteString(w, `{"answers":{"final":{"type":"choice","choice":"complete","confidence":0.9}}}`)
 	}))
 	defer srv.Close()
 	t.Setenv("WALSY_SO_ENDPOINT", srv.URL)
 	t.Setenv("EVREN_API_KEY", "gap-dummy-key")
 	t.Setenv("RELEASE_APPROVAL", "gap-test")
+	home := t.TempDir()
+	writeConfig(t, home, "gap-test")
+	t.Setenv("HOME", home)
 
 	oldArgs, oldFlags := os.Args, flag.CommandLine
 	defer func() { os.Args, flag.CommandLine = oldArgs, oldFlags }()
