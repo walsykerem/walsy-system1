@@ -12,7 +12,7 @@ ok  	walsy-system1/scripts/relay56	8.535s
 ok  	walsy-system1/scripts/releasegate	2.401s
 app test functions: 571
 == 5/10 lrecon digest ==
-lrecon digest: d6227e789e9fd57a8ab62419a6103501478b9a0fbc16b9d5d0eaf06af89ada67
+lrecon digest: 2ec4526bef5588f524f42be2714b8a5dbc5adefb924b496e1310535d1ff0dde6
 lrecon kind: macho
 == 6/10 non-ascii scan ==
 ascii clean: 151 files
